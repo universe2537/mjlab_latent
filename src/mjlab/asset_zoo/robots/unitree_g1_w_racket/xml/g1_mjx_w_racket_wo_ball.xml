@@ -1,4 +1,13 @@
 <mujoco model="g1_29dof_rev_1_0">
+    <!--
+      Unitree G1 右手腕挂载网球拍的“纯机器人”MJCF。
+      这个文件作为 mjlab Entity 配置读取的机器人模板。
+
+      这个 XML 不应包含 floor/terrain 等只属于场景的对象，也不应包含 XML 内嵌
+      actuators。mjlab 会在任务场景里添加 terrain，并在 g1_constants.py 中添加
+      position actuators。这样同一个机器人资产可以复用于多个 mjlab 场景，不会产生
+      重复 actuator，也不会引用缺失的场景对象。
+    -->
     <compiler angle="radian"/>
 
     <option iterations="3" ls_iterations="5" timestep=".002" integrator="Euler">
@@ -78,9 +87,9 @@
             </default>
             <site group="5" rgba="1 0 0 1"/>
         </default>
-        <default class="tennis_ball_robot_contact">
-            
-        </default>
+        <!-- 预留给未来网球球体相关的 contact default。当前保持为空，使迁移来的
+             XML 引用仍然有效，同时不改变接触行为。 -->
+        <default class="tennis_ball_robot_contact"/>
 
     </default>
 
@@ -451,10 +460,16 @@
                                                               diaginertia="0.03010439 0.02795617 0.00228299"/>
                                                     <joint name="right_wrist_yaw_joint" class="wrist_yaw"/>
                                                     <geom class="visual" mesh="right_wrist_yaw_link"/>
+                                                    <!-- 球拍视觉 mesh 挂在 right_wrist_yaw_link
+                                                         下面，因此会跟随手腕运动，同时不增加
+                                                         额外关节。 -->
                                                     <geom pos="0.0415 -0.003 0.0" quat="0.5 -0.5 0.5 -0.5" class="visual"
                                                           mesh="tennis_racket"/>
                                                     <site name="right_palm" pos="0.08 0 0" size="0.01"/>
                                                     <geom name="right_hand_collision" class="collision" type="capsule" size="0.05" fromto="0.08 0 0 0.13 0 0" rgba=".2 .6 .2 .2"/>
+                                                    <!-- 简化的球拍碰撞体：用一个薄圆柱近似拍面。
+                                                         下面的 site 提供稳定参考帧，便于在
+                                                         observation 或 reward 中追踪球拍位姿/速度。 -->
                                                     <geom name="tennis_racket_collision" pos="0.1025 -0.004 0.4" quat="0 0 -0.7071068 0.7071068" class="collision" type="cylinder" size="0.12 0.005"/>
                                                     <site name="tennis_racket_center" pos="0.1025 -0.004 0.4" quat="0 0 0.7071068 0.7071068" size="0.01"/>
                                                 </body>
@@ -471,19 +486,11 @@
     </worldbody>
 
     <contact>
-        <pair name="left_foot_floor" geom1="left_foot" geom2="floor" condim="3" friction="0.6 0.6"/>
-        <pair name="right_foot_floor" geom1="right_foot" geom2="floor" condim="3" friction="0.6 0.6"/>
-        <pair name="left_shin_floor" geom1="left_shin" geom2="floor" condim="3" friction="0.6 0.6"/>
-        <pair name="right_shin_floor" geom1="right_shin" geom2="floor" condim="3" friction="0.6 0.6"/>
-        <pair name="left_hand_floor" geom1="left_hand_collision" geom2="floor" condim="3" friction="0.6 0.6"/>
-        <pair name="right_hand_floor" geom1="right_hand_collision" geom2="floor" condim="3" friction="0.6 0.6"/>
-        <pair name="left_shoulder_floor" geom1="left_shoulder_yaw_collision" geom2="floor" condim="3" friction="0.6 0.6"/>
-        <pair name="right_shoulder_floor" geom1="right_shoulder_yaw_collision" geom2="floor" condim="3" friction="0.6 0.6"/>
-        <pair name="left_elbow_floor" geom1="left_elbow_yaw_collision" geom2="floor" condim="3" friction="0.6 0.6"/>
-        <pair name="right_elbow_floor" geom1="right_elbow_yaw_collision" geom2="floor" condim="3" friction="0.6 0.6"/>
-        <pair name="pelvis_floor" geom1="pelvis_collision" geom2="floor" condim="3" friction="0.6 0.6"/>
-        <pair name="torso_floor" geom1="torso" geom2="floor" condim="3" friction="0.6 0.6"/>
-
+        <!--
+          从 Latent 迁移来的显式机器人自碰撞 pair。这里有意移除了 floor contact
+          pairs：``floor`` 属于 scene XML，不属于这个纯机器人 XML。mjlab 的
+          scene/terrain 接触由 g1_constants.py 中的 CollisionCfg 和任务场景共同配置。
+        -->
         <pair name="left_hand_thigh" geom1="left_hand_collision" geom2="left_thigh" condim="1"/>
         <pair name="right_hand_thigh" geom1="right_hand_collision" geom2="right_thigh" condim="1"/>
         <pair name="left_foot_right_foot" geom1="left_foot" geom2="right_foot" condim="1"/>
@@ -501,43 +508,9 @@
         <pair name="left_elbow_torso" geom1="left_elbow_yaw_collision" geom2="torso" condim="1"/>
     </contact>
 
-
-    <actuator>
-        <motor name="left_hip_pitch_joint" joint="left_hip_pitch_joint" ctrlrange="-88 88"/>
-        <motor name="left_hip_roll_joint" joint="left_hip_roll_joint" ctrlrange="-139 139"/>
-        <motor name="left_hip_yaw_joint" joint="left_hip_yaw_joint" ctrlrange="-88 88"/>
-        <motor name="left_knee_joint" joint="left_knee_joint" ctrlrange="-139 139"/>
-        <motor name="left_ankle_pitch_joint" joint="left_ankle_pitch_joint" ctrlrange="-50 50"/>
-        <motor name="left_ankle_roll_joint" joint="left_ankle_roll_joint" ctrlrange="-50 50"/>
-
-        <motor name="right_hip_pitch_joint" joint="right_hip_pitch_joint" ctrlrange="-88 88"/>
-        <motor name="right_hip_roll_joint" joint="right_hip_roll_joint" ctrlrange="-139 139"/>
-        <motor name="right_hip_yaw_joint" joint="right_hip_yaw_joint" ctrlrange="-88 88"/>
-        <motor name="right_knee_joint" joint="right_knee_joint" ctrlrange="-139 139"/>
-        <motor name="right_ankle_pitch_joint" joint="right_ankle_pitch_joint" ctrlrange="-50 50"/>
-        <motor name="right_ankle_roll_joint" joint="right_ankle_roll_joint" ctrlrange="-50 50"/>
-
-        <motor name="waist_yaw_joint" joint="waist_yaw_joint" ctrlrange="-88 88"/>
-        <motor name="waist_roll_joint" joint="waist_roll_joint" ctrlrange="-50 50"/>
-        <motor name="waist_pitch_joint" joint="waist_pitch_joint" ctrlrange="-50 50"/>
-
-        <motor name="left_shoulder_pitch_joint" joint="left_shoulder_pitch_joint" ctrlrange="-25 25"/>
-        <motor name="left_shoulder_roll_joint" joint="left_shoulder_roll_joint" ctrlrange="-25 25"/>
-        <motor name="left_shoulder_yaw_joint" joint="left_shoulder_yaw_joint" ctrlrange="-25 25"/>
-        <motor name="left_elbow_joint" joint="left_elbow_joint" ctrlrange="-25 25"/>
-        <motor name="left_wrist_roll_joint" joint="left_wrist_roll_joint" ctrlrange="-25 25"/>
-        <motor name="left_wrist_pitch_joint" joint="left_wrist_pitch_joint" ctrlrange="-5 5"/>
-        <motor name="left_wrist_yaw_joint" joint="left_wrist_yaw_joint" ctrlrange="-5 5"/>
-
-        <motor name="right_shoulder_pitch_joint" joint="right_shoulder_pitch_joint" ctrlrange="-25 25"/>
-        <motor name="right_shoulder_roll_joint" joint="right_shoulder_roll_joint" ctrlrange="-25 25"/>
-        <motor name="right_shoulder_yaw_joint" joint="right_shoulder_yaw_joint" ctrlrange="-25 25"/>
-        <motor name="right_elbow_joint" joint="right_elbow_joint" ctrlrange="-25 25"/>
-        <motor name="right_wrist_roll_joint" joint="right_wrist_roll_joint" ctrlrange="-25 25"/>
-        <motor name="right_wrist_pitch_joint" joint="right_wrist_pitch_joint" ctrlrange="-5 5"/>
-        <motor name="right_wrist_yaw_joint" joint="right_wrist_yaw_joint" ctrlrange="-5 5"/>
-    </actuator>
-
+    <!-- 保留迁移资产中的 sensors，因为它们为 torso/pelvis/feet 和球拍中心定义了
+         有用的命名参考帧。mjlab 任务可以按需选择使用这些 XML sensors，或使用
+         框架层 observation。 -->
     <sensor>
         <framezaxis objtype="site" objname="imu_in_torso" name="upvector_torso"/>
         <velocimeter site="imu_in_torso" name="local_linvel_torso"/>

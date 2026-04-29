@@ -8,7 +8,11 @@ from mjlab.rl import (
 
 
 def unitree_g1_tracking_ppo_runner_cfg() -> RslRlOnPolicyRunnerCfg:
-  """Create RL runner configuration for Unitree G1 tracking task."""
+  """Create PPO runner configuration for Unitree G1 tracking.
+
+  The policy and value networks use the same observation normalization setup,
+  while PPO hyperparameters are tuned for many short motion-tracking rollouts.
+  """
   return RslRlOnPolicyRunnerCfg(
     actor=RslRlModelCfg(
       hidden_dims=(512, 256, 128),

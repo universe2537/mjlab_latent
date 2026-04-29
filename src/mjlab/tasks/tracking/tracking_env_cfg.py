@@ -38,13 +38,21 @@ VELOCITY_RANGE = {
 
 
 def make_tracking_env_cfg() -> ManagerBasedRlEnvCfg:
-  """Create base tracking task configuration."""
+  """Create the robot-agnostic base configuration for tracking tasks.
+
+  Robot-specific modules fill in the motion files, anchor body, tracked bodies,
+  contact geometry names, and viewer body.  Keeping this function generic makes
+  the reward/observation/termination layout consistent across robots.
+  """
 
   ##
   # Observations
   ##
 
   actor_terms = {
+    # The actor observes the raw joint-space command plus anchor-frame deltas.
+    # The deltas tell the policy where the reference root is relative to the
+    # current robot without tying the policy to an absolute world origin.
     "command": ObservationTermCfg(
       func=mdp.generated_commands, params={"command_name": "motion"}
     ),
@@ -80,6 +88,8 @@ def make_tracking_env_cfg() -> ManagerBasedRlEnvCfg:
   }
 
   critic_terms = {
+    # The critic receives privileged full-body pose observations.  They are not
+    # corrupted because value learning benefits from a cleaner state estimate.
     "command": ObservationTermCfg(
       func=mdp.generated_commands, params={"command_name": "motion"}
     ),
@@ -139,6 +149,8 @@ def make_tracking_env_cfg() -> ManagerBasedRlEnvCfg:
   commands: dict[str, CommandTermCfg] = {
     "motion": MotionCommandCfg(
       entity_name="robot",
+      # The command advances one frame per env step internally, so manager-level
+      # time-based resampling is disabled with an effectively infinite interval.
       resampling_time_range=(1.0e9, 1.0e9),
       debug_vis=True,
       pose_range={
@@ -151,7 +163,8 @@ def make_tracking_env_cfg() -> ManagerBasedRlEnvCfg:
       },
       velocity_range=VELOCITY_RANGE,
       joint_position_range=(-0.1, 0.1),
-      # Override in robot cfg.
+      # Robot configs must override these placeholders with actual trajectories
+      # and the tracked body layout expected by those trajectories.
       motion_files="",
       anchor_body_name="",
       body_names=(),
@@ -207,6 +220,8 @@ def make_tracking_env_cfg() -> ManagerBasedRlEnvCfg:
   ##
 
   rewards: dict[str, RewardTermCfg] = {
+    # Anchor rewards keep the global root trajectory synchronized, while body
+    # rewards preserve the whole-body pose after anchor-relative alignment.
     "motion_global_root_pos": RewardTermCfg(
       func=mdp.motion_global_anchor_position_error_exp,
       weight=0.5,
@@ -256,6 +271,8 @@ def make_tracking_env_cfg() -> ManagerBasedRlEnvCfg:
 
   terminations: dict[str, TerminationTermCfg] = {
     "time_out": TerminationTermCfg(func=mdp.time_out, time_out=True),
+    # Height and tilt checks catch falls quickly without terminating merely for
+    # global x/y drift, which the relative body rewards can still correct.
     "anchor_pos": TerminationTermCfg(
       func=mdp.bad_anchor_pos_z_only,
       params={"command_name": "motion", "threshold": 0.25},

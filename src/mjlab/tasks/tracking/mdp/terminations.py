@@ -1,3 +1,10 @@
+"""Termination predicates for the tracking task.
+
+These functions intentionally use hard thresholds rather than reward-shaped
+values.  They stop an episode when the robot has drifted far enough from the
+reference that the rollout is no longer useful for imitation learning.
+"""
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, cast
@@ -18,6 +25,7 @@ if TYPE_CHECKING:
 def bad_anchor_pos(
   env: ManagerBasedRlEnv, command_name: str, threshold: float
 ) -> torch.Tensor:
+  """Terminate when full 3D anchor position error exceeds ``threshold``."""
   command = cast(MotionCommand, env.command_manager.get_term(command_name))
   return (
     torch.norm(command.anchor_pos_w - command.robot_anchor_pos_w, dim=1) > threshold
@@ -27,6 +35,7 @@ def bad_anchor_pos(
 def bad_anchor_pos_z_only(
   env: ManagerBasedRlEnv, command_name: str, threshold: float
 ) -> torch.Tensor:
+  """Terminate when anchor height error exceeds ``threshold``."""
   command = cast(MotionCommand, env.command_manager.get_term(command_name))
   return (
     torch.abs(command.anchor_pos_w[:, -1] - command.robot_anchor_pos_w[:, -1])
@@ -37,6 +46,11 @@ def bad_anchor_pos_z_only(
 def bad_anchor_ori(
   env: ManagerBasedRlEnv, asset_cfg: SceneEntityCfg, command_name: str, threshold: float
 ) -> torch.Tensor:
+  """Terminate when anchor roll/pitch drift is too large.
+
+  Projecting gravity into the reference and robot anchor frames ignores yaw and
+  isolates tilt error, which is usually the failure mode that indicates falling.
+  """
   asset: Entity = env.scene[asset_cfg.name]
 
   command = cast(MotionCommand, env.command_manager.get_term(command_name))
@@ -59,6 +73,7 @@ def bad_motion_body_pos(
   threshold: float,
   body_names: tuple[str, ...] | None = None,
 ) -> torch.Tensor:
+  """Terminate when any selected body has excessive 3D position error."""
   command = cast(MotionCommand, env.command_manager.get_term(command_name))
 
   body_indexes = _get_body_indexes(command, body_names)
@@ -76,6 +91,7 @@ def bad_motion_body_pos_z_only(
   threshold: float,
   body_names: tuple[str, ...] | None = None,
 ) -> torch.Tensor:
+  """Terminate when any selected body has excessive height error."""
   command = cast(MotionCommand, env.command_manager.get_term(command_name))
 
   body_indexes = _get_body_indexes(command, body_names)

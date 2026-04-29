@@ -1,8 +1,8 @@
 """Unitree G1 flat tracking environment configurations."""
 
 from mjlab.asset_zoo.robots import (
-  G1_ACTION_SCALE,
-  get_g1_robot_cfg,
+  G1_W_RACKET_ACTION_SCALE,
+  get_g1_w_racket_robot_cfg,
 )
 from mjlab.envs import ManagerBasedRlEnvCfg
 from mjlab.envs.mdp.actions import JointPositionActionCfg
@@ -16,11 +16,17 @@ def unitree_g1_flat_tracking_env_cfg(
   has_state_estimation: bool = True,
   play: bool = False,
 ) -> ManagerBasedRlEnvCfg:
-  """Create Unitree G1 flat terrain tracking configuration."""
+  """Create Unitree G1 flat-terrain tracking configuration.
+
+  This specializes the generic tracking task with G1-specific action scaling,
+  body names, contact sensors, and default motion artifacts.
+  """
   cfg = make_tracking_env_cfg()
 
-  cfg.scene.entities = {"robot": get_g1_robot_cfg()}
+  cfg.scene.entities = {"robot": get_g1_w_racket_robot_cfg()}
 
+  # The self-collision sensor compares the pelvis subtree with itself.  The
+  # reward term later interprets force history to penalize repeated contacts.
   self_collision_cfg = ContactSensorCfg(
     name="self_collision",
     primary=ContactMatch(mode="subtree", pattern="pelvis", entity="robot"),
@@ -34,13 +40,25 @@ def unitree_g1_flat_tracking_env_cfg(
 
   joint_pos_action = cfg.actions["joint_pos"]
   assert isinstance(joint_pos_action, JointPositionActionCfg)
-  joint_pos_action.scale = G1_ACTION_SCALE
+  joint_pos_action.scale = G1_W_RACKET_ACTION_SCALE
 
   motion_cmd = cfg.commands["motion"]
   assert isinstance(motion_cmd, MotionCommandCfg)
+  # Motions are stored as W&B artifacts during training.  Multiple artifact
+  # paths are provided so the command term can sample different trajectories.
   motion_cmd.motion_source = "wandb"
-  motion_cmd.motion_files = ("csv_to_npz/g1_dance1_subject1","csv_to_npz/g1_dance1_subject2","csv_to_npz/g1_dance1_subject3","csv_to_npz/g1_dance2_subject1","csv_to_npz/g1_dance2_subject2","csv_to_npz/g1_dance2_subject3","csv_to_npz/g1_dance2_subject4","csv_to_npz/g1_dance2_subject5")
+  motion_cmd.motion_files = (
+    "csv_to_npz/g1_dance1_subject1",
+    "csv_to_npz/g1_dance1_subject2",
+    "csv_to_npz/g1_dance1_subject3",
+    "csv_to_npz/g1_dance2_subject1",
+    "csv_to_npz/g1_dance2_subject2",
+    "csv_to_npz/g1_dance2_subject3",
+    "csv_to_npz/g1_dance2_subject4",
+    "csv_to_npz/g1_dance2_subject5",
+  )
   motion_cmd.anchor_body_name = "torso_link"
+  # Order matters: the motion NPZ tensors must use the same body order.
   motion_cmd.body_names = (
     "pelvis",
     "left_hip_roll_link",
@@ -72,7 +90,8 @@ def unitree_g1_flat_tracking_env_cfg(
 
   cfg.viewer.body_name = "torso_link"
 
-  # Modify observations if we don't have state estimation.
+  # If deployment does not provide state estimation, remove observations that
+  # depend on global/root state not available to the policy.
   if not has_state_estimation:
     new_actor_terms = {
       k: v
@@ -85,7 +104,8 @@ def unitree_g1_flat_tracking_env_cfg(
       enable_corruption=True,
     )
 
-  # Apply play mode overrides.
+  # Play mode is deterministic and viewer-friendly: no perturbations, no pushes,
+  # no observation corruption, and a reset always starts from frame zero.
   if play:
     # Effectively infinite episode length.
     cfg.episode_length_s = int(1e9)

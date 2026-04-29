@@ -16,7 +16,12 @@ from mjlab.tasks.tracking.mdp import MotionCommand
 
 
 class _OnnxMotionModel(nn.Module):
-  """ONNX-exportable model that wraps the policy and bundles motion reference data."""
+  """ONNX-exportable policy wrapper with bundled reference motion tensors.
+
+  Exported tracking policies need the reference trajectory alongside the actor
+  so deployment code can query the target state for a requested ``time_step``.
+  The tensors are registered as buffers to keep them inside the ONNX graph.
+  """
 
   def __init__(self, actor, motion):
     super().__init__()
@@ -30,6 +35,7 @@ class _OnnxMotionModel(nn.Module):
     self.time_step_total: int = self.joint_pos.shape[0]  # type: ignore[index]
 
   def forward(self, x, time_step):
+    """Return policy action and reference tensors for ``time_step``."""
     time_step_clamped = torch.clamp(
       time_step.long().squeeze(-1), max=self.time_step_total - 1
     )
@@ -45,6 +51,8 @@ class _OnnxMotionModel(nn.Module):
 
 
 class MotionTrackingOnPolicyRunner(MjlabOnPolicyRunner):
+  """RSL-RL runner that exports tracking policies with motion metadata."""
+
   env: RslRlVecEnvWrapper
 
   def __init__(
@@ -61,6 +69,7 @@ class MotionTrackingOnPolicyRunner(MjlabOnPolicyRunner):
   def export_policy_to_onnx(
     self, path: str, filename: str = "policy.onnx", verbose: bool = False
   ) -> None:
+    """Export actor plus the active motion command's reference tensors."""
     os.makedirs(path, exist_ok=True)
     cmd = cast(MotionCommand, self.env.unwrapped.command_manager.get_term("motion"))
     model = _OnnxMotionModel(self.alg.get_policy(), cmd.motion)
@@ -90,6 +99,7 @@ class MotionTrackingOnPolicyRunner(MjlabOnPolicyRunner):
     )
 
   def save(self, path: str, infos=None):
+    """Save a checkpoint and best-effort ONNX export for downstream playback."""
     super().save(path, infos)
     policy_dir, filename, onnx_path = self._get_export_paths(path)
     try:

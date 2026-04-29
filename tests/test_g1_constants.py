@@ -7,6 +7,9 @@ import numpy as np
 import pytest
 
 from mjlab.asset_zoo.robots.unitree_g1 import g1_constants
+from mjlab.asset_zoo.robots.unitree_g1_w_racket import (
+  g1_constants as g1_w_racket_constants,
+)
 from mjlab.entity import Entity
 from mjlab.utils.string import resolve_expr
 
@@ -19,6 +22,16 @@ def g1_entity() -> Entity:
 @pytest.fixture(scope="module")
 def g1_model(g1_entity: Entity) -> mujoco.MjModel:
   return g1_entity.spec.compile()
+
+
+@pytest.fixture(scope="module")
+def g1_w_racket_entity() -> Entity:
+  return Entity(g1_w_racket_constants.get_g1_w_racket_robot_cfg())
+
+
+@pytest.fixture(scope="module")
+def g1_w_racket_model(g1_w_racket_entity: Entity) -> mujoco.MjModel:
+  return g1_w_racket_entity.spec.compile()
 
 
 # fmt: off
@@ -139,3 +152,65 @@ def test_g1_actuators_configured_correctly(g1_model):
     assert g1_model.actuator_forcelimited[i] == 1, (
       f"Actuator '{actuator_name}' has forcelimited=False, expected True"
     )
+
+
+def test_g1_w_racket_uses_migrated_xml() -> None:
+  assert "unitree_g1_w_racket" in str(g1_w_racket_constants.G1_XML)
+  assert g1_w_racket_constants.G1_XML.name == "g1_mjx_w_racket_wo_ball.xml"
+  assert g1_w_racket_constants.G1_XML.exists()
+
+
+def test_g1_w_racket_entity_creation(g1_w_racket_entity, g1_w_racket_model) -> None:
+  assert g1_w_racket_entity.num_actuators == 29
+  assert g1_w_racket_entity.num_joints == 29
+  assert g1_w_racket_entity.is_actuated
+  assert not g1_w_racket_entity.is_fixed_base
+  assert g1_w_racket_model.nbody > 0
+
+
+def test_g1_w_racket_asset_present(g1_w_racket_model) -> None:
+  geom_names = {g1_w_racket_model.geom(i).name for i in range(g1_w_racket_model.ngeom)}
+  site_names = {g1_w_racket_model.site(i).name for i in range(g1_w_racket_model.nsite)}
+  assert "tennis_racket_collision" in geom_names
+  assert "tennis_racket_center" in site_names
+
+
+def test_g1_w_racket_actuators_configured_correctly(g1_w_racket_model) -> None:
+  assert g1_w_racket_model.nu == 29
+  for i in range(g1_w_racket_model.nu):
+    actuator_name = g1_w_racket_model.actuator(i).name
+    assert g1_w_racket_model.actuator_ctrllimited[i] == 0, (
+      f"Actuator '{actuator_name}' has ctrllimited=True, expected False"
+    )
+    assert g1_w_racket_model.actuator_forcelimited[i] == 1, (
+      f"Actuator '{actuator_name}' has forcelimited=False, expected True"
+    )
+    assert g1_w_racket_model.actuator_gainprm[i, 0] > 0
+    assert g1_w_racket_model.actuator_biasprm[i, 1] < 0
+
+
+def test_g1_w_racket_foot_collision_geoms(g1_w_racket_model) -> None:
+  for foot_name in ("left_foot", "right_foot"):
+    geom = g1_w_racket_model.geom(foot_name)
+    assert geom.condim == 3
+    assert geom.priority == 1
+    assert geom.friction[0] == 0.6
+
+
+def test_g1_w_racket_non_foot_collision_geoms(g1_w_racket_model) -> None:
+  foot_names = {"left_foot", "right_foot"}
+  collision_names = {
+    "left_thigh",
+    "right_thigh",
+    "left_shin",
+    "right_shin",
+    "torso",
+    "tennis_racket_collision",
+  }
+  for geom_name in collision_names:
+    assert g1_w_racket_model.geom(geom_name).condim == 1
+
+  for i in range(g1_w_racket_model.ngeom):
+    geom = g1_w_racket_model.geom(i)
+    if geom.name.endswith("_collision") and geom.name not in foot_names:
+      assert geom.condim == 1

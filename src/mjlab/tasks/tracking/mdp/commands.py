@@ -1,3 +1,16 @@
+"""Motion-reference command term used by the tracking task.
+
+The tracking environment treats a prerecorded motion as a command.  Each
+parallel environment owns two pieces of command state:
+
+* ``motion_ids`` selects which trajectory from ``MotionLoader`` is active.
+* ``time_steps`` selects the local frame within that trajectory.
+
+Most properties below expose either the reference state at the selected frame
+or the robot's current simulated state in matching tensor shapes.  Reward,
+observation, and termination terms then compare those two state streams.
+"""
+
 from __future__ import annotations
 
 import copy
@@ -34,6 +47,7 @@ _DESIRED_FRAME_COLORS = ((1.0, 0.5, 0.5), (0.5, 1.0, 0.5), (0.5, 0.5, 1.0))
 
 
 def _as_motion_files(motion_files: str | tuple[str, ...]) -> tuple[str, ...]:
+  """Normalize user config into a non-empty tuple of motion paths."""
   if isinstance(motion_files, str):
     motion_files = (motion_files,) if motion_files else ()
   if len(motion_files) == 0:
@@ -42,6 +56,13 @@ def _as_motion_files(motion_files: str | tuple[str, ...]) -> tuple[str, ...]:
 
 
 class MotionLoader:
+  """Load one or more motion files and expose them as one concatenated timeline.
+
+  Multiple trajectories are stored back-to-back in each tensor for efficient
+  indexing on device.  ``split_points`` maps a per-motion local time step to the
+  global row index in those concatenated tensors.
+  """
+
   def __init__(
     self,
     motion_files: str | tuple[str, ...],
@@ -49,6 +70,9 @@ class MotionLoader:
     device: str = "cpu",
   ) -> None:
     self.motion_files = _as_motion_files(motion_files)
+    # Each list collects the same field from every trajectory.  Concatenating
+    # the lists keeps runtime sampling simple: frame lookup becomes one global
+    # integer index instead of a Python-level file switch.
     arrays: dict[str, list[torch.Tensor]] = {
       "joint_pos": [],
       "joint_vel": [],
@@ -65,9 +89,7 @@ class MotionLoader:
         raise ValueError(f"Motion file {motion_file} has no frames.")
       lengths.append(length)
       for key in arrays:
-        arrays[key].append(
-          torch.tensor(data[key], dtype=torch.float32, device=device)
-        )
+        arrays[key].append(torch.tensor(data[key], dtype=torch.float32, device=device))
 
     self.joint_pos = torch.cat(arrays["joint_pos"], dim=0)
     self.joint_vel = torch.cat(arrays["joint_vel"], dim=0)
@@ -82,25 +104,40 @@ class MotionLoader:
     self.body_ang_vel_w = self._body_ang_vel_w[:, self._body_indexes]
     self.time_step_total = self.joint_pos.shape[0]
     self.motion_lengths = torch.tensor(lengths, dtype=torch.long, device=device)
-    self.split_points = torch.zeros(
-      len(lengths) + 1, dtype=torch.long, device=device
-    )
+    self.split_points = torch.zeros(len(lengths) + 1, dtype=torch.long, device=device)
+    # split_points[i] is the global start frame of motion i; the final element
+    # is the total number of frames and makes length checks/debugging easier.
     self.split_points[1:] = torch.cumsum(self.motion_lengths, dim=0)
     self.num_motions = len(lengths)
 
   def frame_ids(
     self, motion_ids: torch.Tensor, local_time_steps: torch.Tensor
   ) -> torch.Tensor:
+    """Convert ``(motion_id, local_step)`` pairs to concatenated frame indices."""
     return self.split_points[motion_ids] + local_time_steps
 
 
 class MotionCommand(CommandTerm):
+  """Command term that advances reference motions and resets envs onto them.
+
+  The term is responsible for three coupled jobs:
+
+  1. sample the next reference motion/frame when an episode starts or ends;
+  2. write the sampled reference state into MuJoCo for reference-state
+     initialization (RSI);
+  3. keep cached reference poses aligned to the robot anchor so reward and
+     termination functions can compare body poses in a consistent world frame.
+  """
+
   cfg: MotionCommandCfg
   _env: ManagerBasedRlEnv
 
   def __init__(self, cfg: MotionCommandCfg, env: ManagerBasedRlEnv):
     super().__init__(cfg, env)
 
+    # Map user-facing body names to both robot indices and reference-motion
+    # indices.  The robot may contain more bodies than the motion file tracks,
+    # so every command tensor is restricted to cfg.body_names.
     self.robot: Entity = env.scene[cfg.entity_name]
     self.robot_anchor_body_index = self.robot.body_names.index(
       self.cfg.anchor_body_name
@@ -115,9 +152,15 @@ class MotionCommand(CommandTerm):
     self.motion = MotionLoader(
       self.cfg.motion_files, self.body_indexes, device=self.device
     )
+    # Per-env trajectory cursor.  motion_ids chooses a trajectory, while
+    # time_steps is local to that trajectory and is converted through
+    # MotionLoader.frame_ids before indexing concatenated tensors.
     self.motion_ids = torch.zeros(self.num_envs, dtype=torch.long, device=self.device)
     self.time_steps = torch.zeros(self.num_envs, dtype=torch.long, device=self.device)
     self.motion_sample_probs = self._make_motion_sample_probs()
+    # Cached reference body poses after anchor alignment.  Rewards and
+    # terminations use these instead of raw motion-space poses so global x/y/yaw
+    # drift is measured relative to the current robot anchor.
     self.body_pos_relative_w = torch.zeros(
       self.num_envs, len(cfg.body_names), 3, device=self.device
     )
@@ -126,7 +169,12 @@ class MotionCommand(CommandTerm):
     )
     self.body_quat_relative_w[:, :, 0] = 1.0
 
-    self.bin_count = int(self.motion.motion_lengths.max().item() // (1 / env.step_dt)) + 1
+    # Adaptive sampling tracks which normalized time bins tend to fail.  The
+    # table is indexed by [motion_id, bin_id] so each trajectory receives its own
+    # curriculum distribution.
+    self.bin_count = (
+      int(self.motion.motion_lengths.max().item() // (1 / env.step_dt)) + 1
+    )
     self.bin_failed_count = torch.zeros(
       self.motion.num_motions, self.bin_count, dtype=torch.float, device=self.device
     )
@@ -159,6 +207,7 @@ class MotionCommand(CommandTerm):
     self._ghost_color = np.array(cfg.viz.ghost_color, dtype=np.float32)
 
   def _make_motion_sample_probs(self) -> torch.Tensor:
+    """Build the categorical distribution used to choose trajectories."""
     if len(self.cfg.motion_sample_probs) > 0:
       if len(self.cfg.motion_sample_probs) != self.motion.num_motions:
         raise ValueError(
@@ -177,40 +226,49 @@ class MotionCommand(CommandTerm):
 
   @property
   def frame_ids(self) -> torch.Tensor:
+    """Global frame ids for each environment in MotionLoader tensors."""
     return self.motion.frame_ids(self.motion_ids, self.time_steps)
 
   @property
   def command(self) -> torch.Tensor:
+    """Policy command vector containing target joint position and velocity."""
     return torch.cat([self.joint_pos, self.joint_vel], dim=1)
 
   @property
   def joint_pos(self) -> torch.Tensor:
+    """Reference joint positions at the current frame for each env."""
     return self.motion.joint_pos[self.frame_ids]
 
   @property
   def joint_vel(self) -> torch.Tensor:
+    """Reference joint velocities at the current frame for each env."""
     return self.motion.joint_vel[self.frame_ids]
 
   @property
   def body_pos_w(self) -> torch.Tensor:
+    """Reference body positions shifted into each environment origin."""
     return (
       self.motion.body_pos_w[self.frame_ids] + self._env.scene.env_origins[:, None, :]
     )
 
   @property
   def body_quat_w(self) -> torch.Tensor:
+    """Reference body orientations in world frame."""
     return self.motion.body_quat_w[self.frame_ids]
 
   @property
   def body_lin_vel_w(self) -> torch.Tensor:
+    """Reference body linear velocities in world frame."""
     return self.motion.body_lin_vel_w[self.frame_ids]
 
   @property
   def body_ang_vel_w(self) -> torch.Tensor:
+    """Reference body angular velocities in world frame."""
     return self.motion.body_ang_vel_w[self.frame_ids]
 
   @property
   def anchor_pos_w(self) -> torch.Tensor:
+    """Reference anchor-body position shifted into each environment origin."""
     return (
       self.motion.body_pos_w[self.frame_ids, self.motion_anchor_body_index]
       + self._env.scene.env_origins
@@ -218,57 +276,71 @@ class MotionCommand(CommandTerm):
 
   @property
   def anchor_quat_w(self) -> torch.Tensor:
+    """Reference anchor-body orientation in world frame."""
     return self.motion.body_quat_w[self.frame_ids, self.motion_anchor_body_index]
 
   @property
   def anchor_lin_vel_w(self) -> torch.Tensor:
+    """Reference anchor-body linear velocity in world frame."""
     return self.motion.body_lin_vel_w[self.frame_ids, self.motion_anchor_body_index]
 
   @property
   def anchor_ang_vel_w(self) -> torch.Tensor:
+    """Reference anchor-body angular velocity in world frame."""
     return self.motion.body_ang_vel_w[self.frame_ids, self.motion_anchor_body_index]
 
   @property
   def robot_joint_pos(self) -> torch.Tensor:
+    """Current simulated robot joint positions."""
     return self.robot.data.joint_pos
 
   @property
   def robot_joint_vel(self) -> torch.Tensor:
+    """Current simulated robot joint velocities."""
     return self.robot.data.joint_vel
 
   @property
   def robot_body_pos_w(self) -> torch.Tensor:
+    """Current simulated tracked body positions in world frame."""
     return self.robot.data.body_link_pos_w[:, self.body_indexes]
 
   @property
   def robot_body_quat_w(self) -> torch.Tensor:
+    """Current simulated tracked body orientations in world frame."""
     return self.robot.data.body_link_quat_w[:, self.body_indexes]
 
   @property
   def robot_body_lin_vel_w(self) -> torch.Tensor:
+    """Current simulated tracked body linear velocities in world frame."""
     return self.robot.data.body_link_lin_vel_w[:, self.body_indexes]
 
   @property
   def robot_body_ang_vel_w(self) -> torch.Tensor:
+    """Current simulated tracked body angular velocities in world frame."""
     return self.robot.data.body_link_ang_vel_w[:, self.body_indexes]
 
   @property
   def robot_anchor_pos_w(self) -> torch.Tensor:
+    """Current simulated anchor-body position in world frame."""
     return self.robot.data.body_link_pos_w[:, self.robot_anchor_body_index]
 
   @property
   def robot_anchor_quat_w(self) -> torch.Tensor:
+    """Current simulated anchor-body orientation in world frame."""
     return self.robot.data.body_link_quat_w[:, self.robot_anchor_body_index]
 
   @property
   def robot_anchor_lin_vel_w(self) -> torch.Tensor:
+    """Current simulated anchor-body linear velocity in world frame."""
     return self.robot.data.body_link_lin_vel_w[:, self.robot_anchor_body_index]
 
   @property
   def robot_anchor_ang_vel_w(self) -> torch.Tensor:
+    """Current simulated anchor-body angular velocity in world frame."""
     return self.robot.data.body_link_ang_vel_w[:, self.robot_anchor_body_index]
 
   def _update_metrics(self):
+    """Publish per-env tracking errors for logging and curriculum diagnostics."""
     self.metrics["error_anchor_pos"] = torch.norm(
       self.anchor_pos_w - self.robot_anchor_pos_w, dim=-1
     )
@@ -304,8 +376,17 @@ class MotionCommand(CommandTerm):
     )
 
   def _adaptive_sampling(self, env_ids: torch.Tensor):
+    """Sample reset frames from bins where previous episodes failed.
+
+    Failures are recorded in normalized time bins per trajectory.  New reset
+    frames are drawn from a smoothed distribution over those bins, with a small
+    uniform floor so rarely sampled parts of a motion remain reachable.
+    """
     episode_failed = self._env.termination_manager.terminated[env_ids]
     if torch.any(episode_failed):
+      # Attribute each failed reset env to the bin it occupied when terminated.
+      # Failed counts are written per motion id to keep multiple trajectories
+      # from contaminating each other's sampling distribution.
       motion_lengths = self.motion.motion_lengths[self.motion_ids]
       current_bin_index = torch.clamp(
         (self.time_steps * self.bin_count) // torch.clamp(motion_lengths, min=1),
@@ -330,10 +411,12 @@ class MotionCommand(CommandTerm):
       if motion_env_ids.numel() == 0:
         continue
 
-      sampling_probabilities = (
-        self.bin_failed_count[motion_id]
-        + self.cfg.adaptive_uniform_ratio / float(self.bin_count)
-      )
+      # Start from historical failures plus a uniform exploration floor.  The
+      # non-causal smoothing kernel also raises probability just before failure
+      # bins, letting the policy practice the lead-in to difficult states.
+      sampling_probabilities = self.bin_failed_count[
+        motion_id
+      ] + self.cfg.adaptive_uniform_ratio / float(self.bin_count)
       sampling_probabilities = torch.nn.functional.pad(
         sampling_probabilities.unsqueeze(0).unsqueeze(0),
         (0, self.cfg.adaptive_kernel_size - 1),  # Non-causal kernel
@@ -344,6 +427,9 @@ class MotionCommand(CommandTerm):
       ).view(-1)
       sampling_probabilities = sampling_probabilities / sampling_probabilities.sum()
 
+      # Convert sampled normalized bins back into local frame ids for the
+      # selected motion.  The within-bin uniform offset avoids every env landing
+      # on exactly the same discrete frame.
       sampled_bins = torch.multinomial(
         sampling_probabilities, motion_env_ids.numel(), replacement=True
       )
@@ -351,9 +437,7 @@ class MotionCommand(CommandTerm):
       self.time_steps[motion_env_ids] = (
         (
           sampled_bins
-          + sample_uniform(
-            0.0, 1.0, (motion_env_ids.numel(),), device=self.device
-          )
+          + sample_uniform(0.0, 1.0, (motion_env_ids.numel(),), device=self.device)
         )
         / self.bin_count
         * (motion_length - 1)
@@ -368,9 +452,11 @@ class MotionCommand(CommandTerm):
       self.metrics["sampling_top1_bin"][motion_env_ids] = imax.float() / self.bin_count
 
   def _sample_motion_ids(self, count: int) -> torch.Tensor:
+    """Sample trajectory ids according to ``motion_sample_probs``."""
     return torch.multinomial(self.motion_sample_probs, count, replacement=True)
 
   def _uniform_sampling(self, env_ids: torch.Tensor):
+    """Uniformly sample both trajectory id and local frame for each env."""
     sampled_motion_ids = self._sample_motion_ids(len(env_ids))
     self.motion_ids[env_ids] = sampled_motion_ids
     motion_lengths = self.motion.motion_lengths[sampled_motion_ids]
@@ -391,7 +477,12 @@ class MotionCommand(CommandTerm):
     joint_pos: torch.Tensor,
     joint_vel: torch.Tensor,
   ) -> None:
-    """Clip joint positions and write root + joint state to sim."""
+    """Clip joint positions and write a full reference state into simulation.
+
+    The motion files may contain poses slightly outside the robot's soft joint
+    limits.  Clipping happens at reset time so policy targets remain unchanged
+    while MuJoCo still starts from a valid state.
+    """
     soft_limits = self.robot.data.soft_joint_pos_limits[env_ids]
     joint_pos = torch.clip(joint_pos, soft_limits[:, :, 0], soft_limits[:, :, 1])
     self.robot.write_joint_state_to_sim(joint_pos, joint_vel, env_ids=env_ids)
@@ -401,6 +492,7 @@ class MotionCommand(CommandTerm):
     self.robot.reset(env_ids=env_ids)
 
   def _resample_command(self, env_ids: torch.Tensor):
+    """Choose a new motion frame and initialize envs near that reference state."""
     if self.cfg.sampling_mode == "start":
       self.motion_ids[env_ids] = self._sample_motion_ids(len(env_ids))
       self.time_steps[env_ids] = 0
@@ -415,6 +507,9 @@ class MotionCommand(CommandTerm):
     root_lin_vel = self.body_lin_vel_w[env_ids, 0].clone()
     root_ang_vel = self.body_ang_vel_w[env_ids, 0].clone()
 
+    # Reference State Initialization (RSI) randomizes the root pose around the
+    # sampled frame.  The target command still points to the exact reference,
+    # but the episode starts from nearby states to improve robustness.
     range_list = [
       self.cfg.pose_range.get(key, (0.0, 0.0))
       for key in ["x", "y", "z", "roll", "pitch", "yaw"]
@@ -439,6 +534,8 @@ class MotionCommand(CommandTerm):
     root_lin_vel += rand_samples[:, :3]
     root_ang_vel += rand_samples[:, 3:]
 
+    # Joint RSI uses the configured scalar range for every joint, then
+    # _write_reference_state_to_sim clips to per-joint soft limits.
     joint_pos = self.joint_pos[env_ids].clone()
     joint_vel = self.joint_vel[env_ids]
 
@@ -462,8 +559,10 @@ class MotionCommand(CommandTerm):
   def update_relative_body_poses(self) -> None:
     """Recompute ``body_pos_relative_w`` and ``body_quat_relative_w``.
 
-    Called after ``reset_to_frame`` so that termination checks that
-    compare relative body positions see the correct state.
+    The raw reference motion is anchored in its own world frame, while the robot
+    may have drifted in global x/y/yaw.  This method aligns the reference anchor
+    to the robot anchor in x/y/yaw but preserves the reference anchor height,
+    producing a fair body-pose target for rewards and terminations.
     """
     anchor_pos_w_repeat = self.anchor_pos_w[:, None, :].repeat(
       1, len(self.cfg.body_names), 1
@@ -478,8 +577,12 @@ class MotionCommand(CommandTerm):
       1, len(self.cfg.body_names), 1
     )
 
+    # Keep robot x/y translation so the target follows the robot across the
+    # plane, but keep reference z so falling or jumping remains penalized.
     delta_pos_w = robot_anchor_pos_w_repeat
     delta_pos_w[..., 2] = anchor_pos_w_repeat[..., 2]
+    # Only yaw alignment is applied; roll/pitch errors are still tracked by the
+    # anchor orientation reward and termination.
     delta_ori_w = yaw_quat(
       quat_mul(robot_anchor_quat_w_repeat, quat_inv(anchor_quat_w_repeat))
     )
@@ -490,6 +593,7 @@ class MotionCommand(CommandTerm):
     )
 
   def _update_command(self):
+    """Advance reference time, recycle finished motions, and update caches."""
     self.time_steps += 1
     motion_lengths = self.motion.motion_lengths[self.motion_ids]
     env_ids = torch.where(self.time_steps >= motion_lengths)[0]
@@ -499,6 +603,8 @@ class MotionCommand(CommandTerm):
     self.update_relative_body_poses()
 
     if self.cfg.sampling_mode == "adaptive":
+      # Exponential moving average over failed bins.  The current-step scratch
+      # buffer is cleared after being folded into the persistent curriculum.
       self.bin_failed_count = (
         self.cfg.adaptive_alpha * self._current_bin_failed
         + (1 - self.cfg.adaptive_alpha) * self.bin_failed_count
@@ -543,6 +649,8 @@ class MotionCommand(CommandTerm):
         )
 
     elif self.cfg.viz.mode == "frames":
+      # Frame mode draws every tracked body frame for both target and robot.
+      # This is noisier than a ghost mesh but makes orientation errors obvious.
       for batch in env_indices:
         desired_body_pos = self.body_pos_w[batch].cpu().numpy()
         desired_body_quat = self.body_quat_w[batch]
@@ -636,10 +744,12 @@ class MotionCommand(CommandTerm):
       handle.disabled = disabled
 
   def on_viewer_pause(self, paused: bool) -> None:
+    """Only allow frame scrubbing while the viewer is paused."""
     if hasattr(self, "_scrubber_handles"):
       self._set_scrubber_disabled(not paused)
 
   def apply_gui_reset(self, env_ids: torch.Tensor) -> bool:
+    """Apply a GUI-requested deterministic reset if controls exist."""
     if not hasattr(self, "_scrubber_handles"):
       return False
     frame = int(self._scrubber_handles[0].value)
@@ -670,27 +780,53 @@ class MotionCommand(CommandTerm):
 
 @dataclass(kw_only=True)
 class MotionCommandCfg(CommandTermCfg):
+  """Configuration for motion-reference tracking commands.
+
+  ``motion_files`` may contain one or many trajectories.  Optional
+  ``motion_sample_probs`` controls how often each trajectory is selected; when
+  omitted, trajectories are sampled uniformly.
+  """
+
   motion_files: str | tuple[str, ...]
+  """Path or paths to NPZ files containing reference motion tensors."""
   anchor_body_name: str
+  """Body used as the root/anchor for alignment and anchor rewards."""
   body_names: tuple[str, ...]
+  """Tracked bodies, in the order expected by the motion tensors."""
   entity_name: str
+  """Scene entity that should follow the motion."""
   motion_source: Literal["local", "wandb"] = "local"
+  """Where higher-level scripts should resolve ``motion_files`` from."""
   motion_sample_probs: tuple[float, ...] = ()
+  """Optional trajectory sampling weights matching ``motion_files``."""
   pose_range: dict[str, tuple[float, float]] = field(default_factory=dict)
+  """RSI root pose perturbation ranges for x/y/z/roll/pitch/yaw."""
   velocity_range: dict[str, tuple[float, float]] = field(default_factory=dict)
+  """RSI root velocity perturbation ranges for linear and angular axes."""
   joint_position_range: tuple[float, float] = (-0.52, 0.52)
+  """Uniform RSI perturbation applied independently to every joint."""
   adaptive_kernel_size: int = 1
+  """Smoothing width over failed time bins for adaptive sampling."""
   adaptive_lambda: float = 0.8
+  """Geometric decay used by the adaptive sampling smoothing kernel."""
   adaptive_uniform_ratio: float = 0.1
+  """Uniform probability floor mixed into adaptive frame sampling."""
   adaptive_alpha: float = 0.001
+  """EMA coefficient for failed-bin statistics."""
   sampling_mode: Literal["adaptive", "uniform", "start"] = "adaptive"
+  """Frame reset strategy used when an episode starts or a motion ends."""
 
   @dataclass
   class VizCfg:
+    """Debug visualization options for the reference motion."""
+
     mode: Literal["ghost", "frames"] = "ghost"
+    """Draw a ghost robot mesh or per-body coordinate frames."""
     ghost_color: tuple[float, float, float, float] = (0.5, 0.7, 0.5, 0.5)
+    """RGBA color used for ghost visual geoms."""
 
   viz: VizCfg = field(default_factory=VizCfg)
 
   def build(self, env: ManagerBasedRlEnv) -> MotionCommand:
+    """Instantiate the command term for a concrete environment."""
     return MotionCommand(self, env)

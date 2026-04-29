@@ -1,4 +1,12 @@
 <mujoco model="g1_29dof_rev_1_0">
+    <!--
+      从 Latent 迁移来的无球拍 G1“纯机器人”MJCF。它放在持拍版本旁边，便于并排
+      调试和可视化对比。
+
+      与持拍 XML 一样，这里有意省略 XML 内嵌 actuators 和场景 floor contact
+      pairs。mjlab 会用程序化方式添加 actuators，scene XML 负责提供 floor/terrain
+      geoms。
+    -->
     <compiler angle="radian"/>
 
     <option iterations="3" ls_iterations="5" timestep=".002" integrator="Euler">
@@ -471,19 +479,8 @@
     </worldbody>
 
     <contact>
-        <pair name="left_foot_floor" geom1="left_foot" geom2="floor" condim="3" friction="0.6 0.6"/>
-        <pair name="right_foot_floor" geom1="right_foot" geom2="floor" condim="3" friction="0.6 0.6"/>
-        <pair name="left_shin_floor" geom1="left_shin" geom2="floor" condim="3" friction="0.6 0.6"/>
-        <pair name="right_shin_floor" geom1="right_shin" geom2="floor" condim="3" friction="0.6 0.6"/>
-        <pair name="left_hand_floor" geom1="left_hand_collision" geom2="floor" condim="3" friction="0.6 0.6"/>
-        <pair name="right_hand_floor" geom1="right_hand_collision" geom2="floor" condim="3" friction="0.6 0.6"/>
-        <pair name="left_shoulder_floor" geom1="left_shoulder_yaw_collision" geom2="floor" condim="3" friction="0.6 0.6"/>
-        <pair name="right_shoulder_floor" geom1="right_shoulder_yaw_collision" geom2="floor" condim="3" friction="0.6 0.6"/>
-        <pair name="left_elbow_floor" geom1="left_elbow_yaw_collision" geom2="floor" condim="3" friction="0.6 0.6"/>
-        <pair name="right_elbow_floor" geom1="right_elbow_yaw_collision" geom2="floor" condim="3" friction="0.6 0.6"/>
-        <pair name="pelvis_floor" geom1="pelvis_collision" geom2="floor" condim="3" friction="0.6 0.6"/>
-        <pair name="torso_floor" geom1="torso" geom2="floor" condim="3" friction="0.6 0.6"/>
-
+        <!-- 这里只保留机器人自碰撞 pairs。这里有意不定义 floor contact pairs，
+             因为 ``floor`` 只存在于 scene XML 文件中。 -->
         <pair name="left_hand_thigh" geom1="left_hand_collision" geom2="left_thigh" condim="1"/>
         <pair name="right_hand_thigh" geom1="right_hand_collision" geom2="right_thigh" condim="1"/>
         <pair name="left_foot_right_foot" geom1="left_foot" geom2="right_foot" condim="1"/>
@@ -501,43 +498,8 @@
         <pair name="left_elbow_torso" geom1="left_elbow_yaw_collision" geom2="torso" condim="1"/>
     </contact>
 
-
-    <actuator>
-        <motor name="left_hip_pitch_joint" joint="left_hip_pitch_joint" ctrlrange="-88 88"/>
-        <motor name="left_hip_roll_joint" joint="left_hip_roll_joint" ctrlrange="-139 139"/>
-        <motor name="left_hip_yaw_joint" joint="left_hip_yaw_joint" ctrlrange="-88 88"/>
-        <motor name="left_knee_joint" joint="left_knee_joint" ctrlrange="-139 139"/>
-        <motor name="left_ankle_pitch_joint" joint="left_ankle_pitch_joint" ctrlrange="-50 50"/>
-        <motor name="left_ankle_roll_joint" joint="left_ankle_roll_joint" ctrlrange="-50 50"/>
-
-        <motor name="right_hip_pitch_joint" joint="right_hip_pitch_joint" ctrlrange="-88 88"/>
-        <motor name="right_hip_roll_joint" joint="right_hip_roll_joint" ctrlrange="-139 139"/>
-        <motor name="right_hip_yaw_joint" joint="right_hip_yaw_joint" ctrlrange="-88 88"/>
-        <motor name="right_knee_joint" joint="right_knee_joint" ctrlrange="-139 139"/>
-        <motor name="right_ankle_pitch_joint" joint="right_ankle_pitch_joint" ctrlrange="-50 50"/>
-        <motor name="right_ankle_roll_joint" joint="right_ankle_roll_joint" ctrlrange="-50 50"/>
-
-        <motor name="waist_yaw_joint" joint="waist_yaw_joint" ctrlrange="-88 88"/>
-        <motor name="waist_roll_joint" joint="waist_roll_joint" ctrlrange="-50 50"/>
-        <motor name="waist_pitch_joint" joint="waist_pitch_joint" ctrlrange="-50 50"/>
-
-        <motor name="left_shoulder_pitch_joint" joint="left_shoulder_pitch_joint" ctrlrange="-25 25"/>
-        <motor name="left_shoulder_roll_joint" joint="left_shoulder_roll_joint" ctrlrange="-25 25"/>
-        <motor name="left_shoulder_yaw_joint" joint="left_shoulder_yaw_joint" ctrlrange="-25 25"/>
-        <motor name="left_elbow_joint" joint="left_elbow_joint" ctrlrange="-25 25"/>
-        <motor name="left_wrist_roll_joint" joint="left_wrist_roll_joint" ctrlrange="-25 25"/>
-        <motor name="left_wrist_pitch_joint" joint="left_wrist_pitch_joint" ctrlrange="-5 5"/>
-        <motor name="left_wrist_yaw_joint" joint="left_wrist_yaw_joint" ctrlrange="-5 5"/>
-
-        <motor name="right_shoulder_pitch_joint" joint="right_shoulder_pitch_joint" ctrlrange="-25 25"/>
-        <motor name="right_shoulder_roll_joint" joint="right_shoulder_roll_joint" ctrlrange="-25 25"/>
-        <motor name="right_shoulder_yaw_joint" joint="right_shoulder_yaw_joint" ctrlrange="-25 25"/>
-        <motor name="right_elbow_joint" joint="right_elbow_joint" ctrlrange="-25 25"/>
-        <motor name="right_wrist_roll_joint" joint="right_wrist_roll_joint" ctrlrange="-25 25"/>
-        <motor name="right_wrist_pitch_joint" joint="right_wrist_pitch_joint" ctrlrange="-5 5"/>
-        <motor name="right_wrist_yaw_joint" joint="right_wrist_yaw_joint" ctrlrange="-5 5"/>
-    </actuator>
-
+    <!-- 从 Latent 迁移来的运动学 sensors。它们暴露命名 body/site 参考帧，
+         可用于诊断，也可按需用于任务 observations。 -->
     <sensor>
         <framezaxis objtype="site" objname="imu_in_torso" name="upvector_torso"/>
         <velocimeter site="imu_in_torso" name="local_linvel_torso"/>

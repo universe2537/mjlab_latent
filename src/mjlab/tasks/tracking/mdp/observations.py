@@ -1,3 +1,11 @@
+"""Observation terms specific to motion tracking.
+
+The actor receives compact reference deltas expressed in the robot anchor
+frame, while the critic can additionally observe detailed body pose terms.
+Returning anchor-frame quantities improves invariance to global placement in
+the arena.
+"""
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, cast
@@ -16,6 +24,7 @@ if TYPE_CHECKING:
 
 
 def motion_anchor_pos_b(env: ManagerBasedRlEnv, command_name: str) -> torch.Tensor:
+  """Reference anchor position expressed in the robot anchor frame."""
   command = cast(MotionCommand, env.command_manager.get_term(command_name))
 
   pos, _ = subtract_frame_transforms(
@@ -29,6 +38,11 @@ def motion_anchor_pos_b(env: ManagerBasedRlEnv, command_name: str) -> torch.Tens
 
 
 def motion_anchor_ori_b(env: ManagerBasedRlEnv, command_name: str) -> torch.Tensor:
+  """Reference anchor orientation expressed in the robot anchor frame.
+
+  The first two columns of the rotation matrix are returned instead of a
+  quaternion to avoid sign ambiguity in the observation.
+  """
   command = cast(MotionCommand, env.command_manager.get_term(command_name))
 
   _, ori = subtract_frame_transforms(
@@ -42,6 +56,7 @@ def motion_anchor_ori_b(env: ManagerBasedRlEnv, command_name: str) -> torch.Tens
 
 
 def robot_body_pos_b(env: ManagerBasedRlEnv, command_name: str) -> torch.Tensor:
+  """Current tracked body positions expressed in the robot anchor frame."""
   command = cast(MotionCommand, env.command_manager.get_term(command_name))
 
   num_bodies = len(command.cfg.body_names)
@@ -56,6 +71,7 @@ def robot_body_pos_b(env: ManagerBasedRlEnv, command_name: str) -> torch.Tensor:
 
 
 def robot_body_ori_b(env: ManagerBasedRlEnv, command_name: str) -> torch.Tensor:
+  """Current tracked body orientations expressed in the robot anchor frame."""
   command = cast(MotionCommand, env.command_manager.get_term(command_name))
 
   num_bodies = len(command.cfg.body_names)

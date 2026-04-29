@@ -44,7 +44,7 @@ def compute_root_relative_mpkpe(command: MotionCommand) -> torch.Tensor:
 
 
 def compute_joint_velocity_error(command: MotionCommand) -> torch.Tensor:
-  """Compute average joint velocity error."""
+  """Compute the L2 norm of joint velocity error for each environment."""
   vel_error = command.joint_vel - command.robot_joint_vel
   return torch.norm(vel_error, dim=-1)  # (num_envs,)
 
@@ -53,7 +53,7 @@ def compute_ee_position_error(
   command: MotionCommand,
   ee_body_names: tuple[str, ...],
 ) -> torch.Tensor:
-  """Compute end effector position error."""
+  """Compute mean position error for a selected end-effector body set."""
   ee_indices = _get_body_indices(command, ee_body_names)
   if len(ee_indices) == 0:
     return torch.zeros(command.num_envs, device=command.device)
@@ -70,7 +70,7 @@ def compute_ee_orientation_error(
   command: MotionCommand,
   ee_body_names: tuple[str, ...],
 ) -> torch.Tensor:
-  """Compute end effector orientation error."""
+  """Compute mean orientation error for a selected end-effector body set."""
   ee_indices = _get_body_indices(command, ee_body_names)
   if len(ee_indices) == 0:
     return torch.zeros(command.num_envs, device=command.device)

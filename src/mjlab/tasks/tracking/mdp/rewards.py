@@ -1,3 +1,11 @@
+"""Reward terms for motion tracking.
+
+All rewards compare the active ``MotionCommand`` reference against the robot's
+current state and return one scalar per environment.  The exponential rewards
+use ``exp(-error / std**2)`` so ``std`` controls how quickly reward falls as the
+tracking error grows.
+"""
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, cast
@@ -16,6 +24,7 @@ if TYPE_CHECKING:
 def _get_body_indexes(
   command: MotionCommand, body_names: tuple[str, ...] | None
 ) -> list[int]:
+  """Resolve an optional body-name filter into indices in command tensors."""
   return [
     i
     for i, name in enumerate(command.cfg.body_names)
@@ -26,6 +35,7 @@ def _get_body_indexes(
 def motion_global_anchor_position_error_exp(
   env: ManagerBasedRlEnv, command_name: str, std: float
 ) -> torch.Tensor:
+  """Reward the robot for keeping the anchor body near the reference anchor."""
   command = cast(MotionCommand, env.command_manager.get_term(command_name))
   error = torch.sum(
     torch.square(command.anchor_pos_w - command.robot_anchor_pos_w), dim=-1
@@ -36,6 +46,7 @@ def motion_global_anchor_position_error_exp(
 def motion_global_anchor_orientation_error_exp(
   env: ManagerBasedRlEnv, command_name: str, std: float
 ) -> torch.Tensor:
+  """Reward the robot for matching the reference anchor orientation."""
   command = cast(MotionCommand, env.command_manager.get_term(command_name))
   error = quat_error_magnitude(command.anchor_quat_w, command.robot_anchor_quat_w) ** 2
   return torch.exp(-error / std**2)
@@ -47,6 +58,12 @@ def motion_relative_body_position_error_exp(
   std: float,
   body_names: tuple[str, ...] | None = None,
 ) -> torch.Tensor:
+  """Reward tracked body positions after anchor-relative alignment.
+
+  ``MotionCommand.update_relative_body_poses`` moves the reference body targets
+  into a frame aligned with the current robot anchor.  This reward therefore
+  focuses on body shape/pose instead of absolute global drift.
+  """
   command = cast(MotionCommand, env.command_manager.get_term(command_name))
   body_indexes = _get_body_indexes(command, body_names)
   error = torch.sum(
@@ -65,6 +82,7 @@ def motion_relative_body_orientation_error_exp(
   std: float,
   body_names: tuple[str, ...] | None = None,
 ) -> torch.Tensor:
+  """Reward tracked body orientations after anchor-relative yaw alignment."""
   command = cast(MotionCommand, env.command_manager.get_term(command_name))
   body_indexes = _get_body_indexes(command, body_names)
   error = (
@@ -83,6 +101,7 @@ def motion_global_body_linear_velocity_error_exp(
   std: float,
   body_names: tuple[str, ...] | None = None,
 ) -> torch.Tensor:
+  """Reward matching world-frame linear velocities for tracked bodies."""
   command = cast(MotionCommand, env.command_manager.get_term(command_name))
   body_indexes = _get_body_indexes(command, body_names)
   error = torch.sum(
@@ -101,6 +120,7 @@ def motion_global_body_angular_velocity_error_exp(
   std: float,
   body_names: tuple[str, ...] | None = None,
 ) -> torch.Tensor:
+  """Reward matching world-frame angular velocities for tracked bodies."""
   command = cast(MotionCommand, env.command_manager.get_term(command_name))
   body_indexes = _get_body_indexes(command, body_names)
   error = torch.sum(

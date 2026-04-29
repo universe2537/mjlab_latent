@@ -47,11 +47,18 @@ class EvaluateConfig:
 
 
 def run_evaluate(task_id: str, cfg: EvaluateConfig) -> dict[str, float]:
-  """Run policy evaluation and compute metrics."""
+  """Run policy evaluation and compute aggregate tracking metrics.
+
+  Each parallel environment evaluates one episode.  Metrics are accumulated only
+  while an environment is active, then averaged per episode before the final
+  population mean is returned.
+  """
   configure_torch_backends()
   device = cfg.device or ("cuda:0" if torch.cuda.is_available() else "cpu")
 
-  # Load configs.
+  # Load the registered task configs and verify that this task exposes a motion
+  # command.  Non-tracking tasks do not provide the reference tensors required
+  # by the metric functions below.
   env_cfg = load_env_cfg(task_id, play=False)
   agent_cfg = load_rl_cfg(task_id)
 
@@ -59,7 +66,8 @@ def run_evaluate(task_id: str, cfg: EvaluateConfig) -> dict[str, float]:
   if not isinstance(motion_cmd, MotionCommandCfg):
     raise ValueError(f"Task {task_id} is not a tracking task.")
 
-  # Load motion file from W&B run.
+  # Reuse the same motion artifact as the training run so evaluation measures
+  # the policy on the trajectory distribution it was trained against.
   api = wandb.Api()
   run = api.run(cfg.wandb_run_path)
   art = next((a for a in run.used_artifacts() if a.type == "motions"), None)
@@ -67,7 +75,8 @@ def run_evaluate(task_id: str, cfg: EvaluateConfig) -> dict[str, float]:
     raise RuntimeError("No motion artifact found in the run.")
   motion_cmd.motion_files = str(Path(art.download()) / "motion.npz")
 
-  # Evaluation config.
+  # Evaluation should be deterministic and should cover the full motion from the
+  # start frame, so disable random pushes and force start-frame sampling.
   motion_cmd.sampling_mode = "start"
   env_cfg.observations["actor"].enable_corruption = True
   env_cfg.events.pop("push_robot", None)
@@ -91,7 +100,8 @@ def run_evaluate(task_id: str, cfg: EvaluateConfig) -> dict[str, float]:
   ee_body_names = env_cfg.terminations["ee_body_pos"].params["body_names"]
   print(f"[INFO] End effector bodies: {ee_body_names}")
 
-  # Metric accumulators.
+  # Metric accumulators store one vector per environment step.  Completed envs
+  # contribute zeros and are excluded later through active_steps.
   all_mpkpe: list[torch.Tensor] = []
   all_r_mpkpe: list[torch.Tensor] = []
   all_joint_vel_error: list[torch.Tensor] = []
@@ -112,7 +122,8 @@ def run_evaluate(task_id: str, cfg: EvaluateConfig) -> dict[str, float]:
       actions = policy(obs)
     obs, _, dones, _ = env.step(actions)
 
-    # Compute metrics for active envs.
+    # Compute metrics for active envs only; done envs remain at zero so tensor
+    # shapes stay rectangular until the final reduction.
     active = ~done_envs
     if active.any():
       all_mpkpe.append(torch.where(active, compute_mpkpe(command), 0.0))
@@ -127,7 +138,7 @@ def run_evaluate(task_id: str, cfg: EvaluateConfig) -> dict[str, float]:
         torch.where(active, compute_ee_orientation_error(command, ee_body_names), 0.0)
       )
 
-    # Track completions.
+    # A successful rollout reaches the time limit without a failure termination.
     terminated = env.unwrapped.termination_manager.terminated
     truncated = env.unwrapped.termination_manager.time_outs
     newly_done = dones.bool() & ~done_envs
@@ -142,7 +153,8 @@ def run_evaluate(task_id: str, cfg: EvaluateConfig) -> dict[str, float]:
       )
     step += 1
 
-  # Compute mean metrics.
+  # Convert step-major accumulators to tensors and average over the number of
+  # active steps for each environment before computing the population mean.
   stacks = [
     all_mpkpe,
     all_r_mpkpe,
