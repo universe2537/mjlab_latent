@@ -38,6 +38,8 @@ def unitree_g1_flat_tracking_env_cfg(
 
   motion_cmd = cfg.commands["motion"]
   assert isinstance(motion_cmd, MotionCommandCfg)
+  motion_cmd.motion_source = "wandb"
+  motion_cmd.motion_file = "csv_to_npz/g1_dance1_subject1"
   motion_cmd.anchor_body_name = "torso_link"
   motion_cmd.body_names = (
     "pelvis",

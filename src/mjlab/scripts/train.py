@@ -6,7 +6,7 @@ import sys
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Literal, cast
+from typing import Literal
 
 import tyro
 
@@ -46,7 +46,162 @@ class TrainConfig:
     return TrainConfig(env=env_cfg, agent=agent_cfg)
 
 
+def _load_env_file(path: Path = Path(".env"), override: bool = False) -> None:
+  """Load simple KEY=VALUE or export KEY=VALUE entries from a .env file."""
+  if not path.exists():
+    return
+
+  for line in path.read_text().splitlines():
+    line = line.strip()
+    if not line or line.startswith("#"):
+      continue
+    if line.startswith("export "):
+      line = line[len("export ") :].strip()
+    if "=" not in line:
+      continue
+
+    key, value = line.split("=", 1)
+    key = key.strip()
+    value = value.strip().strip("'\"")
+    if not key or (not override and key in os.environ):
+      continue
+    os.environ[key] = value
+
+
+def _first_env(*names: str) -> str | None:
+  for name in names:
+    value = os.environ.get(name)
+    if value:
+      return value
+  return None
+
+
+def _apply_env_defaults(cfg: TrainConfig) -> None:
+  """Apply .env defaults that are consumed by rsl_rl/W&B."""
+  wandb_project = _first_env("WANDB_PROJECT")
+  if wandb_project:
+    cfg.agent.wandb_project = wandb_project
+
+  wandb_entity = _first_env("WANDB_ENTITY")
+  if wandb_entity and "WANDB_USERNAME" not in os.environ:
+    # rsl_rl's WandbSummaryWriter reads WANDB_USERNAME for the entity.
+    os.environ["WANDB_USERNAME"] = wandb_entity
+
+
+def _normalize_wandb_motion_ref(ref: str, alias: str | None = None) -> str:
+  entity = _first_env("WANDB_ENTITY")
+  if "/" not in ref:
+    if entity is None:
+      raise ValueError(
+        f"W&B motion artifact {ref!r} is missing an entity. "
+        "Set WANDB_ENTITY in .env or use a full artifact path."
+      )
+    ref = f"{entity}/motions/{ref}"
+  elif ref.count("/") == 1:
+    if entity is None:
+      raise ValueError(
+        f"W&B motion artifact {ref!r} is missing an entity. "
+        "Set WANDB_ENTITY in .env or use a full artifact path."
+      )
+    ref = f"{entity}/{ref}"
+
+  if ":" not in ref.rsplit("/", 1)[-1]:
+    ref = f"{ref}:{alias or 'latest'}"
+  return ref
+
+
+def _configured_motion_paths(motion_file: str) -> list[Path]:
+  path = Path(os.path.expandvars(motion_file)).expanduser()
+  if path.is_absolute():
+    return [path]
+
+  paths = []
+  gli_path = _first_env("GLI_PATH")
+  if gli_path:
+    paths.append(Path(os.path.expandvars(gli_path)).expanduser() / path)
+  paths.append(Path.cwd() / path)
+
+  unique_paths = []
+  seen = set()
+  for candidate in paths:
+    absolute = candidate.absolute()
+    if absolute in seen:
+      continue
+    seen.add(absolute)
+    unique_paths.append(candidate)
+  return unique_paths
+
+
+def _wandb_ref_from_configured_motion(
+  cfg: TrainConfig, motion_cmd: MotionCommandCfg
+) -> str | None:
+  alias = _first_env("MJLAB_MOTION_ALIAS", "WANDB_ARTIFACT_ALIAS") or "latest"
+  motion_ref = cfg.registry_name or motion_cmd.motion_file
+  if motion_ref:
+    return _normalize_wandb_motion_ref(motion_ref, alias)
+
+  return None
+
+
+def _download_motion_from_registry(registry_name: str) -> Path:
+  import wandb
+
+  api = wandb.Api()
+  artifact = api.artifact(registry_name)
+  download_dir = Path(artifact.download())
+  source_motion_file = download_dir / "motion.npz"
+
+  if not source_motion_file.exists():
+    npz_files = sorted(download_dir.rglob("*.npz"))
+    if not npz_files:
+      raise FileNotFoundError(f"No .npz file found in W&B artifact {registry_name}.")
+    source_motion_file = npz_files[0]
+
+  return source_motion_file
+
+
+def _resolve_tracking_motion(
+  cfg: TrainConfig, motion_cmd: MotionCommandCfg
+) -> tuple[Path, str | None]:
+  if motion_cmd.motion_source == "local":
+    if not motion_cmd.motion_file:
+      raise ValueError(
+        "MotionCommandCfg.motion_source is 'local', but motion_file is empty."
+      )
+    configured_paths = _configured_motion_paths(motion_cmd.motion_file)
+    for local_motion in configured_paths:
+      if local_motion.exists():
+        print(f"[INFO] Using configured local motion file: {local_motion}")
+        return local_motion, None
+    raise ValueError(
+      "Configured local motion file was not found. "
+      f"motion_file={motion_cmd.motion_file!r}; searched: "
+      + ", ".join(str(path) for path in configured_paths)
+    )
+
+  if motion_cmd.motion_source == "wandb":
+    if not motion_cmd.motion_file:
+      raise ValueError(
+        "MotionCommandCfg.motion_source is 'wandb', but motion_file is empty."
+      )
+    registry_name = _wandb_ref_from_configured_motion(cfg, motion_cmd)
+    if registry_name is None:
+      raise ValueError(
+        "MotionCommandCfg.motion_source is 'wandb', but motion_file could not be "
+        "resolved as a W&B artifact path."
+      )
+    print(f"[INFO] Downloading configured W&B motion artifact: {registry_name}")
+    return _download_motion_from_registry(registry_name), registry_name
+
+  raise ValueError(
+    f"Unknown MotionCommandCfg.motion_source: {motion_cmd.motion_source}"
+  )
+
+
 def run_train(task_id: str, cfg: TrainConfig, log_dir: Path) -> None:
+  _load_env_file()
+  _apply_env_defaults(cfg)
+
   cuda_visible = os.environ.get("CUDA_VISIBLE_DEVICES", "")
   if cuda_visible == "":
     device = "cpu"
@@ -78,26 +233,8 @@ def run_train(task_id: str, cfg: TrainConfig, log_dir: Path) -> None:
   if is_tracking_task:
     motion_cmd = cfg.env.commands["motion"]
     assert isinstance(motion_cmd, MotionCommandCfg)
-
-    # Check if motion_file is already set (e.g., via CLI --env.commands.motion.motion-file).
-    if motion_cmd.motion_file and Path(motion_cmd.motion_file).exists():
-      print(f"[INFO] Using local motion file: {motion_cmd.motion_file}")
-    elif cfg.registry_name:
-      # Download from WandB registry.
-      registry_name = cast(str, cfg.registry_name)
-      if ":" not in registry_name:
-        registry_name = registry_name + ":latest"
-      import wandb
-
-      api = wandb.Api()
-      artifact = api.artifact(registry_name)
-      motion_cmd.motion_file = str(Path(artifact.download()) / "motion.npz")
-    else:
-      raise ValueError(
-        "For tracking tasks, provide either:\n"
-        "  --registry-name your-org/motions/motion-name (download from WandB)\n"
-        "  --env.commands.motion.motion-file /path/to/motion.npz (local file)"
-      )
+    motion_path, registry_name = _resolve_tracking_motion(cfg, motion_cmd)
+    motion_cmd.motion_file = str(motion_path)
 
   # Enable NaN guard if requested.
   if cfg.enable_nan_guard:
@@ -180,7 +317,9 @@ def run_train(task_id: str, cfg: TrainConfig, log_dir: Path) -> None:
 
 
 def launch_training(task_id: str, args: TrainConfig | None = None):
+  _load_env_file()
   args = args or TrainConfig.from_task(task_id)
+  _apply_env_defaults(args)
 
   # Create log directory once before launching workers.
   log_root_path = (Path(args.log_root) / args.agent.experiment_name).resolve()
@@ -224,11 +363,13 @@ def launch_training(task_id: str, args: TrainConfig | None = None):
       hostnames=["localhost"],
       workers_per_host=num_gpus,
       backend=None,  # Let rsl_rl handle process group initialization.
-      copy_env_vars=torchrunx.DEFAULT_ENV_VARS_FOR_COPY + ("MUJOCO*",),
+      copy_env_vars=torchrunx.DEFAULT_ENV_VARS_FOR_COPY
+      + ("MUJOCO*", "WANDB*", "GLI_PATH", "MJLAB*"),
     ).run(run_train, task_id, args, log_dir)
 
 
 def main():
+  _load_env_file()
   maybe_print_top_level_help("train")
 
   # Parse first argument to choose the task.

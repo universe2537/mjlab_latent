@@ -50,10 +50,32 @@ for every body, and uploads the resulting NPZ to your WandB registry.
 Training
 --------
 
+Tracking tasks read the motion source from the task configuration. For the
+Unitree G1 tracking task this is configured in
+``src/mjlab/tasks/tracking/config/g1/env_cfgs.py``:
+
+.. code-block:: python
+
+   motion_cmd.motion_source = "local"
+   motion_cmd.motion_file = "data/LAFAN/g1/npz/dance1_subject1.npz"
+
+``motion_file`` is interpreted according to ``motion_source``. Use
+``motion_source="local"`` to load ``motion_file`` as a local NPZ path. The path
+may use environment variables such as ``${GLI_PATH}``. Use
+``motion_source="wandb"`` to load ``motion_file`` as a W&B artifact path:
+
+.. code-block:: python
+
+   motion_cmd.motion_source = "wandb"
+   motion_cmd.motion_file = "motions/dance1_subject1"
+
+Values like ``WANDB_PROJECT``, ``WANDB_ENTITY``, and ``GLI_PATH`` can be placed
+in a local ``.env`` file. When the W&B ``motion_file`` omits the entity,
+training uses ``WANDB_ENTITY`` from ``.env``.
+
 .. code-block:: bash
 
    uv run train Mjlab-Tracking-Flat-Unitree-G1 \
-       --registry-name your-org/motions/motion-name \
        --env.scene.num-envs 4096
 
 Evaluation

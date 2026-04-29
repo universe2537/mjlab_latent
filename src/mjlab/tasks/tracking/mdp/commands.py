@@ -584,6 +584,7 @@ class MotionCommandCfg(CommandTermCfg):
   anchor_body_name: str
   body_names: tuple[str, ...]
   entity_name: str
+  motion_source: Literal["local", "wandb"] = "local"
   pose_range: dict[str, tuple[float, float]] = field(default_factory=dict)
   velocity_range: dict[str, tuple[float, float]] = field(default_factory=dict)
   joint_position_range: tuple[float, float] = (-0.52, 0.52)
