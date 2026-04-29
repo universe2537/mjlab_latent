@@ -57,20 +57,24 @@ Unitree G1 tracking task this is configured in
 .. code-block:: python
 
    motion_cmd.motion_source = "local"
-   motion_cmd.motion_file = "data/LAFAN/g1/npz/dance1_subject1.npz"
+   motion_cmd.motion_files = "data/LAFAN/g1/npz/dance1_subject1.npz"
 
-``motion_file`` is interpreted according to ``motion_source``. Use
-``motion_source="local"`` to load ``motion_file`` as a local NPZ path. The path
-may use environment variables such as ``${GLI_PATH}``. Use
-``motion_source="wandb"`` to load ``motion_file`` as a W&B artifact path:
+``motion_files`` accepts either a single string or a tuple of strings, and is
+interpreted according to ``motion_source``. Use ``motion_source="local"`` to load
+``motion_files`` as local NPZ paths. The paths may use environment variables
+such as ``${GLI_PATH}``. Use ``motion_source="wandb"`` to load ``motion_files``
+as W&B artifact paths:
 
 .. code-block:: python
 
    motion_cmd.motion_source = "wandb"
-   motion_cmd.motion_file = "motions/dance1_subject1"
+   motion_cmd.motion_files = (
+       "motions/dance1_subject1",
+       "motions/dance2_subject1",
+   )
 
 Values like ``WANDB_PROJECT``, ``WANDB_ENTITY``, and ``GLI_PATH`` can be placed
-in a local ``.env`` file. When the W&B ``motion_file`` omits the entity,
+in a local ``.env`` file. When a W&B ``motion_files`` entry omits the entity,
 training uses ``WANDB_ENTITY`` from ``.env``.
 
 .. code-block:: bash

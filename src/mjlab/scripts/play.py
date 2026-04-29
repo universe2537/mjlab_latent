@@ -38,7 +38,7 @@ class PlayConfig:
   wandb_checkpoint_name: str | None = None
   """Optional checkpoint name within the W&B run to load (e.g. 'model_4000.pt')."""
   checkpoint_file: str | None = None
-  motion_file: str | None = None
+  motion_files: str | tuple[str, ...] | None = None
   num_envs: int | None = None
   device: str | None = None
   video: bool = False
@@ -54,6 +54,14 @@ class PlayConfig:
 
   # Internal flag used by demo script.
   _demo_mode: tyro.conf.Suppress[bool] = False
+
+
+def _motion_file_refs(motion_files: str | tuple[str, ...] | None) -> tuple[str, ...]:
+  if motion_files is None:
+    return ()
+  if isinstance(motion_files, str):
+    return (motion_files,)
+  return tuple(motion_files)
 
 
 def run_play(task_id: str, cfg: PlayConfig):
@@ -87,15 +95,16 @@ def run_play(task_id: str, cfg: PlayConfig):
     motion_cmd = env_cfg.commands["motion"]
     assert isinstance(motion_cmd, MotionCommandCfg)
 
-    # Check for local motion file first (works for both dummy and trained modes).
-    if cfg.motion_file is not None and Path(cfg.motion_file).exists():
-      print(f"[INFO]: Using local motion file: {cfg.motion_file}")
-      motion_cmd.motion_file = cfg.motion_file
+    motion_files = _motion_file_refs(cfg.motion_files)
+    # Check for local motion files first (works for both dummy and trained modes).
+    if motion_files and all(Path(motion_file).exists() for motion_file in motion_files):
+      print(f"[INFO]: Using {len(motion_files)} local motion file(s)")
+      motion_cmd.motion_files = motion_files
     elif DUMMY_MODE:
       if not cfg.registry_name:
         raise ValueError(
           "Tracking tasks require either:\n"
-          "  --motion-file /path/to/motion.npz (local file)\n"
+          "  --motion-files /path/to/motion.npz (local file)\n"
           "  --registry-name your-org/motions/motion-name (download from WandB)"
         )
       # Check if the registry name includes alias, if not, append ":latest".
@@ -106,18 +115,18 @@ def run_play(task_id: str, cfg: PlayConfig):
 
       api = wandb.Api()
       artifact = api.artifact(registry_name)
-      motion_cmd.motion_file = str(Path(artifact.download()) / "motion.npz")
+      motion_cmd.motion_files = str(Path(artifact.download()) / "motion.npz")
     else:
-      if cfg.motion_file is not None:
-        print(f"[INFO]: Using motion file from CLI: {cfg.motion_file}")
-        motion_cmd.motion_file = cfg.motion_file
+      if motion_files:
+        print(f"[INFO]: Using {len(motion_files)} motion file(s) from CLI")
+        motion_cmd.motion_files = motion_files
       else:
         import wandb
 
         api = wandb.Api()
         if cfg.wandb_run_path is None and cfg.checkpoint_file is not None:
           raise ValueError(
-            "Tracking tasks require `motion_file` when using `checkpoint_file`, "
+            "Tracking tasks require `motion_files` when using `checkpoint_file`, "
             "or provide `wandb_run_path` so the motion artifact can be resolved."
           )
         if cfg.wandb_run_path is not None:
@@ -127,7 +136,7 @@ def run_play(task_id: str, cfg: PlayConfig):
           )
           if art is None:
             raise RuntimeError("No motion artifact found in the run.")
-          motion_cmd.motion_file = str(Path(art.download()) / "motion.npz")
+          motion_cmd.motion_files = str(Path(art.download()) / "motion.npz")
 
   log_dir: Path | None = None
   resume_path: Path | None = None

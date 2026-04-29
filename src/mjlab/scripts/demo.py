@@ -27,7 +27,7 @@ def main() -> None:
     PlayConfig,
     default=PlayConfig(
       checkpoint_file=checkpoint_path,
-      motion_file=motion_path,
+      motion_files=motion_path,
       num_envs=8,
       viewer="viser",
       _demo_mode=True,

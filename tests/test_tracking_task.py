@@ -33,6 +33,25 @@ def test_tracking_tasks_have_motion_command(tracking_task_ids: list[str]) -> Non
     )
 
 
+def test_tracking_tasks_configure_motion_files(tracking_task_ids: list[str]) -> None:
+  """All tracking tasks should declare how their motion files are resolved."""
+  for task_id in tracking_task_ids:
+    cfg = load_env_cfg(task_id)
+    motion_cmd = cfg.commands["motion"]
+    assert isinstance(motion_cmd, MotionCommandCfg)
+
+    assert motion_cmd.motion_source in {"local", "wandb"}, (
+      f"Task {task_id} has invalid motion_source={motion_cmd.motion_source!r}"
+    )
+    if isinstance(motion_cmd.motion_files, str):
+      motion_files = (motion_cmd.motion_files,)
+    else:
+      motion_files = motion_cmd.motion_files
+    assert motion_files and all(motion_files), (
+      f"Task {task_id} must configure at least one non-empty motion_files entry"
+    )
+
+
 def test_tracking_tasks_have_self_collision_sensor(
   tracking_task_ids: list[str],
 ) -> None:

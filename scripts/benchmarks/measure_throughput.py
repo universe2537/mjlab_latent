@@ -133,7 +133,7 @@ def benchmark_task(task: str, cfg: ThroughputConfig) -> BenchmarkResult:
       api = wandb.Api()
       artifact = api.artifact(cfg.tracking_motion)
       motion_dir = artifact.download()
-      motion_cmd.motion_file = str(Path(motion_dir) / "motion.npz")
+      motion_cmd.motion_files = str(Path(motion_dir) / "motion.npz")
 
   env = ManagerBasedRlEnv(cfg=env_cfg, device=cfg.device)
   env.reset()

@@ -152,7 +152,7 @@ def make_tracking_env_cfg() -> ManagerBasedRlEnvCfg:
       velocity_range=VELOCITY_RANGE,
       joint_position_range=(-0.1, 0.1),
       # Override in robot cfg.
-      motion_file="",
+      motion_files="",
       anchor_body_name="",
       body_names=(),
     )

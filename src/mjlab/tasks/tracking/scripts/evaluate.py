@@ -65,7 +65,7 @@ def run_evaluate(task_id: str, cfg: EvaluateConfig) -> dict[str, float]:
   art = next((a for a in run.used_artifacts() if a.type == "motions"), None)
   if art is None:
     raise RuntimeError("No motion artifact found in the run.")
-  motion_cmd.motion_file = str(Path(art.download()) / "motion.npz")
+  motion_cmd.motion_files = str(Path(art.download()) / "motion.npz")
 
   # Evaluation config.
   motion_cmd.sampling_mode = "start"

@@ -110,6 +110,12 @@ def _normalize_wandb_motion_ref(ref: str, alias: str | None = None) -> str:
   return ref
 
 
+def _motion_file_refs(motion_files: str | tuple[str, ...]) -> tuple[str, ...]:
+  if isinstance(motion_files, str):
+    return (motion_files,) if motion_files else ()
+  return tuple(motion_files)
+
+
 def _configured_motion_paths(motion_file: str) -> list[Path]:
   path = Path(os.path.expandvars(motion_file)).expanduser()
   if path.is_absolute():
@@ -134,13 +140,14 @@ def _configured_motion_paths(motion_file: str) -> list[Path]:
 
 def _wandb_ref_from_configured_motion(
   cfg: TrainConfig, motion_cmd: MotionCommandCfg
-) -> str | None:
+) -> tuple[str, ...]:
   alias = _first_env("MJLAB_MOTION_ALIAS", "WANDB_ARTIFACT_ALIAS") or "latest"
-  motion_ref = cfg.registry_name or motion_cmd.motion_file
-  if motion_ref:
-    return _normalize_wandb_motion_ref(motion_ref, alias)
-
-  return None
+  motion_refs = (
+    (cfg.registry_name,)
+    if cfg.registry_name
+    else _motion_file_refs(motion_cmd.motion_files)
+  )
+  return tuple(_normalize_wandb_motion_ref(ref, alias) for ref in motion_refs)
 
 
 def _download_motion_from_registry(registry_name: str) -> Path:
@@ -162,36 +169,41 @@ def _download_motion_from_registry(registry_name: str) -> Path:
 
 def _resolve_tracking_motion(
   cfg: TrainConfig, motion_cmd: MotionCommandCfg
-) -> tuple[Path, str | None]:
+) -> tuple[tuple[Path, ...], str | None]:
   if motion_cmd.motion_source == "local":
-    if not motion_cmd.motion_file:
+    motion_refs = _motion_file_refs(motion_cmd.motion_files)
+    if not motion_refs:
       raise ValueError(
-        "MotionCommandCfg.motion_source is 'local', but motion_file is empty."
+        "MotionCommandCfg.motion_source is 'local', but motion_files is empty."
       )
-    configured_paths = _configured_motion_paths(motion_cmd.motion_file)
-    for local_motion in configured_paths:
-      if local_motion.exists():
-        print(f"[INFO] Using configured local motion file: {local_motion}")
-        return local_motion, None
-    raise ValueError(
-      "Configured local motion file was not found. "
-      f"motion_file={motion_cmd.motion_file!r}; searched: "
-      + ", ".join(str(path) for path in configured_paths)
-    )
+    resolved_paths = []
+    for motion_ref in motion_refs:
+      configured_paths = _configured_motion_paths(motion_ref)
+      local_motion = next((path for path in configured_paths if path.exists()), None)
+      if local_motion is None:
+        raise ValueError(
+          "Configured local motion file was not found. "
+          f"motion_files entry={motion_ref!r}; searched: "
+          + ", ".join(str(path) for path in configured_paths)
+        )
+      resolved_paths.append(local_motion)
+    print(f"[INFO] Using {len(resolved_paths)} configured local motion file(s).")
+    return tuple(resolved_paths), None
 
   if motion_cmd.motion_source == "wandb":
-    if not motion_cmd.motion_file:
+    registry_names = _wandb_ref_from_configured_motion(cfg, motion_cmd)
+    if not registry_names:
       raise ValueError(
-        "MotionCommandCfg.motion_source is 'wandb', but motion_file is empty."
+        "MotionCommandCfg.motion_source is 'wandb', but motion_files is empty."
       )
-    registry_name = _wandb_ref_from_configured_motion(cfg, motion_cmd)
-    if registry_name is None:
-      raise ValueError(
-        "MotionCommandCfg.motion_source is 'wandb', but motion_file could not be "
-        "resolved as a W&B artifact path."
-      )
-    print(f"[INFO] Downloading configured W&B motion artifact: {registry_name}")
-    return _download_motion_from_registry(registry_name), registry_name
+    print(
+      f"[INFO] Downloading {len(registry_names)} configured W&B motion artifact(s)."
+    )
+    motion_paths = tuple(
+      _download_motion_from_registry(registry_name)
+      for registry_name in registry_names
+    )
+    return motion_paths, registry_names[0] if len(registry_names) == 1 else None
 
   raise ValueError(
     f"Unknown MotionCommandCfg.motion_source: {motion_cmd.motion_source}"
@@ -233,8 +245,8 @@ def run_train(task_id: str, cfg: TrainConfig, log_dir: Path) -> None:
   if is_tracking_task:
     motion_cmd = cfg.env.commands["motion"]
     assert isinstance(motion_cmd, MotionCommandCfg)
-    motion_path, registry_name = _resolve_tracking_motion(cfg, motion_cmd)
-    motion_cmd.motion_file = str(motion_path)
+    motion_paths, registry_name = _resolve_tracking_motion(cfg, motion_cmd)
+    motion_cmd.motion_files = tuple(str(path) for path in motion_paths)
 
   # Enable NaN guard if requested.
   if cfg.enable_nan_guard:
