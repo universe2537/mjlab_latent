@@ -1,14 +1,11 @@
-"""Motion-reference command term used by the tracking task.
+"""跟踪任务使用的动作参考命令项。
 
-The tracking environment treats a prerecorded motion as a command.  Each
-parallel environment owns two pieces of command state:
+跟踪环境将预录制的动作视为一个命令。每个并行环境维护两部分命令状态：
 
-* ``motion_ids`` selects which trajectory from ``MotionLoader`` is active.
-* ``time_steps`` selects the local frame within that trajectory.
+* ``motion_ids`` 选择哪个 MotionLoader 中的轨迹处于激活状态。
+* ``time_steps`` 选择该轨迹内的本地帧。
 
-Most properties below expose either the reference state at the selected frame
-or the robot's current simulated state in matching tensor shapes.  Reward,
-observation, and termination terms then compare those two state streams.
+下面的大多数属性要么暴露所选帧的参考状态，要么暴露与之匹配张量形状的机器人当前模拟状态。奖励、观测和终止项随后比较这两条状态流。
 """
 
 from __future__ import annotations
@@ -70,9 +67,7 @@ class MotionLoader:
     device: str = "cpu",
   ) -> None:
     self.motion_files = _as_motion_files(motion_files)
-    # Each list collects the same field from every trajectory.  Concatenating
-    # the lists keeps runtime sampling simple: frame lookup becomes one global
-    # integer index instead of a Python-level file switch.
+    # 每个列表从每条轨迹中收集相同的字段。将这些列表串联使得运行时采样更简单：帧查找变为一个全局整数索引，而不是 Python 级别的文件切换。
     arrays: dict[str, list[torch.Tensor]] = {
       "joint_pos": [],
       "joint_vel": [],
@@ -105,8 +100,7 @@ class MotionLoader:
     self.time_step_total = self.joint_pos.shape[0]
     self.motion_lengths = torch.tensor(lengths, dtype=torch.long, device=device)
     self.split_points = torch.zeros(len(lengths) + 1, dtype=torch.long, device=device)
-    # split_points[i] is the global start frame of motion i; the final element
-    # is the total number of frames and makes length checks/debugging easier.
+    # split_points[i] 是 motion i 的全局起始帧；最后一个元素表示总帧数，便于长度检查与调试。
     self.split_points[1:] = torch.cumsum(self.motion_lengths, dim=0)
     self.num_motions = len(lengths)
 
@@ -135,9 +129,7 @@ class MotionCommand(CommandTerm):
   def __init__(self, cfg: MotionCommandCfg, env: ManagerBasedRlEnv):
     super().__init__(cfg, env)
 
-    # Map user-facing body names to both robot indices and reference-motion
-    # indices.  The robot may contain more bodies than the motion file tracks,
-    # so every command tensor is restricted to cfg.body_names.
+    # 将面向用户的身体名称映射到机器人索引和参考动作索引。机器人可能包含比动作文件跟踪的更多身体，因此所有命令张量限制为 cfg.body_names。
     self.robot: Entity = env.scene[cfg.entity_name]
     self.robot_anchor_body_index = self.robot.body_names.index(
       self.cfg.anchor_body_name
@@ -152,15 +144,11 @@ class MotionCommand(CommandTerm):
     self.motion = MotionLoader(
       self.cfg.motion_files, self.body_indexes, device=self.device
     )
-    # Per-env trajectory cursor.  motion_ids chooses a trajectory, while
-    # time_steps is local to that trajectory and is converted through
-    # MotionLoader.frame_ids before indexing concatenated tensors.
+    # 每个环境的轨迹游标。motion_ids 选择轨迹，而 time_steps 是该轨迹的本地帧，通过 MotionLoader.frame_ids 转换为全局索引后用于索引串联张量。
     self.motion_ids = torch.zeros(self.num_envs, dtype=torch.long, device=self.device)
     self.time_steps = torch.zeros(self.num_envs, dtype=torch.long, device=self.device)
     self.motion_sample_probs = self._make_motion_sample_probs()
-    # Cached reference body poses after anchor alignment.  Rewards and
-    # terminations use these instead of raw motion-space poses so global x/y/yaw
-    # drift is measured relative to the current robot anchor.
+    # 锚点对齐之后缓存的参考身体位姿。奖励和终止项使用这些而不是原始动作空间位姿，以便将全局 x/y/yaw 漂移相对于当前机器人锚点进行度量。
     self.body_pos_relative_w = torch.zeros(
       self.num_envs, len(cfg.body_names), 3, device=self.device
     )
@@ -169,9 +157,7 @@ class MotionCommand(CommandTerm):
     )
     self.body_quat_relative_w[:, :, 0] = 1.0
 
-    # Adaptive sampling tracks which normalized time bins tend to fail.  The
-    # table is indexed by [motion_id, bin_id] so each trajectory receives its own
-    # curriculum distribution.
+    # 自适应采样跟踪哪些归一化时间区间更易失败。表以 [motion_id, bin_id] 索引，因此每条轨迹都有自己的课程分布。
     self.bin_count = (
       int(self.motion.motion_lengths.max().item() // (1 / env.step_dt)) + 1
     )
@@ -384,9 +370,7 @@ class MotionCommand(CommandTerm):
     """
     episode_failed = self._env.termination_manager.terminated[env_ids]
     if torch.any(episode_failed):
-      # Attribute each failed reset env to the bin it occupied when terminated.
-      # Failed counts are written per motion id to keep multiple trajectories
-      # from contaminating each other's sampling distribution.
+      # 将每个失败的重置环境归因到其终止时所在的时间箱。失败计数按 motion_id 记录，以避免不同轨迹相互污染采样分布。
       motion_lengths = self.motion.motion_lengths[self.motion_ids]
       current_bin_index = torch.clamp(
         (self.time_steps * self.bin_count) // torch.clamp(motion_lengths, min=1),
@@ -411,15 +395,13 @@ class MotionCommand(CommandTerm):
       if motion_env_ids.numel() == 0:
         continue
 
-      # Start from historical failures plus a uniform exploration floor.  The
-      # non-causal smoothing kernel also raises probability just before failure
-      # bins, letting the policy practice the lead-in to difficult states.
+      # 从历史失败计数加上均匀探索下限开始。非因果平滑核也会在失败箱之前提高概率，使策略能练习接近困难状态的过渡。
       sampling_probabilities = self.bin_failed_count[
         motion_id
       ] + self.cfg.adaptive_uniform_ratio / float(self.bin_count)
       sampling_probabilities = torch.nn.functional.pad(
         sampling_probabilities.unsqueeze(0).unsqueeze(0),
-        (0, self.cfg.adaptive_kernel_size - 1),  # Non-causal kernel
+        (0, self.cfg.adaptive_kernel_size - 1),  # 非因果核
         mode="replicate",
       )
       sampling_probabilities = torch.nn.functional.conv1d(
@@ -427,9 +409,7 @@ class MotionCommand(CommandTerm):
       ).view(-1)
       sampling_probabilities = sampling_probabilities / sampling_probabilities.sum()
 
-      # Convert sampled normalized bins back into local frame ids for the
-      # selected motion.  The within-bin uniform offset avoids every env landing
-      # on exactly the same discrete frame.
+      # 将采样到的归一化箱转换回所选轨迹的本地帧 id。箱内的均匀偏移避免所有环境落在完全相同的离散帧上。
       sampled_bins = torch.multinomial(
         sampling_probabilities, motion_env_ids.numel(), replacement=True
       )
@@ -443,7 +423,7 @@ class MotionCommand(CommandTerm):
         * (motion_length - 1)
       ).long()
 
-      # Update metrics.
+      # 更新指标。
       H = -(sampling_probabilities * (sampling_probabilities + 1e-12).log()).sum()
       H_norm = H / math.log(self.bin_count) if self.bin_count > 1 else 1.0
       pmax, imax = sampling_probabilities.max(dim=0)
@@ -507,9 +487,7 @@ class MotionCommand(CommandTerm):
     root_lin_vel = self.body_lin_vel_w[env_ids, 0].clone()
     root_ang_vel = self.body_ang_vel_w[env_ids, 0].clone()
 
-    # Reference State Initialization (RSI) randomizes the root pose around the
-    # sampled frame.  The target command still points to the exact reference,
-    # but the episode starts from nearby states to improve robustness.
+    # 参考状态初始化（RSI）在采样帧周围对根位姿进行随机化。目标命令仍指向精确的参考，但 episode 从附近状态开始以提高鲁棒性。
     range_list = [
       self.cfg.pose_range.get(key, (0.0, 0.0))
       for key in ["x", "y", "z", "roll", "pitch", "yaw"]
@@ -534,8 +512,7 @@ class MotionCommand(CommandTerm):
     root_lin_vel += rand_samples[:, :3]
     root_ang_vel += rand_samples[:, 3:]
 
-    # Joint RSI uses the configured scalar range for every joint, then
-    # _write_reference_state_to_sim clips to per-joint soft limits.
+    # Joint RSI 对每个关节使用配置的标量范围，然后 _write_reference_state_to_sim 将其裁剪到每个关节的软限。
     joint_pos = self.joint_pos[env_ids].clone()
     joint_vel = self.joint_vel[env_ids]
 
@@ -577,12 +554,10 @@ class MotionCommand(CommandTerm):
       1, len(self.cfg.body_names), 1
     )
 
-    # Keep robot x/y translation so the target follows the robot across the
-    # plane, but keep reference z so falling or jumping remains penalized.
+    # 保留机器人在 x/y 方向的平移，使目标随机器人在平面上移动；保留参考帧的 z 分量，以便跌倒或跳跃仍被惩罚。
     delta_pos_w = robot_anchor_pos_w_repeat
     delta_pos_w[..., 2] = anchor_pos_w_repeat[..., 2]
-    # Only yaw alignment is applied; roll/pitch errors are still tracked by the
-    # anchor orientation reward and termination.
+    # 仅应用偏航对齐；滚转/俯仰误差仍由锚点朝向的奖励和终止判定追踪。
     delta_ori_w = yaw_quat(
       quat_mul(robot_anchor_quat_w_repeat, quat_inv(anchor_quat_w_repeat))
     )
@@ -603,8 +578,7 @@ class MotionCommand(CommandTerm):
     self.update_relative_body_poses()
 
     if self.cfg.sampling_mode == "adaptive":
-      # Exponential moving average over failed bins.  The current-step scratch
-      # buffer is cleared after being folded into the persistent curriculum.
+      # 对失败时间箱进行指数移动平均。当前步的临时计数在合并到持久课程后会被清零。
       self.bin_failed_count = (
         self.cfg.adaptive_alpha * self._current_bin_failed
         + (1 - self.cfg.adaptive_alpha) * self.bin_failed_count
@@ -619,8 +593,7 @@ class MotionCommand(CommandTerm):
 
     if self.cfg.viz.mode == "ghost":
       if self._ghost_model is None:
-        # Build a ghost model with only visual geoms visible. Collision geoms (nonzero
-        # contype/conaffinity) get alpha=0 so the viewer's alpha filter excludes them.
+        # 构建仅包含可视几何体的幽灵模型。碰撞几何体（contype/conaffinity 非零）设置 alpha=0，以便查看器的 alpha 过滤器将其排除。
         self._ghost_model = copy.deepcopy(self._env.sim.mj_model)
         for gi in range(self._ghost_model.ngeom):
           if (
@@ -649,8 +622,7 @@ class MotionCommand(CommandTerm):
         )
 
     elif self.cfg.viz.mode == "frames":
-      # Frame mode draws every tracked body frame for both target and robot.
-      # This is noisier than a ghost mesh but makes orientation errors obvious.
+      # Frame 模式绘制目标与机器人每个被跟踪身体的坐标系帧。相比幽灵网格噪声更大，但能更清晰地显示朝向误差。
       for batch in env_indices:
         desired_body_pos = self.body_pos_w[batch].cpu().numpy()
         desired_body_quat = self.body_quat_w[batch]

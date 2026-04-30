@@ -1,1 +1,1 @@
-"""Motion imitation environments for legged robots."""
+"""腿式机器人的动作模仿环境。"""

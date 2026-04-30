@@ -1,4 +1,4 @@
-"""RL configuration for Unitree G1 tracking task."""
+"""Unitree G1 跟踪任务的强化学习配置。"""
 
 from mjlab.rl import (
   RslRlModelCfg,
@@ -8,10 +8,10 @@ from mjlab.rl import (
 
 
 def unitree_g1_tracking_ppo_runner_cfg() -> RslRlOnPolicyRunnerCfg:
-  """Create PPO runner configuration for Unitree G1 tracking.
+  """为 Unitree G1 跟踪创建 PPO runner 配置。
 
-  The policy and value networks use the same observation normalization setup,
-  while PPO hyperparameters are tuned for many short motion-tracking rollouts.
+  策略和价值网络使用相同的观测归一化设置，
+  PPO 超参数针对大量短的动作跟踪 rollout 进行了调优。
   """
   return RslRlOnPolicyRunnerCfg(
     actor=RslRlModelCfg(

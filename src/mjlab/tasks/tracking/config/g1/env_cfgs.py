@@ -1,4 +1,4 @@
-"""Unitree G1 flat tracking environment configurations."""
+"""Unitree G1 平地跟踪环境配置。"""
 
 from mjlab.asset_zoo.robots import (
   G1_W_RACKET_ACTION_SCALE,
@@ -25,8 +25,8 @@ def unitree_g1_flat_tracking_env_cfg(
 
   cfg.scene.entities = {"robot": get_g1_w_racket_robot_cfg()}
 
-  # The self-collision sensor compares the pelvis subtree with itself.  The
-  # reward term later interprets force history to penalize repeated contacts.
+  # 自碰撞传感器将 pelvis 子树与自身进行比较。
+  # 奖励项随后会根据力的历史记录惩罚重复接触。
   self_collision_cfg = ContactSensorCfg(
     name="self_collision",
     primary=ContactMatch(mode="subtree", pattern="pelvis", entity="robot"),
@@ -44,8 +44,8 @@ def unitree_g1_flat_tracking_env_cfg(
 
   motion_cmd = cfg.commands["motion"]
   assert isinstance(motion_cmd, MotionCommandCfg)
-  # Motions are stored as W&B artifacts during training.  Multiple artifact
-  # paths are provided so the command term can sample different trajectories.
+  # 在训练期间，动作以 W&B artifact 的形式存储。
+  # 提供多个 artifact 路径以便命令项可以采样不同的轨迹。
   motion_cmd.motion_source = "wandb"
   motion_cmd.motion_files = (
     "csv_to_npz/g1_dance1_subject1",
@@ -58,7 +58,7 @@ def unitree_g1_flat_tracking_env_cfg(
     "csv_to_npz/g1_dance2_subject5",
   )
   motion_cmd.anchor_body_name = "torso_link"
-  # Order matters: the motion NPZ tensors must use the same body order.
+  # 顺序很重要：motion NPZ 张量必须使用相同的身体顺序。
   motion_cmd.body_names = (
     "pelvis",
     "left_hip_roll_link",
@@ -90,8 +90,7 @@ def unitree_g1_flat_tracking_env_cfg(
 
   cfg.viewer.body_name = "torso_link"
 
-  # If deployment does not provide state estimation, remove observations that
-  # depend on global/root state not available to the policy.
+  # 如果部署环境未提供状态估计，则移除依赖于全局或根状态（策略无法获得）的观测项。
   if not has_state_estimation:
     new_actor_terms = {
       k: v
@@ -104,16 +103,15 @@ def unitree_g1_flat_tracking_env_cfg(
       enable_corruption=True,
     )
 
-  # Play mode is deterministic and viewer-friendly: no perturbations, no pushes,
-  # no observation corruption, and a reset always starts from frame zero.
+  # Play 模式是确定性且对查看友好的：无扰动、无推力、无观测扰动，重置总是从帧零开始。
   if play:
-    # Effectively infinite episode length.
+    # 实际上为无限的 episode 步长。
     cfg.episode_length_s = int(1e9)
 
     cfg.observations["actor"].enable_corruption = False
     cfg.events.pop("push_robot", None)
 
-    # Disable RSI randomization.
+    # 禁用 RSI 随机化。
     motion_cmd.pose_range = {}
     motion_cmd.velocity_range = {}
 

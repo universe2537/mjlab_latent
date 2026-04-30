@@ -1,9 +1,7 @@
-"""Reward terms for motion tracking.
+"""动作跟踪的奖励项。
 
-All rewards compare the active ``MotionCommand`` reference against the robot's
-current state and return one scalar per environment.  The exponential rewards
-use ``exp(-error / std**2)`` so ``std`` controls how quickly reward falls as the
-tracking error grows.
+所有奖励将活动的 MotionCommand 参考与机器人的当前状态进行比较，并为每个环境返回一个标量。
+指数奖励使用 ``exp(-error / std**2)``，因此 ``std`` 控制随着跟踪误差增大时奖励下降的速度。
 """
 
 from __future__ import annotations
@@ -138,16 +136,15 @@ def self_collision_cost(
   sensor_name: str,
   force_threshold: float = 10.0,
 ) -> torch.Tensor:
-  """Penalize self-collisions.
+  """惩罚自碰撞。
 
-  When the sensor provides force history (from ``history_length > 0``),
-  counts substeps where any contact force exceeds *force_threshold*.
-  Falls back to the instantaneous ``found`` count otherwise.
+  当传感器提供力的历史（``history_length > 0``）时，统计任一接触力超过 *force_threshold* 的子步次数。
+  否则退回为瞬时的 ``found`` 计数。
   """
   sensor: ContactSensor = env.scene[sensor_name]
   data = sensor.data
   if data.force_history is not None:
-    # force_history: [B, N, H, 3]
+    # force_history: [B, N, H, 3]（形状: 批次 B, 接触数 N, 历史长度 H, xyz 三维）
     force_mag = torch.norm(data.force_history, dim=-1)  # [B, N, H]
     hit = (force_mag > force_threshold).any(dim=1)  # [B, H]
     return hit.sum(dim=-1).float()  # [B]

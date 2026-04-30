@@ -1,4 +1,4 @@
-"""Evaluate a trained tracking policy and compute metrics."""
+"""评估已训练的跟踪策略并计算指标。"""
 
 from __future__ import annotations
 
@@ -56,9 +56,7 @@ def run_evaluate(task_id: str, cfg: EvaluateConfig) -> dict[str, float]:
   configure_torch_backends()
   device = cfg.device or ("cuda:0" if torch.cuda.is_available() else "cpu")
 
-  # Load the registered task configs and verify that this task exposes a motion
-  # command.  Non-tracking tasks do not provide the reference tensors required
-  # by the metric functions below.
+  # 加载已注册的任务配置并验证该任务是否暴露 motion 命令。非跟踪任务不会提供下述指标函数所需的参考张量。
   env_cfg = load_env_cfg(task_id, play=False)
   agent_cfg = load_rl_cfg(task_id)
 
@@ -66,8 +64,7 @@ def run_evaluate(task_id: str, cfg: EvaluateConfig) -> dict[str, float]:
   if not isinstance(motion_cmd, MotionCommandCfg):
     raise ValueError(f"Task {task_id} is not a tracking task.")
 
-  # Reuse the same motion artifact as the training run so evaluation measures
-  # the policy on the trajectory distribution it was trained against.
+  # 使用与训练相同的动作 artifact，这样评估可衡量策略在其训练时接触到的轨迹分布上的表现。
   api = wandb.Api()
   run = api.run(cfg.wandb_run_path)
   art = next((a for a in run.used_artifacts() if a.type == "motions"), None)
@@ -75,8 +72,7 @@ def run_evaluate(task_id: str, cfg: EvaluateConfig) -> dict[str, float]:
     raise RuntimeError("No motion artifact found in the run.")
   motion_cmd.motion_files = str(Path(art.download()) / "motion.npz")
 
-  # Evaluation should be deterministic and should cover the full motion from the
-  # start frame, so disable random pushes and force start-frame sampling.
+  # 评估应为确定性并覆盖从起始帧开始的完整动作，因此禁用随机推力并强制使用起始帧采样。
   motion_cmd.sampling_mode = "start"
   env_cfg.observations["actor"].enable_corruption = True
   env_cfg.events.pop("push_robot", None)
@@ -100,8 +96,7 @@ def run_evaluate(task_id: str, cfg: EvaluateConfig) -> dict[str, float]:
   ee_body_names = env_cfg.terminations["ee_body_pos"].params["body_names"]
   print(f"[INFO] End effector bodies: {ee_body_names}")
 
-  # Metric accumulators store one vector per environment step.  Completed envs
-  # contribute zeros and are excluded later through active_steps.
+  # 指标累加器为每个环境步保存一个向量。已完成的环境会贡献零向量，后续通过 active_steps 将其排除。
   all_mpkpe: list[torch.Tensor] = []
   all_r_mpkpe: list[torch.Tensor] = []
   all_joint_vel_error: list[torch.Tensor] = []
@@ -122,8 +117,7 @@ def run_evaluate(task_id: str, cfg: EvaluateConfig) -> dict[str, float]:
       actions = policy(obs)
     obs, _, dones, _ = env.step(actions)
 
-    # Compute metrics for active envs only; done envs remain at zero so tensor
-    # shapes stay rectangular until the final reduction.
+    # 仅为活跃环境计算指标；已完成的环境保持为零，以便张量形状在最终聚合前保持矩形。
     active = ~done_envs
     if active.any():
       all_mpkpe.append(torch.where(active, compute_mpkpe(command), 0.0))
@@ -138,7 +132,7 @@ def run_evaluate(task_id: str, cfg: EvaluateConfig) -> dict[str, float]:
         torch.where(active, compute_ee_orientation_error(command, ee_body_names), 0.0)
       )
 
-    # A successful rollout reaches the time limit without a failure termination.
+    # 成功的 rollout 是指在不发生失败终止的情况下达到时间上限。
     terminated = env.unwrapped.termination_manager.terminated
     truncated = env.unwrapped.termination_manager.time_outs
     newly_done = dones.bool() & ~done_envs
@@ -153,8 +147,7 @@ def run_evaluate(task_id: str, cfg: EvaluateConfig) -> dict[str, float]:
       )
     step += 1
 
-  # Convert step-major accumulators to tensors and average over the number of
-  # active steps for each environment before computing the population mean.
+  # 将按步累积的列表转换为张量，并在计算群体均值前按每个环境的活跃步数求平均。
   stacks = [
     all_mpkpe,
     all_r_mpkpe,

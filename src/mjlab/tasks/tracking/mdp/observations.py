@@ -1,9 +1,7 @@
-"""Observation terms specific to motion tracking.
+"""动作跟踪相关的观测项。
 
-The actor receives compact reference deltas expressed in the robot anchor
-frame, while the critic can additionally observe detailed body pose terms.
-Returning anchor-frame quantities improves invariance to global placement in
-the arena.
+actor 接收以机器人锚点坐标系表示的紧凑参考增量，而 critic 还可以观测更详细的身体位姿项。
+返回锚点坐标系下的量可以提高对场地全局位置变化的不变性。
 """
 
 from __future__ import annotations
@@ -24,7 +22,7 @@ if TYPE_CHECKING:
 
 
 def motion_anchor_pos_b(env: ManagerBasedRlEnv, command_name: str) -> torch.Tensor:
-  """Reference anchor position expressed in the robot anchor frame."""
+  """以机器人锚点坐标系表示的参考锚点位置。"""
   command = cast(MotionCommand, env.command_manager.get_term(command_name))
 
   pos, _ = subtract_frame_transforms(
@@ -38,10 +36,9 @@ def motion_anchor_pos_b(env: ManagerBasedRlEnv, command_name: str) -> torch.Tens
 
 
 def motion_anchor_ori_b(env: ManagerBasedRlEnv, command_name: str) -> torch.Tensor:
-  """Reference anchor orientation expressed in the robot anchor frame.
+  """以机器人锚点坐标系表示的参考锚点朝向。
 
-  The first two columns of the rotation matrix are returned instead of a
-  quaternion to avoid sign ambiguity in the observation.
+  为避免观测中的符号歧义，返回旋转矩阵的前两列而非四元数。
   """
   command = cast(MotionCommand, env.command_manager.get_term(command_name))
 
@@ -56,7 +53,7 @@ def motion_anchor_ori_b(env: ManagerBasedRlEnv, command_name: str) -> torch.Tens
 
 
 def robot_body_pos_b(env: ManagerBasedRlEnv, command_name: str) -> torch.Tensor:
-  """Current tracked body positions expressed in the robot anchor frame."""
+  """以机器人锚点坐标系表示的当前被跟踪身体位置。"""
   command = cast(MotionCommand, env.command_manager.get_term(command_name))
 
   num_bodies = len(command.cfg.body_names)
@@ -71,7 +68,7 @@ def robot_body_pos_b(env: ManagerBasedRlEnv, command_name: str) -> torch.Tensor:
 
 
 def robot_body_ori_b(env: ManagerBasedRlEnv, command_name: str) -> torch.Tensor:
-  """Current tracked body orientations expressed in the robot anchor frame."""
+  """以机器人锚点坐标系表示的当前被跟踪身体朝向。"""
   command = cast(MotionCommand, env.command_manager.get_term(command_name))
 
   num_bodies = len(command.cfg.body_names)

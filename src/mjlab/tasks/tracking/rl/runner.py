@@ -16,11 +16,10 @@ from mjlab.tasks.tracking.mdp import MotionCommand
 
 
 class _OnnxMotionModel(nn.Module):
-  """ONNX-exportable policy wrapper with bundled reference motion tensors.
+  """可导出为 ONNX 的策略包装器，内含参考动作张量。
 
-  Exported tracking policies need the reference trajectory alongside the actor
-  so deployment code can query the target state for a requested ``time_step``.
-  The tensors are registered as buffers to keep them inside the ONNX graph.
+  导出的跟踪策略需要将参考轨迹与 actor 一起打包，以便部署代码可以针对给定的 ``time_step`` 查询目标状态。
+  这些张量被注册为 buffer，以保持它们在 ONNX 图中。
   """
 
   def __init__(self, actor, motion):
@@ -51,7 +50,7 @@ class _OnnxMotionModel(nn.Module):
 
 
 class MotionTrackingOnPolicyRunner(MjlabOnPolicyRunner):
-  """RSL-RL runner that exports tracking policies with motion metadata."""
+  """RSL-RL 运行器，导出包含动作元数据的跟踪策略。"""
 
   env: RslRlVecEnvWrapper
 
@@ -69,7 +68,7 @@ class MotionTrackingOnPolicyRunner(MjlabOnPolicyRunner):
   def export_policy_to_onnx(
     self, path: str, filename: str = "policy.onnx", verbose: bool = False
   ) -> None:
-    """Export actor plus the active motion command's reference tensors."""
+    """导出 actor 以及当前活动 motion 命令的参考张量。"""
     os.makedirs(path, exist_ok=True)
     cmd = cast(MotionCommand, self.env.unwrapped.command_manager.get_term("motion"))
     model = _OnnxMotionModel(self.alg.get_policy(), cmd.motion)
@@ -99,7 +98,7 @@ class MotionTrackingOnPolicyRunner(MjlabOnPolicyRunner):
     )
 
   def save(self, path: str, infos=None):
-    """Save a checkpoint and best-effort ONNX export for downstream playback."""
+    """保存检查点并尽力导出 ONNX 以供下游回放使用。"""
     super().save(path, infos)
     policy_dir, filename, onnx_path = self._get_export_paths(path)
     try:

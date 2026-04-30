@@ -1,8 +1,6 @@
-"""Termination predicates for the tracking task.
+"""跟踪任务的终止判定函数。
 
-These functions intentionally use hard thresholds rather than reward-shaped
-values.  They stop an episode when the robot has drifted far enough from the
-reference that the rollout is no longer useful for imitation learning.
+这些函数刻意使用硬阈值而不是基于奖励的连续值。当机器人相对于参考偏移到回放不再对模仿学习有用时，终止该 episode。
 """
 
 from __future__ import annotations
@@ -25,7 +23,7 @@ if TYPE_CHECKING:
 def bad_anchor_pos(
   env: ManagerBasedRlEnv, command_name: str, threshold: float
 ) -> torch.Tensor:
-  """Terminate when full 3D anchor position error exceeds ``threshold``."""
+  """当三维锚点位置误差超过 ``threshold`` 时终止。"""
   command = cast(MotionCommand, env.command_manager.get_term(command_name))
   return (
     torch.norm(command.anchor_pos_w - command.robot_anchor_pos_w, dim=1) > threshold
@@ -35,7 +33,7 @@ def bad_anchor_pos(
 def bad_anchor_pos_z_only(
   env: ManagerBasedRlEnv, command_name: str, threshold: float
 ) -> torch.Tensor:
-  """Terminate when anchor height error exceeds ``threshold``."""
+  """当锚点高度误差超过 ``threshold`` 时终止。"""
   command = cast(MotionCommand, env.command_manager.get_term(command_name))
   return (
     torch.abs(command.anchor_pos_w[:, -1] - command.robot_anchor_pos_w[:, -1])
@@ -46,10 +44,9 @@ def bad_anchor_pos_z_only(
 def bad_anchor_ori(
   env: ManagerBasedRlEnv, asset_cfg: SceneEntityCfg, command_name: str, threshold: float
 ) -> torch.Tensor:
-  """Terminate when anchor roll/pitch drift is too large.
+  """当锚点的滚转/俯仰漂移过大时终止。
 
-  Projecting gravity into the reference and robot anchor frames ignores yaw and
-  isolates tilt error, which is usually the failure mode that indicates falling.
+  将重力投影到参考和机器人锚点坐标系中可以忽略偏航并孤立出倾斜误差，这通常是表明跌倒的故障模式。
   """
   asset: Entity = env.scene[asset_cfg.name]
 
@@ -73,7 +70,7 @@ def bad_motion_body_pos(
   threshold: float,
   body_names: tuple[str, ...] | None = None,
 ) -> torch.Tensor:
-  """Terminate when any selected body has excessive 3D position error."""
+  """当任一选择的身体的三维位置误差过大时终止。"""
   command = cast(MotionCommand, env.command_manager.get_term(command_name))
 
   body_indexes = _get_body_indexes(command, body_names)
@@ -91,7 +88,7 @@ def bad_motion_body_pos_z_only(
   threshold: float,
   body_names: tuple[str, ...] | None = None,
 ) -> torch.Tensor:
-  """Terminate when any selected body has excessive height error."""
+  """当任一选择的身体的高度误差过大时终止。"""
   command = cast(MotionCommand, env.command_manager.get_term(command_name))
 
   body_indexes = _get_body_indexes(command, body_names)

@@ -1,11 +1,11 @@
-"""Motion mimic task configuration.
+"""动作模仿任务配置。
 
-This module defines the base configuration for motion mimic tasks.
-Robot-specific configurations are located in the config/ directory.
+该模块定义了动作模仿任务的基础配置。
+机器人特定的配置位于 config/ 目录中。
 
-This is a re-implementation of BeyondMimic (https://beyondmimic.github.io/).
+这是 BeyondMimic (https://beyondmimic.github.io/) 的重实现。
 
-Based on https://github.com/HybridRobotics/whole_body_tracking
+基于 https://github.com/HybridRobotics/whole_body_tracking
 Commit: f8e20c880d9c8ec7172a13d3a88a65e3a5a88448
 """
 
@@ -46,13 +46,13 @@ def make_tracking_env_cfg() -> ManagerBasedRlEnvCfg:
   """
 
   ##
-  # Observations
+  # 观测
   ##
 
   actor_terms = {
-    # The actor observes the raw joint-space command plus anchor-frame deltas.
-    # The deltas tell the policy where the reference root is relative to the
-    # current robot without tying the policy to an absolute world origin.
+    # actor 观测原始关节空间指令以及锚点坐标系下的增量。
+    # 这些增量告知策略参考根位置相对于当前机器人的位置，
+    # 避免将策略绑定到绝对世界原点。
     "command": ObservationTermCfg(
       func=mdp.generated_commands, params={"command_name": "motion"}
     ),
@@ -88,8 +88,7 @@ def make_tracking_env_cfg() -> ManagerBasedRlEnvCfg:
   }
 
   critic_terms = {
-    # The critic receives privileged full-body pose observations.  They are not
-    # corrupted because value learning benefits from a cleaner state estimate.
+    # critic 接收特权的全身位姿观测。这些观测不做扰动，因为价值学习从更干净的状态估计中受益。
     "command": ObservationTermCfg(
       func=mdp.generated_commands, params={"command_name": "motion"}
     ),
@@ -130,7 +129,7 @@ def make_tracking_env_cfg() -> ManagerBasedRlEnvCfg:
   }
 
   ##
-  # Actions
+  # 动作
   ##
 
   actions: dict[str, ActionTermCfg] = {
@@ -143,14 +142,13 @@ def make_tracking_env_cfg() -> ManagerBasedRlEnvCfg:
   }
 
   ##
-  # Commands
+  # 命令
   ##
 
   commands: dict[str, CommandTermCfg] = {
     "motion": MotionCommandCfg(
       entity_name="robot",
-      # The command advances one frame per env step internally, so manager-level
-      # time-based resampling is disabled with an effectively infinite interval.
+      # 命令在内部每个 env 步进推进一帧，因此管理器级的基于时间的重采样被禁用，使用接近无限的时间间隔。
       resampling_time_range=(1.0e9, 1.0e9),
       debug_vis=True,
       pose_range={
@@ -163,8 +161,7 @@ def make_tracking_env_cfg() -> ManagerBasedRlEnvCfg:
       },
       velocity_range=VELOCITY_RANGE,
       joint_position_range=(-0.1, 0.1),
-      # Robot configs must override these placeholders with actual trajectories
-      # and the tracked body layout expected by those trajectories.
+      # 机器人配置必须覆盖这些占位符，提供实际轨迹以及这些轨迹期望的被跟踪身体布局。
       motion_files="",
       anchor_body_name="",
       body_names=(),
@@ -172,7 +169,7 @@ def make_tracking_env_cfg() -> ManagerBasedRlEnvCfg:
   }
 
   ##
-  # Events
+  # 事件
   ##
 
   events: dict[str, EventTermCfg] = {
@@ -186,7 +183,7 @@ def make_tracking_env_cfg() -> ManagerBasedRlEnvCfg:
       mode="startup",
       func=dr.body_com_offset,
       params={
-        "asset_cfg": SceneEntityCfg("robot", body_names=()),  # Set in robot cfg.
+        "asset_cfg": SceneEntityCfg("robot", body_names=()),  # 在机器人配置中设置。
         "operation": "add",
         "ranges": {
           0: (-0.025, 0.025),
@@ -207,21 +204,20 @@ def make_tracking_env_cfg() -> ManagerBasedRlEnvCfg:
       mode="startup",
       func=dr.geom_friction,
       params={
-        "asset_cfg": SceneEntityCfg("robot", geom_names=()),  # Set per-robot.
+        "asset_cfg": SceneEntityCfg("robot", geom_names=()),  # 每个机器人单独设置。
         "operation": "abs",
         "ranges": (0.3, 1.2),
-        "shared_random": True,  # All foot geoms share the same friction.
+        "shared_random": True,  # 所有足部几何体共享相同的摩擦系数。
       },
     ),
   }
 
   ##
-  # Rewards
+  # 奖励
   ##
 
   rewards: dict[str, RewardTermCfg] = {
-    # Anchor rewards keep the global root trajectory synchronized, while body
-    # rewards preserve the whole-body pose after anchor-relative alignment.
+    # 锚点奖励用于保持全局根轨迹的同步，而身体奖励在锚点相对对齐后保留整体现身姿态。
     "motion_global_root_pos": RewardTermCfg(
       func=mdp.motion_global_anchor_position_error_exp,
       weight=0.5,
@@ -266,13 +262,12 @@ def make_tracking_env_cfg() -> ManagerBasedRlEnvCfg:
   }
 
   ##
-  # Terminations
+  # 终止条件
   ##
 
   terminations: dict[str, TerminationTermCfg] = {
     "time_out": TerminationTermCfg(func=mdp.time_out, time_out=True),
-    # Height and tilt checks catch falls quickly without terminating merely for
-    # global x/y drift, which the relative body rewards can still correct.
+    # 高度和倾斜检查能快速捕捉跌倒，而不会仅因为全局 x/y 偏移就终止；相对身体奖励仍能纠正这些偏移。
     "anchor_pos": TerminationTermCfg(
       func=mdp.bad_anchor_pos_z_only,
       params={"command_name": "motion", "threshold": 0.25},
@@ -290,13 +285,13 @@ def make_tracking_env_cfg() -> ManagerBasedRlEnvCfg:
       params={
         "command_name": "motion",
         "threshold": 0.25,
-        "body_names": (),  # Set per-robot.
+        "body_names": (),  # 每个机器人单独设置。
       },
     ),
   }
 
   ##
-  # Assemble and return
+  # 组装并返回
   ##
 
   return ManagerBasedRlEnvCfg(
@@ -310,7 +305,7 @@ def make_tracking_env_cfg() -> ManagerBasedRlEnvCfg:
     viewer=ViewerConfig(
       origin_type=ViewerConfig.OriginType.ASSET_BODY,
       entity_name="robot",
-      body_name="",  # Set per-robot.
+      body_name="",  # 每个机器人设置。
       distance=2.8,
       fovy=55.0,
       elevation=-5.0,

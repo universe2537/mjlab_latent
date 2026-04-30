@@ -11,10 +11,9 @@ if TYPE_CHECKING:
 
 
 def compute_mpkpe(command: MotionCommand) -> torch.Tensor:
-  """Compute Mean Per-Keybody Position Error (MPKPE).
+  """计算平均每关键体位置误差（MPKPE）。
 
-  MPKPE measures the average Euclidean distance between the reference and
-  actual positions of all key bodies in world frame.
+  MPKPE 衡量参考与实际在世界坐标系下所有关键体位置的平均欧氏距离。
   """
   pos_error = command.body_pos_relative_w - command.robot_body_pos_w
   per_body_error = torch.norm(pos_error, dim=-1)  # (num_envs, num_bodies)
@@ -22,29 +21,28 @@ def compute_mpkpe(command: MotionCommand) -> torch.Tensor:
 
 
 def compute_root_relative_mpkpe(command: MotionCommand) -> torch.Tensor:
-  """Compute Root-relative Mean Per-Keybody Position Error (R-MPKPE).
+  """计算相对于根的平均每关键体位置误差（R-MPKPE）。
 
-  R-MPKPE measures pose error independent of global drift by computing
-  positions relative to the root/anchor body.
+  R-MPKPE 通过计算相对于根/锚点的位置信息来度量不受全局漂移影响的姿态误差。
   """
-  # Compute reference positions relative to reference anchor.
+  # 计算参考位置相对于参考锚点的坐标。
   ref_anchor_pos = command.anchor_pos_w.unsqueeze(1)  # (num_envs, 1, 3)
   ref_rel_pos = command.body_pos_w - ref_anchor_pos  # (num_envs, num_bodies, 3)
 
-  # Compute robot positions relative to robot anchor.
+  # 计算机器人位置相对于机器人锚点的坐标。
   robot_anchor_pos = command.robot_anchor_pos_w.unsqueeze(1)  # (num_envs, 1, 3)
   robot_rel_pos = (
     command.robot_body_pos_w - robot_anchor_pos
   )  # (num_envs, num_bodies, 3)
 
-  # Compute error between relative positions.
+  # 计算相对位置之间的误差。
   pos_error = ref_rel_pos - robot_rel_pos
   per_body_error = torch.norm(pos_error, dim=-1)  # (num_envs, num_bodies)
   return per_body_error.mean(dim=-1)  # (num_envs,)
 
 
 def compute_joint_velocity_error(command: MotionCommand) -> torch.Tensor:
-  """Compute the L2 norm of joint velocity error for each environment."""
+  """计算每个环境的关节速度误差的 L2 范数。"""
   vel_error = command.joint_vel - command.robot_joint_vel
   return torch.norm(vel_error, dim=-1)  # (num_envs,)
 
@@ -53,7 +51,7 @@ def compute_ee_position_error(
   command: MotionCommand,
   ee_body_names: tuple[str, ...],
 ) -> torch.Tensor:
-  """Compute mean position error for a selected end-effector body set."""
+  """计算所选末端执行器身体集合的平均位置误差。"""
   ee_indices = _get_body_indices(command, ee_body_names)
   if len(ee_indices) == 0:
     return torch.zeros(command.num_envs, device=command.device)
@@ -70,7 +68,7 @@ def compute_ee_orientation_error(
   command: MotionCommand,
   ee_body_names: tuple[str, ...],
 ) -> torch.Tensor:
-  """Compute mean orientation error for a selected end-effector body set."""
+  """计算所选末端执行器身体集合的平均朝向误差。"""
   ee_indices = _get_body_indices(command, ee_body_names)
   if len(ee_indices) == 0:
     return torch.zeros(command.num_envs, device=command.device)
@@ -86,13 +84,13 @@ def _get_body_indices(
   command: MotionCommand,
   body_names: tuple[str, ...],
 ) -> list[int]:
-  """Get indices of specified bodies within the command's body list.
+  """获取命令中指定身体在 body 列表中的索引。
 
   Args:
-    command: The motion command.
-    body_names: Names of bodies to find.
+    command: MotionCommand 对象。
+    body_names: 要查找的身体名称。
 
   Returns:
-    List of indices into command.cfg.body_names.
+    指向 command.cfg.body_names 的索引列表。
   """
   return [i for i, name in enumerate(command.cfg.body_names) if name in body_names]
