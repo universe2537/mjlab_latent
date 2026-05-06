@@ -1,12 +1,9 @@
 <mujoco model="g1 scene">
     <!--
-      持拍 G1 的独立平地可视化场景。
-
-      mjlab 训练任务通常通过 g1_constants.py 加载机器人，并在 Python 中构建完整
-      场景。这个 XML 仍可用于直接在 MuJoCo 中检查模型，因为它包含简单 floor、
-      灯光、可视化设置和 keyframes。
+      无球拍迁移 G1 的独立平地可视化场景。它与持拍场景保持镜像结构，便于调试
+      球拍挂载时隔离几何或 keyframe 差异。
     -->
-    <include file="g1_mjx_w_racket_wo_ball.xml"/>
+    <include file="g1.xml"/>
 
     <statistic center="0 0 0.7" extent="1.2" meansize="0.04"/>
 
@@ -20,8 +17,7 @@
     </visual>
 
     <asset>
-        <!-- 白色 checker 地面：保持尽量简单，便于在不加载任务专用 terrain 资产的
-             情况下检查迁移后的机器人和球拍几何。 -->
+        <!-- 最小 checker 地面，用于直接在 MuJoCo 中检查模型。 -->
         <texture type="skybox" builtin="gradient" rgb1="1 1 1" rgb2="1 1 1" width="800" height="800"/>
         <texture type="2d" name="groundplane" builtin="checker" mark="edge" rgb1="1 1 1" rgb2="1 1 1"
                  markrgb="0 0 0" width="300" height="300"/>
@@ -29,15 +25,13 @@
     </asset>
 
     <worldbody>
-        <!-- 场景级 floor。机器人 XML 不能直接引用这个 geom，否则将机器人单独作为
-             mjlab Entity 编译时会失败。 -->
+        <!-- 场景级 floor。纯机器人 XML 有意不依赖它。 -->
         <geom name="floor" size="0 0 0.01" type="plane" material="groundplane"/>
     </worldbody>
 
     <keyframe>
-        <!-- keyframes 只定义 qpos。机器人 XML 没有内嵌 actuators，因为 mjlab 会
-             通过程序化方式添加；scene keyframes 不写 ctrl，可以让这个独立场景在
-             nu=0 时正常编译。 -->
+        <!-- 只包含 qpos 的 keyframes：XML actuators 已省略，因此 mjlab 可以添加自己的
+             position actuators，不会产生重复控制。 -->
         <key name="home"
              qpos="
       0 0 0.785

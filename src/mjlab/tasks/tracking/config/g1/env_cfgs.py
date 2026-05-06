@@ -48,14 +48,27 @@ def unitree_g1_flat_tracking_env_cfg(
   # 提供多个 artifact 路径以便命令项可以采样不同的轨迹。
   motion_cmd.motion_source = "wandb"
   motion_cmd.motion_files = (
-    "csv_to_npz/g1_dance1_subject1",
-    "csv_to_npz/g1_dance1_subject2",
-    "csv_to_npz/g1_dance1_subject3",
-    "csv_to_npz/g1_dance2_subject1",
-    "csv_to_npz/g1_dance2_subject2",
-    "csv_to_npz/g1_dance2_subject3",
-    "csv_to_npz/g1_dance2_subject4",
-    "csv_to_npz/g1_dance2_subject5",
+    "csv_to_npz/g1_walk1_subject1",
+    "csv_to_npz/g1_walk1_subject2",
+    "csv_to_npz/g1_walk1_subject5",
+    "csv_to_npz/g1_walk2_subject1",
+    "csv_to_npz/g1_walk2_subject3",
+    "csv_to_npz/g1_walk2_subject4",
+    "csv_to_npz/g1_walk3_subject1",
+    "csv_to_npz/g1_walk3_subject2",
+    "csv_to_npz/g1_walk3_subject3",
+    "csv_to_npz/g1_walk3_subject4",
+    "csv_to_npz/g1_walk3_subject5",
+    "csv_to_npz/g1_walk4_subject1",
+    "csv_to_npz/g1_jumps1_subject1",
+    "csv_to_npz/g1_jumps1_subject2",
+    "csv_to_npz/g1_jumps1_subject5",
+    "csv_to_npz/g1_run1_subject2",
+    "csv_to_npz/g1_run1_subject5",
+    "csv_to_npz/g1_run2_subject1",
+    "csv_to_npz/g1_run2_subject4",
+    "csv_to_npz/g1_sprint1_subject2",
+    "csv_to_npz/g1_sprint1_subject4",
   )
   motion_cmd.anchor_body_name = "torso_link"
   # 顺序很重要：motion NPZ 张量必须使用相同的身体顺序。

@@ -87,6 +87,50 @@ When running motion-tracking tasks, add `--registry-name your-org/motions/motion
 
 Full documentation is available at **[mujocolab.github.io/mjlab](https://mujocolab.github.io/mjlab/)**.
 
+## Repository Layout
+
+The repository follows a fairly standard Python project layout: source code lives in
+`src/mjlab`, tests live in `tests`, documentation lives in `docs`, and helper scripts
+for development and automation live alongside them at the repository root.
+
+### Top-level directories
+
+| Path | Purpose |
+|------|---------|
+| `src/` | Python source tree. The installable package itself lives in `src/mjlab/`. |
+| `tests/` | Pytest suites covering package modules, task configs, viewers, notebooks, and smoke tests. |
+| `docs/` | Sphinx documentation source, templates, and site configuration for the published docs. |
+| `scripts/` | Repository-level helper scripts for demos, benchmarks, cloud workflows, conversion, and Docker utilities. |
+| `notebooks/` | Jupyter and Colab notebooks for quickstarts, demos, and interactive exploration. |
+| `data/` | Local data assets used by examples and task pipelines, such as motion or experiment inputs. |
+| `artifacts/` | Generated outputs such as exported scenes or other local build artifacts. |
+| `logs/` | Training and evaluation logs written by local runs. |
+| `wandb/` | Weights & Biases run metadata and cached experiment outputs. |
+| `typings/` | Local type stubs and typing helpers used by static analysis tools. |
+
+Other notable top-level files include `pyproject.toml` for packaging, dependencies,
+and CLI entry points, `Makefile` for common development commands, and
+`CONTRIBUTING.md` / `RELEASING.md` for contributor workflows.
+
+### `src/mjlab/` package layout
+
+| Path | Purpose |
+|------|---------|
+| `actuator/` | Actuator abstractions and implementations, including MuJoCo built-in actuators, XML-backed actuators, PD/DC actuators, and learned actuator models. |
+| `asset_zoo/` | Bundled robot assets and MJCF-based robot definitions, plus per-robot constants and configuration helpers. |
+| `entity/` | Core entity abstraction that loads and edits `MjSpec`s, applies articulation/collision config, and exposes structured access to bodies, joints, sites, and actuators. |
+| `envs/` | Manager-based RL environment definitions, shared environment types, and MDP-related utilities used to build tasks. |
+| `managers/` | Modular managers for actions, observations, rewards, terminations, commands, curriculum, events, metrics, and recording. |
+| `rl/` | RSL-RL integration layer, runners, exporters, and vector-environment wrappers used by training scripts. |
+| `scene/` | Scene assembly utilities that combine terrains, entities, and sensors into batched MuJoCo scenes and export them when needed. |
+| `sensor/` | Sensor framework and sensor implementations such as camera, contact, raycast, built-in MuJoCo, and terrain-height sensors. |
+| `sim/` | Low-level simulation configuration and runtime bridge to MuJoCo Warp, including randomization and mesh-variant support. |
+| `tasks/` | Task registry and built-in task families such as velocity tracking, motion tracking, manipulation, and cartpole. |
+| `terrains/` | Procedural terrain generators, terrain entities, and related configuration for flat, primitive, and heightfield terrains. |
+| `utils/` | Shared utilities for spec editing, XML handling, logging, randomness, GPU selection, wrappers, noise, and other cross-cutting helpers. |
+| `viewer/` | Visualization and rendering stack, including native viewers, offscreen rendering, debug visualization, and Viser integration. |
+| `scripts/` | Package-level CLI entry points such as `train`, `play`, `demo`, `list-envs`, `export-scene`, and diagnostic tools. |
+
 ## Development
 
 ```bash

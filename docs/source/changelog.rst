@@ -33,6 +33,10 @@ Added
   share the same kinematic structure (same bodies, joints, joint types);
   only mesh geoms may differ. Assignment is fixed at simulation init.
   See :ref:`per_world_mesh` for usage. With help from @XiangruiJiang.
+- Added ``Mjlab-Distill-Flat-Unitree-G1``, an online latent action
+  distillation task that reuses the G1 tracking environment, loads a
+  frozen tracker teacher, and trains a conditional VAE-style student with
+  action reconstruction plus KL regularization.
 
 Changed
 ^^^^^^^

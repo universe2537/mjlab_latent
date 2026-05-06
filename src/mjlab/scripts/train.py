@@ -200,8 +200,7 @@ def _resolve_tracking_motion(
       f"[INFO] Downloading {len(registry_names)} configured W&B motion artifact(s)."
     )
     motion_paths = tuple(
-      _download_motion_from_registry(registry_name)
-      for registry_name in registry_names
+      _download_motion_from_registry(registry_name) for registry_name in registry_names
     )
     return motion_paths, registry_names[0] if len(registry_names) == 1 else None
 

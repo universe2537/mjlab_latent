@@ -13,33 +13,18 @@ from mjlab.utils.actuator import (
 )
 from mjlab.utils.spec_config import CollisionCfg
 
-##
-# MJCF and assets.
-##
-
-# 这个资产从 Latent 的 ``storage/assets/unitree_g1`` 目录迁移而来。
-# 这里必须使用“纯机器人 XML”，而不是 flat-terrain 场景 XML，作为 Entity 模板：
-# mjlab 的场景会在 Python 配置里提供 terrain/floor 等场景几何体，再把机器人
-# Entity 挂到场景中。保持机器人 XML 独立，可以避免
-# ``Entity(get_g1_w_racket_robot_cfg())`` 单独编译机器人时引用到 ``floor`` 这类
-# 只存在于 scene XML 里的 geom。
 G1_XML: Path = (
   MJLAB_SRC_PATH
   / "asset_zoo"
   / "robots"
   / "unitree_g1_w_racket"
   / "xml"
-  / "g1_mjx_w_racket_wo_ball.xml"
+  / "g1_w_racket.xml"
 )
 assert G1_XML.exists(), f"XML not found: {G1_XML}"
 
 
 def get_spec() -> mujoco.MjSpec:
-  """以全新的 MjSpec 加载持拍 G1 MJCF。
-
-  MjSpec 是可变对象：Entity 构建过程中会原地写入碰撞设置、actuator 定义和
-  keyframe。每次都返回新的 spec，可以避免某一次调用的修改泄漏到下一次调用。
-  """
   return mujoco.MjSpec.from_file(str(G1_XML))
 
 
@@ -47,10 +32,6 @@ def get_spec() -> mujoco.MjSpec:
 # Actuator config.
 ##
 
-# Latent 原始 XML 里带有 ``<motor>`` actuators。迁移到 mjlab 后这里有意移除
-# 这些 XML 内嵌 motor，由下面的 mjlab 配置添加与原版 Unitree G1 相同的
-# position actuators。如果保留 XML motor，同一批关节会出现重复 actuator，
-# action 语义也会从 mjlab 期望的“位置目标”变成原始 effort 控制。
 
 # 电机规格（来自 Unitree）。
 ROTOR_INERTIAS_5020 = (
@@ -178,10 +159,7 @@ G1_ACTUATOR_4010 = BuiltinPositionActuatorCfg(
   armature=ACTUATOR_4010.reflected_inertia,
 )
 
-# 腰部 pitch/roll 和踝关节是由两个 5020 actuator 驱动的四连杆结构。
-# 由于并联连杆的存在，踝关节和腰关节的等效 armature 会随构型变化。
-# 这里不知道精确连杆几何，因此采用名义 1:1 传动比近似；在这个假设下，
-# 名义构型中的关节 armature 近似为两个 actuator armature 之和。
+
 G1_ACTUATOR_WAIST = BuiltinPositionActuatorCfg(
   target_names_expr=("waist_pitch_joint", "waist_roll_joint"),
   stiffness=STIFFNESS_5020 * 2,
@@ -234,23 +212,24 @@ KNEES_BENT_KEYFRAME = EntityCfg.InitialStateCfg(
 # Collision config.
 ##
 
-# 迁移自 Latent 的 MJCF 与 mjlab 原生 G1 XML 使用不同的碰撞 geom 命名：
+# 迁移自 Latent 的 MJCF 与 mjlab 原生 G1 XML使用不同的碰撞 geom 命名。
+# 这个持拍版本现在与原生 G1 对齐：
 #   - 原生 G1 脚部：left_foot1_collision ... left_foot7_collision
-#   - 持拍 G1 脚部：left_foot / right_foot
+#   - 持拍 G1 脚部：left_foot1_collision ... left_foot7_collision
 #   - 部分身体碰撞 geom 没有 ``_collision`` 后缀：thigh、shin、torso
 #
-# 下面的模式把这些 Latent 风格名称映射到 mjlab 的碰撞策略：
+# 下面的模式把这些 geom 名称映射到 mjlab 的碰撞策略：
 # 身体/自碰撞使用 condim=1；脚-地接触使用 condim=3，并设置 friction 和
 # priority，以获得更稳定的地形接触。
 FULL_COLLISION = CollisionCfg(
   geom_names_expr=(
     ".*_collision",
-    r"^(left|right)_(thigh|shin|foot)$",
+    r"^(left|right)_(?:thigh|shin|foot(?:[1-7]_collision)?)$",
     "torso",
   ),
-  condim={r"^(left|right)_foot$": 3, ".*": 1},
-  priority={r"^(left|right)_foot$": 1},
-  friction={r"^(left|right)_foot$": (0.6,)},
+  condim={r"^(left|right)_foot(?:[1-7]_collision)?$": 3, ".*": 1},
+  priority={r"^(left|right)_foot(?:[1-7]_collision)?$": 1},
+  friction={r"^(left|right)_foot(?:[1-7]_collision)?$": (0.6,)},
 )
 
 # 与 FULL_COLLISION 使用同一组 geom，但关闭自碰撞。这个配置与原生 G1 的 helper
@@ -258,21 +237,19 @@ FULL_COLLISION = CollisionCfg(
 FULL_COLLISION_WITHOUT_SELF = CollisionCfg(
   geom_names_expr=(
     ".*_collision",
-    r"^(left|right)_(thigh|shin|foot)$",
+    r"^(left|right)_(?:thigh|shin|foot(?:[1-7]_collision)?)$",
     "torso",
   ),
   contype=0,
   conaffinity=1,
-  condim={r"^(left|right)_foot$": 3, ".*": 1},
-  priority={r"^(left|right)_foot$": 1},
-  friction={r"^(left|right)_foot$": (0.6,)},
+  condim={r"^(left|right)_foot(?:[1-7]_collision)?$": 3, ".*": 1},
+  priority={r"^(left|right)_foot(?:[1-7]_collision)?$": 1},
+  friction={r"^(left|right)_foot(?:[1-7]_collision)?$": (0.6,)},
 )
 
-# 保留 feet-only 模式是为了与原生 G1 constants 对齐。对于这个迁移 XML，脚部
-# 只有两个碰撞盒，因此匹配目标是准确的 left_foot/right_foot，而不是原生 G1
-# 的 foot1-7 capsule 模式。
+# 更新 feet-only 模式，使其适配原生 G1 形式的 foot1-7 geom 名称。
 FEET_ONLY_COLLISION = CollisionCfg(
-  geom_names_expr=(r"^(left|right)_foot$",),
+  geom_names_expr=(r"^(left|right)_foot(?:[1-7]_collision)?$",),
   contype=0,
   conaffinity=1,
   condim=3,
