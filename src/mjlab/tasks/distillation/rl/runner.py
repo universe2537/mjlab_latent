@@ -3,16 +3,21 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass, field
+import pathlib
+import time
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
+import git
+import rsl_rl
 import torch
 import torch.nn.functional as F
-from torch.utils.tensorboard import SummaryWriter
+from torch import nn
 
 from mjlab.rl import MjlabOnPolicyRunner, RslRlBaseRunnerCfg, RslRlVecEnvWrapper
-from mjlab.tasks.distillation.models import (
+from mjlab.rl.exporter_utils import attach_metadata_to_onnx, get_base_metadata
+from mjlab.tasks.distillation.rl.models import (
   LatentStudentModel,
   diagonal_gaussian_kl,
 )
@@ -23,7 +28,6 @@ from mjlab.tasks.registry import load_rl_cfg, load_runner_cls
 class DistillationRunnerCfg(RslRlBaseRunnerCfg):
   """Configuration for online latent action distillation."""
 
-  class_name: str = "OnlineDistillationRunner"
   teacher_task_id: str = "Mjlab-Tracking-Flat-Unitree-G1"
   teacher_checkpoint: str = ""
   teacher_strict_load: bool = True
@@ -47,10 +51,96 @@ class DistillationRunnerCfg(RslRlBaseRunnerCfg):
   teacher_action_prob: float = 0.0
   deterministic_rollout: bool = True
   max_grad_norm: float = 1.0
-  save_final: bool = True
   obs_groups: dict[str, tuple[str, ...]] = field(
     default_factory=lambda: {"actor": ("actor",)}
   )
+
+
+class _DistillationLogger:
+  """Thin logging wrapper matching rsl_rl style for non-PPO runners.
+
+  Supports tensorboard and wandb backends based on ``cfg["logger"]``.
+  Call :meth:`init` before the training loop and :meth:`stop` after.
+  """
+
+  def __init__(
+    self,
+    log_dir: Path | None,
+    cfg: dict[str, Any],
+    env: RslRlVecEnvWrapper,
+  ) -> None:
+    self.log_dir = log_dir
+    self.cfg = cfg
+    self.env = env
+    self.logger_type = cfg.get("logger", "tensorboard").lower()
+    self.git_status_repos: list[str] = [rsl_rl.__file__]
+    self.writer = None
+
+  def init(self) -> None:
+    """Create the writer and persist git diffs / configs."""
+    if self.log_dir is None:
+      return
+    if self.logger_type == "wandb":
+      from rsl_rl.utils.wandb_utils import WandbSummaryWriter
+
+      self.writer = WandbSummaryWriter(
+        log_dir=str(self.log_dir), flush_secs=10, cfg=self.cfg
+      )
+      self.writer.store_config(self.env.unwrapped.cfg, self.cfg)
+    elif self.logger_type == "tensorboard":
+      from torch.utils.tensorboard import SummaryWriter
+
+      self.writer = SummaryWriter(log_dir=str(self.log_dir), flush_secs=10)
+    else:
+      raise ValueError(
+        f"Unknown logger type {self.logger_type!r}. Choose 'tensorboard' or 'wandb'."
+      )
+
+    files_to_upload = self._store_code_state()
+    if self.logger_type == "wandb":
+      for path in files_to_upload:
+        self.writer.save_file(path)  # type: ignore[union-attr]
+
+  def _store_code_state(self) -> list[str]:
+    """Write git diff files to ``<log_dir>/git/`` (mirrors rsl_rl Logger)."""
+    files_to_upload: list[str] = []
+    if self.log_dir is None:
+      return files_to_upload
+    git_log_dir = self.log_dir / "git"
+    git_log_dir.mkdir(parents=True, exist_ok=True)
+    for repo_file in self.git_status_repos:
+      try:
+        repo = git.Repo(repo_file, search_parent_directories=True)
+        commit_hash = repo.head.commit.hexsha
+        t = repo.head.commit.tree
+      except Exception:
+        print(f"[WARN] Could not find git repository in {repo_file}. Skipping.")
+        continue
+      repo_name = pathlib.Path(repo.working_dir).name
+      diff_path = git_log_dir / f"{repo_name}.diff"
+      if diff_path.exists():
+        continue
+      print(f"Storing git diff for '{repo_name}' in: {diff_path}")
+      diff_path.write_text(
+        f"--- git commit ---\n{commit_hash}\n\n\n"
+        f"--- git status ---\n{repo.git.status()}\n\n\n"
+        f"--- git diff ---\n{repo.git.diff(t)}",
+        encoding="utf-8",
+      )
+      files_to_upload.append(str(diff_path))
+    return files_to_upload
+
+  def add_scalar(self, tag: str, value: float, step: int) -> None:
+    if self.writer is not None:
+      self.writer.add_scalar(tag, value, step)
+
+  def save_model(self, path: str, it: int) -> None:
+    if self.writer is not None and self.logger_type in ("wandb", "neptune"):
+      self.writer.save_model(path, it)  # type: ignore[union-attr]
+
+  def stop(self) -> None:
+    if self.writer is not None and self.logger_type in ("wandb", "neptune"):
+      self.writer.stop()  # type: ignore[union-attr]
 
 
 class ReplayBuffer:
@@ -158,8 +248,32 @@ class ObservationSlicer:
     return obs[:, self.state_indices], obs[:, self.target_indices]
 
 
+class _OnnxStudentModel(nn.Module):
+  """ONNX-exportable wrapper for the prior-only student inference path.
+
+  At deployment only the prior P(z|s) is available (no target s̃_{t+1}).
+  This wrapper slices the full actor observation down to the state subset,
+  runs the prior, and decodes the action deterministically.
+  """
+
+  def __init__(self, model: LatentStudentModel, state_indices: torch.Tensor) -> None:
+    super().__init__()
+    self.model = model
+    self.register_buffer("state_indices", state_indices.cpu())
+
+  def forward(self, actor_obs: torch.Tensor) -> torch.Tensor:
+    state = actor_obs[:, self.state_indices]  # type: ignore[index]
+    prior = self.model.prior_distribution(state)
+    return self.model.decode(state, prior.mean)
+
+
 class OnlineDistillationRunner:
-  """Train a latent student online against a frozen tracking teacher."""
+  """Train a latent student online against a frozen tracking teacher.
+
+  Implements Algorithm 1 from LATENT §3.2.2: DAgger rollout with teacher
+  supervision, variational bottleneck (CVAE encoder/prior/decoder), and
+  joint action-imitation + KL loss.
+  """
 
   env: RslRlVecEnvWrapper
 
@@ -210,26 +324,26 @@ class OnlineDistillationRunner:
       device=self.device,
     )
     self.teacher_policy = None
-    self.writer = SummaryWriter(str(self.log_dir)) if self.log_dir is not None else None
+    self.logger = _DistillationLogger(self.log_dir, self.cfg, self.env)
 
   def add_git_repo_to_log(self, repo_file_path: str) -> None:
-    del repo_file_path
+    """Register a repo path so its git diff is saved at the start of training."""
+    self.logger.git_status_repos.append(repo_file_path)
 
   def _load_teacher_policy(self):
     checkpoint = Path(os.path.expandvars(self.cfg["teacher_checkpoint"])).expanduser()
     if not checkpoint.exists():
       raise FileNotFoundError(
-        "Distillation requires a pretrained tracker checkpoint. Set "
-        "`--agent.teacher-checkpoint /path/to/model.pt`."
+        "Distillation requires a pretrained tracker checkpoint. "
+        "Set `--agent.teacher-checkpoint /path/to/model.pt`."
       )
-
     teacher_cfg = load_rl_cfg(self.cfg["teacher_task_id"])
     teacher_runner_cls = (
       load_runner_cls(self.cfg["teacher_task_id"]) or MjlabOnPolicyRunner
     )
     teacher_runner = teacher_runner_cls(
       self.env,
-      self._strip_distillation_only_cfg(teacher_cfg),
+      asdict(teacher_cfg),
       device=str(self.device),
     )
     teacher_runner.load(
@@ -238,21 +352,11 @@ class OnlineDistillationRunner:
       strict=self.cfg["teacher_strict_load"],
       map_location=str(self.device),
     )
-    policy = teacher_runner.get_inference_policy(device=str(self.device))
-    return policy
-
-  @staticmethod
-  def _strip_distillation_only_cfg(cfg) -> dict[str, Any]:
-    from dataclasses import asdict
-
-    return asdict(cfg)
+    return teacher_runner.get_inference_policy(device=str(self.device))
 
   def _student_action(self, actor_obs: torch.Tensor) -> torch.Tensor:
     state, _ = self.slicer.split(actor_obs)
-    return self.model.act(
-      state,
-      deterministic=self.cfg["deterministic_rollout"],
-    )
+    return self.model.act(state, deterministic=self.cfg["deterministic_rollout"])
 
   def _rollout(self, obs) -> Any:
     if self.teacher_policy is None:
@@ -270,7 +374,6 @@ class OnlineDistillationRunner:
             torch.rand(student_action.shape[0], 1, device=self.device) < teacher_prob
           )
           rollout_action = torch.where(mask, teacher_action, student_action)
-
       self.buffer.add(actor_obs.detach(), teacher_action.detach())
       obs, _, _, _ = self.env.step(rollout_action)
     return obs
@@ -288,16 +391,13 @@ class OnlineDistillationRunner:
         self.cfg["action_loss_weight"] * action_loss
         + self.cfg["kl_loss_weight"] * kl_loss
       )
-
       self.optimizer.zero_grad(set_to_none=True)
       loss.backward()
       torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.cfg["max_grad_norm"])
       self.optimizer.step()
-
       stats["loss"] += float(loss.detach())
       stats["action_loss"] += float(action_loss.detach())
       stats["kl_loss"] += float(kl_loss.detach())
-
     for key in stats:
       stats[key] /= self.cfg["updates_per_iteration"]
     return stats
@@ -306,36 +406,48 @@ class OnlineDistillationRunner:
     self, num_learning_iterations: int, init_at_random_ep_len: bool = False
   ) -> None:
     del init_at_random_ep_len
+    self.logger.init()
     obs = self.env.get_observations()
-    for iteration in range(
-      self.current_learning_iteration,
-      self.current_learning_iteration + num_learning_iterations,
-    ):
+    start_iter = self.current_learning_iteration
+    end_iter = start_iter + num_learning_iterations
+    tot_iter = end_iter - start_iter
+    start_time = time.time()
+
+    for iteration in range(start_iter, end_iter):
+      iter_start = time.time()
       obs = self._rollout(obs)
       stats = self._update()
+      iter_time = time.time() - iter_start
 
-      if self.writer is not None:
-        for key, value in stats.items():
-          self.writer.add_scalar(f"distillation/{key}", value, iteration)
-        self.writer.add_scalar("distillation/buffer_size", self.buffer.size, iteration)
+      self.logger.add_scalar("distillation/loss", stats["loss"], iteration)
+      self.logger.add_scalar(
+        "distillation/action_loss", stats["action_loss"], iteration
+      )
+      self.logger.add_scalar("distillation/kl_loss", stats["kl_loss"], iteration)
+      self.logger.add_scalar("distillation/buffer_size", self.buffer.size, iteration)
+
+      if iteration % self.cfg["save_interval"] == 0 and self.log_dir is not None:
+        self.save(str(self.log_dir / f"model_{iteration}.pt"))
 
       if iteration % 10 == 0:
+        elapsed = time.time() - start_time
+        done_frac = max((iteration - start_iter + 1) / tot_iter, 1e-6)
+        eta = elapsed / done_frac * (1.0 - done_frac)
         print(
-          "[INFO] distill iter="
-          f"{iteration} loss={stats['loss']:.5f} "
-          f"action={stats['action_loss']:.5f} kl={stats['kl_loss']:.5f} "
-          f"buffer={self.buffer.size}"
+          f"[distillation] iter: {iteration}/{end_iter - 1} "
+          f"loss: {stats['loss']:.5f}  "
+          f"action: {stats['action_loss']:.5f}  "
+          f"kl: {stats['kl_loss']:.5f}  "
+          f"buf: {self.buffer.size}  "
+          f"iter_time: {iter_time:.2f}s  "
+          f"eta: {eta / 60:.1f}min"
         )
-
-      if self.log_dir is not None and iteration % self.cfg["save_interval"] == 0:
-        self.save(str(self.log_dir / f"model_{iteration}.pt"))
 
       self.current_learning_iteration = iteration + 1
 
-    if self.cfg["save_final"] and self.log_dir is not None:
+    if self.log_dir is not None:
       self.save(str(self.log_dir / f"model_{self.current_learning_iteration}.pt"))
-    if self.writer is not None:
-      self.writer.flush()
+    self.logger.stop()
 
   def save(self, path: str, infos=None) -> None:
     del infos
@@ -353,6 +465,74 @@ class OnlineDistillationRunner:
       },
       path,
     )
+    if self.cfg.get("upload_model"):
+      self.logger.save_model(path, self.current_learning_iteration)
+    export_dir, filename, onnx_path = self._get_export_paths(path)
+    try:
+      self.export_policy_to_onnx(str(export_dir), filename)
+      run_name: str = "local"
+      try:
+        import wandb
+
+        if self.logger.logger_type == "wandb" and wandb.run:
+          run_name = wandb.run.name  # type: ignore[assignment]
+      except ImportError:
+        pass
+      metadata = get_base_metadata(self.env.unwrapped, run_name)
+      metadata.update(
+        {
+          "latent_dim": self.cfg["latent_dim"],
+          "state_terms": list(self.cfg["state_terms"]),
+          "target_terms": list(self.cfg["target_terms"]),
+        }
+      )
+      attach_metadata_to_onnx(str(onnx_path), metadata)
+      if self.logger.logger_type == "wandb" and self.cfg.get("upload_model"):
+        try:
+          import wandb as _wandb
+
+          if _wandb.run:
+            _wandb.save(str(onnx_path), base_path=str(export_dir))
+        except ImportError:
+          pass
+    except Exception as e:
+      print(f"[WARN] ONNX export failed (training continues): {e}")
+
+  def export_policy_to_onnx(
+    self, path: str, filename: str = "policy.onnx", verbose: bool = False
+  ) -> None:
+    """Export the prior-only student policy to ONNX.
+
+    The exported model takes the full actor observation and returns the
+    deterministic action using the prior mean (no target required).
+    """
+    import copy
+
+    os.makedirs(path, exist_ok=True)
+    # deepcopy to avoid moving the live training model to CPU
+    onnx_model = _OnnxStudentModel(copy.deepcopy(self.model), self.slicer.state_indices)
+    onnx_model.to("cpu")
+    onnx_model.eval()
+    obs_dim = self.slicer.obs_dim
+    dummy_obs = torch.zeros(1, obs_dim)
+    torch.onnx.export(
+      onnx_model,
+      (dummy_obs,),
+      os.path.join(path, filename),
+      export_params=True,
+      opset_version=18,
+      verbose=verbose,
+      input_names=["actor_obs"],
+      output_names=["actions"],
+      dynamic_axes={},
+      dynamo=False,
+    )
+
+  @staticmethod
+  def _get_export_paths(checkpoint_path: str) -> tuple[Path, str, Path]:
+    export_dir = Path(checkpoint_path).parent
+    filename = f"{export_dir.name}.onnx"
+    return export_dir, filename, export_dir / filename
 
   def load(
     self,

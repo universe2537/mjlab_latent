@@ -15,7 +15,6 @@ from mjlab.envs import ManagerBasedRlEnv
 from mjlab.rl import MjlabOnPolicyRunner, RslRlVecEnvWrapper
 from mjlab.scripts._cli import maybe_print_top_level_help
 from mjlab.tasks.registry import list_tasks, load_env_cfg, load_rl_cfg, load_runner_cls
-from mjlab.tasks.tracking.mdp import MotionCommandCfg
 from mjlab.utils.os import get_wandb_checkpoint_path
 from mjlab.utils.torch import configure_torch_backends
 from mjlab.utils.wrappers import VideoRecorder
@@ -80,26 +79,23 @@ def run_play(task_id: str, cfg: PlayConfig):
     env_cfg.terminations = {}
     print("[INFO]: Terminations disabled")
 
-  # Check if this is a tracking task by checking for motion command.
-  is_tracking_task = "motion" in env_cfg.commands and isinstance(
-    env_cfg.commands["motion"], MotionCommandCfg
+  is_tracking_task = "motion" in env_cfg.commands and hasattr(
+    env_cfg.commands["motion"], "motion_files"
   )
 
   if is_tracking_task and cfg._demo_mode:
     # Demo mode: use uniform sampling to see more diversity with num_envs > 1.
     motion_cmd = env_cfg.commands["motion"]
-    assert isinstance(motion_cmd, MotionCommandCfg)
-    motion_cmd.sampling_mode = "uniform"
+    motion_cmd.sampling_mode = "uniform"  # type: ignore[union-attr]
 
   if is_tracking_task:
     motion_cmd = env_cfg.commands["motion"]
-    assert isinstance(motion_cmd, MotionCommandCfg)
 
     motion_files = _motion_file_refs(cfg.motion_files)
     # Check for local motion files first (works for both dummy and trained modes).
     if motion_files and all(Path(motion_file).exists() for motion_file in motion_files):
       print(f"[INFO]: Using {len(motion_files)} local motion file(s)")
-      motion_cmd.motion_files = motion_files
+      motion_cmd.motion_files = motion_files  # type: ignore[union-attr]
     elif DUMMY_MODE:
       if not cfg.registry_name:
         raise ValueError(
@@ -115,11 +111,11 @@ def run_play(task_id: str, cfg: PlayConfig):
 
       api = wandb.Api()
       artifact = api.artifact(registry_name)
-      motion_cmd.motion_files = str(Path(artifact.download()) / "motion.npz")
+      motion_cmd.motion_files = str(Path(artifact.download()) / "motion.npz")  # type: ignore[union-attr]
     else:
       if motion_files:
         print(f"[INFO]: Using {len(motion_files)} motion file(s) from CLI")
-        motion_cmd.motion_files = motion_files
+        motion_cmd.motion_files = motion_files  # type: ignore[union-attr]
       else:
         import wandb
 
@@ -136,7 +132,7 @@ def run_play(task_id: str, cfg: PlayConfig):
           )
           if art is None:
             raise RuntimeError("No motion artifact found in the run.")
-          motion_cmd.motion_files = str(Path(art.download()) / "motion.npz")
+          motion_cmd.motion_files = str(Path(art.download()) / "motion.npz")  # type: ignore[union-attr]
 
   log_dir: Path | None = None
   resume_path: Path | None = None

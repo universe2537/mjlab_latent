@@ -6,7 +6,7 @@ import sys
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 import tyro
 
@@ -14,7 +14,6 @@ from mjlab.envs import ManagerBasedRlEnv, ManagerBasedRlEnvCfg
 from mjlab.rl import MjlabOnPolicyRunner, RslRlBaseRunnerCfg, RslRlVecEnvWrapper
 from mjlab.scripts._cli import maybe_print_top_level_help
 from mjlab.tasks.registry import list_tasks, load_env_cfg, load_rl_cfg, load_runner_cls
-from mjlab.tasks.tracking.mdp import MotionCommandCfg
 from mjlab.utils.gpu import select_gpus
 from mjlab.utils.os import dump_yaml, get_checkpoint_path, get_wandb_checkpoint_path
 from mjlab.utils.torch import configure_torch_backends
@@ -139,7 +138,7 @@ def _configured_motion_paths(motion_file: str) -> list[Path]:
 
 
 def _wandb_ref_from_configured_motion(
-  cfg: TrainConfig, motion_cmd: MotionCommandCfg
+  cfg: TrainConfig, motion_cmd: Any
 ) -> tuple[str, ...]:
   alias = _first_env("MJLAB_MOTION_ALIAS", "WANDB_ARTIFACT_ALIAS") or "latest"
   motion_refs = (
@@ -168,7 +167,7 @@ def _download_motion_from_registry(registry_name: str) -> Path:
 
 
 def _resolve_tracking_motion(
-  cfg: TrainConfig, motion_cmd: MotionCommandCfg
+  cfg: TrainConfig, motion_cmd: Any
 ) -> tuple[tuple[Path, ...], str | None]:
   if motion_cmd.motion_source == "local":
     motion_refs = _motion_file_refs(motion_cmd.motion_files)
@@ -204,9 +203,7 @@ def _resolve_tracking_motion(
     )
     return motion_paths, registry_names[0] if len(registry_names) == 1 else None
 
-  raise ValueError(
-    f"Unknown MotionCommandCfg.motion_source: {motion_cmd.motion_source}"
-  )
+  raise ValueError(f"Unknown motion_source: {motion_cmd.motion_source!r}")
 
 
 def run_train(task_id: str, cfg: TrainConfig, log_dir: Path) -> None:
@@ -236,16 +233,14 @@ def run_train(task_id: str, cfg: TrainConfig, log_dir: Path) -> None:
 
   registry_name: str | None = None
 
-  # Check if this is a tracking task by checking for motion command.
-  is_tracking_task = "motion" in cfg.env.commands and isinstance(
-    cfg.env.commands["motion"], MotionCommandCfg
+  is_tracking_task = "motion" in cfg.env.commands and hasattr(
+    cfg.env.commands["motion"], "motion_files"
   )
 
   if is_tracking_task:
     motion_cmd = cfg.env.commands["motion"]
-    assert isinstance(motion_cmd, MotionCommandCfg)
     motion_paths, registry_name = _resolve_tracking_motion(cfg, motion_cmd)
-    motion_cmd.motion_files = tuple(str(path) for path in motion_paths)
+    motion_cmd.motion_files = tuple(str(path) for path in motion_paths)  # type: ignore[union-attr]
 
   # Enable NaN guard if requested.
   if cfg.enable_nan_guard:
