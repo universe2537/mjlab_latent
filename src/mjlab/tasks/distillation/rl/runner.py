@@ -1,279 +1,46 @@
-"""Online DAgger-style latent distillation runner."""
+"""Online DAgger-style latent distillation runner.
+
+Implements Algorithm 1 from LATENT §3.2.2: collect rollouts from the
+student, query a frozen tracking teacher for actions, and train the
+student VAE with action-imitation + KL-to-prior loss.
+
+Auxiliary concerns are split into sibling modules:
+
+* :mod:`config`      -- ``DistillationRunnerCfg`` dataclass.
+* :mod:`models`      -- PHC-style ``LatentStudentModel`` + KL helper.
+* :mod:`buffer`      -- on-device circular replay buffer.
+* :mod:`obs_slicer`  -- state / target index splitter.
+* :mod:`logger`      -- tensorboard / wandb logging shim.
+* :mod:`onnx`        -- ONNX export of the prior-only student.
+"""
 
 from __future__ import annotations
 
 import os
-import pathlib
 import time
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
-import git
-import rsl_rl
 import torch
 import torch.nn.functional as F
-from torch import nn
 
-from mjlab.rl import MjlabOnPolicyRunner, RslRlBaseRunnerCfg, RslRlVecEnvWrapper
+from mjlab.rl import MjlabOnPolicyRunner, RslRlVecEnvWrapper
 from mjlab.rl.exporter_utils import attach_metadata_to_onnx, get_base_metadata
+from mjlab.tasks.distillation.rl.buffer import ReplayBuffer
+from mjlab.tasks.distillation.rl.config import DistillationRunnerCfg  # noqa: F401
+from mjlab.tasks.distillation.rl.logger import DistillationLogger
 from mjlab.tasks.distillation.rl.models import (
   LatentStudentModel,
   diagonal_gaussian_kl,
 )
+from mjlab.tasks.distillation.rl.obs_slicer import ObservationSlicer
+from mjlab.tasks.distillation.rl.onnx import export_student_to_onnx
 from mjlab.tasks.registry import load_rl_cfg, load_runner_cls
 
 
-@dataclass
-class DistillationRunnerCfg(RslRlBaseRunnerCfg):
-  """Configuration for online latent action distillation."""
-
-  teacher_task_id: str = "Mjlab-Tracking-Flat-Unitree-G1"
-  teacher_checkpoint: str = ""
-  teacher_strict_load: bool = True
-  obs_group: str = "actor"
-  state_terms: tuple[str, ...] = ()
-  target_terms: tuple[str, ...] = ("command",)
-  latent_dim: int = 16
-  encoder_hidden_dims: tuple[int, ...] = (512, 256)
-  prior_hidden_dims: tuple[int, ...] = (512, 256)
-  decoder_hidden_dims: tuple[int, ...] = (512, 256)
-  activation: str = "elu"
-  min_log_std: float = -5.0
-  max_log_std: float = 2.0
-  learning_rate: float = 3.0e-4
-  weight_decay: float = 0.0
-  action_loss_weight: float = 1.0
-  kl_loss_weight: float = 1.0e-3
-  batch_size: int = 16_384
-  buffer_capacity: int = 262_144
-  updates_per_iteration: int = 4
-  teacher_action_prob: float = 0.0
-  deterministic_rollout: bool = True
-  max_grad_norm: float = 1.0
-  obs_groups: dict[str, tuple[str, ...]] = field(
-    default_factory=lambda: {"actor": ("actor",)}
-  )
-
-
-class _DistillationLogger:
-  """Thin logging wrapper matching rsl_rl style for non-PPO runners.
-
-  Supports tensorboard and wandb backends based on ``cfg["logger"]``.
-  Call :meth:`init` before the training loop and :meth:`stop` after.
-  """
-
-  def __init__(
-    self,
-    log_dir: Path | None,
-    cfg: dict[str, Any],
-    env: RslRlVecEnvWrapper,
-  ) -> None:
-    self.log_dir = log_dir
-    self.cfg = cfg
-    self.env = env
-    self.logger_type = cfg.get("logger", "tensorboard").lower()
-    self.git_status_repos: list[str] = [rsl_rl.__file__]
-    self.writer = None
-
-  def init(self) -> None:
-    """Create the writer and persist git diffs / configs."""
-    if self.log_dir is None:
-      return
-    if self.logger_type == "wandb":
-      from rsl_rl.utils.wandb_utils import WandbSummaryWriter
-
-      self.writer = WandbSummaryWriter(
-        log_dir=str(self.log_dir), flush_secs=10, cfg=self.cfg
-      )
-      self.writer.store_config(self.env.unwrapped.cfg, self.cfg)
-    elif self.logger_type == "tensorboard":
-      from torch.utils.tensorboard import SummaryWriter
-
-      self.writer = SummaryWriter(log_dir=str(self.log_dir), flush_secs=10)
-    else:
-      raise ValueError(
-        f"Unknown logger type {self.logger_type!r}. Choose 'tensorboard' or 'wandb'."
-      )
-
-    files_to_upload = self._store_code_state()
-    if self.logger_type == "wandb":
-      for path in files_to_upload:
-        self.writer.save_file(path)  # type: ignore[union-attr]
-
-  def _store_code_state(self) -> list[str]:
-    """Write git diff files to ``<log_dir>/git/`` (mirrors rsl_rl Logger)."""
-    files_to_upload: list[str] = []
-    if self.log_dir is None:
-      return files_to_upload
-    git_log_dir = self.log_dir / "git"
-    git_log_dir.mkdir(parents=True, exist_ok=True)
-    for repo_file in self.git_status_repos:
-      try:
-        repo = git.Repo(repo_file, search_parent_directories=True)
-        commit_hash = repo.head.commit.hexsha
-        t = repo.head.commit.tree
-      except Exception:
-        print(f"[WARN] Could not find git repository in {repo_file}. Skipping.")
-        continue
-      repo_name = pathlib.Path(repo.working_dir).name
-      diff_path = git_log_dir / f"{repo_name}.diff"
-      if diff_path.exists():
-        continue
-      print(f"Storing git diff for '{repo_name}' in: {diff_path}")
-      diff_path.write_text(
-        f"--- git commit ---\n{commit_hash}\n\n\n"
-        f"--- git status ---\n{repo.git.status()}\n\n\n"
-        f"--- git diff ---\n{repo.git.diff(t)}",
-        encoding="utf-8",
-      )
-      files_to_upload.append(str(diff_path))
-    return files_to_upload
-
-  def add_scalar(self, tag: str, value: float, step: int) -> None:
-    if self.writer is not None:
-      self.writer.add_scalar(tag, value, step)
-
-  def save_model(self, path: str, it: int) -> None:
-    if self.writer is not None and self.logger_type in ("wandb", "neptune"):
-      self.writer.save_model(path, it)  # type: ignore[union-attr]
-
-  def stop(self) -> None:
-    if self.writer is not None and self.logger_type in ("wandb", "neptune"):
-      self.writer.stop()  # type: ignore[union-attr]
-
-
-class ReplayBuffer:
-  def __init__(
-    self,
-    *,
-    capacity: int,
-    obs_dim: int,
-    action_dim: int,
-    device: torch.device,
-  ) -> None:
-    self.capacity = capacity
-    self.device = device
-    self.obs = torch.empty(capacity, obs_dim, device=device)
-    self.teacher_actions = torch.empty(capacity, action_dim, device=device)
-    self.size = 0
-    self.pos = 0
-
-  def add(self, obs: torch.Tensor, teacher_actions: torch.Tensor) -> None:
-    num_items = obs.shape[0]
-    if num_items >= self.capacity:
-      self.obs[:] = obs[-self.capacity :]
-      self.teacher_actions[:] = teacher_actions[-self.capacity :]
-      self.size = self.capacity
-      self.pos = 0
-      return
-
-    end = self.pos + num_items
-    if end <= self.capacity:
-      self.obs[self.pos : end] = obs
-      self.teacher_actions[self.pos : end] = teacher_actions
-    else:
-      first = self.capacity - self.pos
-      self.obs[self.pos :] = obs[:first]
-      self.teacher_actions[self.pos :] = teacher_actions[:first]
-      self.obs[: end - self.capacity] = obs[first:]
-      self.teacher_actions[: end - self.capacity] = teacher_actions[first:]
-
-    self.pos = end % self.capacity
-    self.size = min(self.capacity, self.size + num_items)
-
-  def sample(self, batch_size: int) -> tuple[torch.Tensor, torch.Tensor]:
-    if self.size == 0:
-      raise RuntimeError("Cannot sample from an empty replay buffer.")
-    idx = torch.randint(self.size, (min(batch_size, self.size),), device=self.device)
-    return self.obs[idx], self.teacher_actions[idx]
-
-
-class ObservationSlicer:
-  def __init__(
-    self,
-    env: RslRlVecEnvWrapper,
-    *,
-    group_name: str,
-    state_terms: tuple[str, ...],
-    target_terms: tuple[str, ...],
-  ) -> None:
-    obs_manager = env.unwrapped.observation_manager
-    if not obs_manager.group_obs_concatenate[group_name]:
-      raise ValueError(
-        f"Distillation expects observation group {group_name!r} to be concatenated."
-      )
-
-    term_names = obs_manager.active_terms[group_name]
-    term_dims = obs_manager.group_obs_term_dim[group_name]
-    if len(state_terms) == 0:
-      state_terms = tuple(name for name in term_names if name not in target_terms)
-
-    self.state_indices = self._indices_for_terms(term_names, term_dims, state_terms)
-    self.target_indices = self._indices_for_terms(term_names, term_dims, target_terms)
-    self.obs_dim = sum(int(torch.tensor(dim).prod().item()) for dim in term_dims)
-
-  @staticmethod
-  def _indices_for_terms(
-    term_names: list[str],
-    term_dims: list[tuple[int, ...]],
-    selected_terms: tuple[str, ...],
-  ) -> torch.Tensor:
-    missing = sorted(set(selected_terms).difference(term_names))
-    if missing:
-      raise ValueError(f"Unknown observation term(s): {missing}")
-
-    indices: list[int] = []
-    offset = 0
-    for term_name, term_dim in zip(term_names, term_dims, strict=True):
-      length = int(torch.tensor(term_dim).prod().item())
-      if term_name in selected_terms:
-        indices.extend(range(offset, offset + length))
-      offset += length
-    return torch.tensor(indices, dtype=torch.long)
-
-  @property
-  def state_dim(self) -> int:
-    return int(self.state_indices.numel())
-
-  @property
-  def target_dim(self) -> int:
-    return int(self.target_indices.numel())
-
-  def to(self, device: torch.device) -> None:
-    self.state_indices = self.state_indices.to(device)
-    self.target_indices = self.target_indices.to(device)
-
-  def split(self, obs: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-    return obs[:, self.state_indices], obs[:, self.target_indices]
-
-
-class _OnnxStudentModel(nn.Module):
-  """ONNX-exportable wrapper for the prior-only student inference path.
-
-  At deployment only the prior P(z|s) is available (no target s̃_{t+1}).
-  This wrapper slices the full actor observation down to the state subset,
-  runs the prior, and decodes the action deterministically.
-  """
-
-  def __init__(self, model: LatentStudentModel, state_indices: torch.Tensor) -> None:
-    super().__init__()
-    self.model = model
-    self.register_buffer("state_indices", state_indices.cpu())
-
-  def forward(self, actor_obs: torch.Tensor) -> torch.Tensor:
-    state = actor_obs[:, self.state_indices]  # type: ignore[index]
-    prior = self.model.prior_distribution(state)
-    return self.model.decode(state, prior.mean)
-
-
 class OnlineDistillationRunner:
-  """Train a latent student online against a frozen tracking teacher.
-
-  Implements Algorithm 1 from LATENT §3.2.2: DAgger rollout with teacher
-  supervision, variational bottleneck (CVAE encoder/prior/decoder), and
-  joint action-imitation + KL loss.
-  """
+  """Train a latent student online against a frozen tracking teacher."""
 
   env: RslRlVecEnvWrapper
 
@@ -311,6 +78,9 @@ class OnlineDistillationRunner:
       activation=self.cfg["activation"],
       min_log_std=self.cfg["min_log_std"],
       max_log_std=self.cfg["max_log_std"],
+      posterior_feature_multiplier=int(self.cfg.get("posterior_feature_multiplier", 5)),
+      prior_feature_multiplier=int(self.cfg.get("prior_feature_multiplier", 1)),
+      z_all=bool(self.cfg.get("z_all", False)),
     ).to(self.device)
     self.optimizer = torch.optim.AdamW(
       self.model.parameters(),
@@ -324,10 +94,11 @@ class OnlineDistillationRunner:
       device=self.device,
     )
     self.teacher_policy = None
-    self.logger = _DistillationLogger(self.log_dir, self.cfg, self.env)
+    self.logger = DistillationLogger(self.log_dir, self.cfg, self.env)
+
+  # -- teacher / inference helpers -----------------------------------------
 
   def add_git_repo_to_log(self, repo_file_path: str) -> None:
-    """Register a repo path so its git diff is saved at the start of training."""
     self.logger.git_status_repos.append(repo_file_path)
 
   def _load_teacher_policy(self):
@@ -356,7 +127,13 @@ class OnlineDistillationRunner:
 
   def _student_action(self, actor_obs: torch.Tensor) -> torch.Tensor:
     state, _ = self.slicer.split(actor_obs)
-    return self.model.act(state, deterministic=self.cfg["deterministic_rollout"])
+    return self.model.act(
+      state,
+      deterministic=self.cfg["deterministic_rollout"],
+      source="prior",
+    )
+
+  # -- training loop -------------------------------------------------------
 
   def _rollout(self, obs) -> Any:
     if self.teacher_policy is None:
@@ -449,6 +226,14 @@ class OnlineDistillationRunner:
       self.save(str(self.log_dir / f"model_{self.current_learning_iteration}.pt"))
     self.logger.stop()
 
+  # -- checkpoint & export -------------------------------------------------
+
+  @staticmethod
+  def _get_export_paths(checkpoint_path: str) -> tuple[Path, str, Path]:
+    export_dir = Path(checkpoint_path).parent
+    filename = f"{export_dir.name}.onnx"
+    return export_dir, filename, export_dir / filename
+
   def save(self, path: str, infos=None) -> None:
     del infos
     Path(path).parent.mkdir(parents=True, exist_ok=True)
@@ -501,38 +286,15 @@ class OnlineDistillationRunner:
   def export_policy_to_onnx(
     self, path: str, filename: str = "policy.onnx", verbose: bool = False
   ) -> None:
-    """Export the prior-only student policy to ONNX.
-
-    The exported model takes the full actor observation and returns the
-    deterministic action using the prior mean (no target required).
-    """
-    import copy
-
-    os.makedirs(path, exist_ok=True)
-    # deepcopy to avoid moving the live training model to CPU
-    onnx_model = _OnnxStudentModel(copy.deepcopy(self.model), self.slicer.state_indices)
-    onnx_model.to("cpu")
-    onnx_model.eval()
-    obs_dim = self.slicer.obs_dim
-    dummy_obs = torch.zeros(1, obs_dim)
-    torch.onnx.export(
-      onnx_model,
-      (dummy_obs,),
-      os.path.join(path, filename),
-      export_params=True,
-      opset_version=18,
+    """Export the deployment-time prior-only student to ONNX."""
+    export_student_to_onnx(
+      model=self.model,
+      state_indices=self.slicer.state_indices,
+      obs_dim=self.slicer.obs_dim,
+      path=path,
+      filename=filename,
       verbose=verbose,
-      input_names=["actor_obs"],
-      output_names=["actions"],
-      dynamic_axes={},
-      dynamo=False,
     )
-
-  @staticmethod
-  def _get_export_paths(checkpoint_path: str) -> tuple[Path, str, Path]:
-    export_dir = Path(checkpoint_path).parent
-    filename = f"{export_dir.name}.onnx"
-    return export_dir, filename, export_dir / filename
 
   def load(
     self,

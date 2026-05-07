@@ -12,8 +12,7 @@ def unitree_g1_distillation_runner_cfg() -> DistillationRunnerCfg:
     # 默认指向当前可用的 G1+racket tracking PPO 检查点。
     # 也可在 CLI 通过 --agent.teacher-checkpoint 覆盖。
     teacher_checkpoint=(
-      "/home/wangxiyu/workspace/mjlab/logs/rsl_rl/g1_tracking/"
-      "2026-04-30_21-55-08/model_19500.pt"
+      "./logs/rsl_rl/g1_tracking/2026-04-30_21-55-08/model_19500.pt"
     ),
     latent_dim=16,
     encoder_hidden_dims=(512, 256),
