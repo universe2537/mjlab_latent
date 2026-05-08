@@ -1,8 +1,8 @@
-"""ONNX export helpers for the latent student policy.
+"""latent student 的 ONNX 导出辅助函数。
 
 Deployment only sees the prior ``P(z|s)``, so the exported graph slices the
 state out of the full actor observation, samples (deterministically) from
-the prior, and decodes the action. No target / encoder is needed at runtime.
+the prior, and decodes the action. 运行时不需要 target，也不需要 posterior。
 """
 
 from __future__ import annotations
@@ -18,7 +18,11 @@ from mjlab.tasks.distillation.rl.models import LatentStudentModel
 
 
 class _OnnxStudentModel(nn.Module):
-  """Inference-only wrapper consumed by ``torch.onnx.export``."""
+  """给 ``torch.onnx.export`` 使用的推理包装器。
+
+  这个包装器的职责是把完整 actor observation 裁成 ``state``，
+  然后走 prior-only 路径得到部署时动作。
+  """
 
   def __init__(self, model: LatentStudentModel, state_indices: torch.Tensor) -> None:
     super().__init__()
@@ -40,9 +44,21 @@ def export_student_to_onnx(
   filename: str = "policy.onnx",
   verbose: bool = False,
 ) -> Path:
-  """Serialise the prior-only student to ONNX. Returns the output file path."""
+  """导出 prior-only student 为 ONNX。
+
+  参数:
+    model: 要导出的 student 模型。
+    state_indices: 从 actor_obs 中取出 ``state`` 的索引。
+    obs_dim: 完整 actor observation 维度，用于构造 dummy input。
+    path: 导出目录。
+    filename: 导出文件名。
+    verbose: 是否打印导出过程中的详细信息。
+
+  返回:
+    导出的 ONNX 文件路径。
+  """
   os.makedirs(path, exist_ok=True)
-  # deepcopy avoids moving the live training model to CPU.
+  # deepcopy 避免把训练中的 live model 直接挪到 CPU，影响后续训练状态。
   onnx_model = _OnnxStudentModel(copy.deepcopy(model), state_indices)
   onnx_model.to("cpu")
   onnx_model.eval()

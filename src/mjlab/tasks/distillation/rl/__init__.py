@@ -1,4 +1,4 @@
-"""RL components for the latent distillation task.
+"""latent distillation 任务对外暴露的 RL 组件。
 
 Public surface:
 
@@ -6,8 +6,11 @@ Public surface:
 * :class:`OnlineDistillationRunner` -- DAgger training loop.
 * :class:`LatentStudentModel`       -- PHC-style VAE student.
 * :func:`diagonal_gaussian_kl`      -- KL helper for the loss.
-* :class:`ReplayBuffer`             -- on-device circular buffer.
-* :class:`ObservationSlicer`        -- state / target index splitter.
+* :class:`ReplayBuffer`             -- 设备端环形缓存。
+* :class:`ObservationSlicer`        -- state / target 索引切分器。
+
+本模块的作用只是整理公共导出，便于外部通过
+``from mjlab.tasks.distillation.rl import ...`` 统一导入。
 """
 
 from mjlab.tasks.distillation.rl.buffer import ReplayBuffer

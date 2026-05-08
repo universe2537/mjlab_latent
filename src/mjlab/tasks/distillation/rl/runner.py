@@ -1,4 +1,4 @@
-"""Online DAgger-style latent distillation runner.
+"""在线 DAgger 风格的 latent 蒸馏 runner。
 
 Implements Algorithm 1 from LATENT §3.2.2: collect rollouts from the
 student, query a frozen tracking teacher for actions, and train the
@@ -11,7 +11,16 @@ Auxiliary concerns are split into sibling modules:
 * :mod:`buffer`      -- on-device circular replay buffer.
 * :mod:`obs_slicer`  -- state / target index splitter.
 * :mod:`logger`      -- tensorboard / wandb logging shim.
-* :mod:`onnx`        -- ONNX export of the prior-only student.
+* :mod:`onnx`        -- prior-only student 的 ONNX 导出。
+
+本文件只负责“训练流程编排”：
+
+1. 加载冻结的 tracking teacher。
+2. 用 student / teacher 在环境中 rollout 收集样本。
+3. 从 replay buffer 采样并更新 VAE student。
+4. 保存 checkpoint 和导出部署用 ONNX。
+
+模型结构、观测切分、buffer、日志等逻辑都拆到单独模块，便于维护。
 """
 
 from __future__ import annotations
@@ -40,7 +49,7 @@ from mjlab.tasks.registry import load_rl_cfg, load_runner_cls
 
 
 class OnlineDistillationRunner:
-  """Train a latent student online against a frozen tracking teacher."""
+  """在线训练 latent student，使其模仿冻结的 tracking teacher。"""
 
   env: RslRlVecEnvWrapper
 
@@ -53,12 +62,16 @@ class OnlineDistillationRunner:
     **kwargs: Any,
   ) -> None:
     del kwargs
+    # ``cfg`` 在训练脚本中已经被 ``asdict`` 转成字典，这里直接按字典访问。
     self.env = env
     self.cfg = train_cfg
     self.log_dir = Path(log_dir) if log_dir is not None else None
     self.device = torch.device(device)
     self.current_learning_iteration = 0
 
+    # 将 actor observation 按配置切成：
+    # 1. state  : prior / decoder 可见
+    # 2. target : 仅 posterior 训练可见
     self.slicer = ObservationSlicer(
       env,
       group_name=self.cfg["obs_group"],
@@ -82,11 +95,14 @@ class OnlineDistillationRunner:
       prior_feature_multiplier=int(self.cfg.get("prior_feature_multiplier", 1)),
       z_all=bool(self.cfg.get("z_all", False)),
     ).to(self.device)
+    # student 训练只需要优化 VAE 参数，因此这里直接使用 AdamW。
     self.optimizer = torch.optim.AdamW(
       self.model.parameters(),
       lr=self.cfg["learning_rate"],
       weight_decay=self.cfg["weight_decay"],
     )
+    # replay buffer 中保存的是 actor_obs 和 teacher_action，
+    # 不保存 student_action，因为后者每次都可由当前模型重新前向得到。
     self.buffer = ReplayBuffer(
       capacity=self.cfg["buffer_capacity"],
       obs_dim=self.slicer.obs_dim,
@@ -96,12 +112,56 @@ class OnlineDistillationRunner:
     self.teacher_policy = None
     self.logger = DistillationLogger(self.log_dir, self.cfg, self.env)
 
+  @staticmethod
+  def _linear_schedule(
+    start_value: float,
+    end_value: float | None,
+    iteration: int,
+    start_iteration: int,
+    end_iteration: int,
+  ) -> float:
+    """按 iteration 做线性插值；未配置区间时退化为常数。"""
+    if end_value is None or end_iteration <= start_iteration:
+      return float(start_value)
+    if iteration <= start_iteration:
+      return float(start_value)
+    if iteration >= end_iteration:
+      return float(end_value)
+    alpha = (iteration - start_iteration) / max(end_iteration - start_iteration, 1)
+    return float((1.0 - alpha) * start_value + alpha * end_value)
+
+  def _teacher_action_prob(self, iteration: int) -> float:
+    """返回当前迭代使用的 teacher-forcing 概率。"""
+    return self._linear_schedule(
+      start_value=float(self.cfg["teacher_action_prob"]),
+      end_value=self.cfg.get("teacher_action_prob_end"),
+      iteration=iteration,
+      start_iteration=0,
+      end_iteration=int(self.cfg.get("teacher_action_prob_anneal_iters", 0)),
+    )
+
+  def _kl_loss_weight(self, iteration: int) -> float:
+    """返回当前迭代使用的 KL 权重。"""
+    return self._linear_schedule(
+      start_value=float(self.cfg["kl_loss_weight"]),
+      end_value=self.cfg.get("kl_loss_weight_end"),
+      iteration=iteration,
+      start_iteration=int(self.cfg.get("kl_loss_anneal_start", 0)),
+      end_iteration=int(self.cfg.get("kl_loss_anneal_end", 0)),
+    )
+
   # -- teacher / inference helpers -----------------------------------------
 
   def add_git_repo_to_log(self, repo_file_path: str) -> None:
+    """让 logger 在训练开始时额外记录某个仓库的 git diff。"""
     self.logger.git_status_repos.append(repo_file_path)
 
   def _load_teacher_policy(self):
+    """加载冻结 teacher，并返回仅推理使用的 policy callable。
+
+    teacher 本身仍然沿用 tracking 任务原有的 runner / actor 结构；
+    distillation runner 只把它当作动作标签提供者，不参与梯度更新。
+    """
     checkpoint = Path(os.path.expandvars(self.cfg["teacher_checkpoint"])).expanduser()
     if not checkpoint.exists():
       raise FileNotFoundError(
@@ -126,6 +186,10 @@ class OnlineDistillationRunner:
     return teacher_runner.get_inference_policy(device=str(self.device))
 
   def _student_action(self, actor_obs: torch.Tensor) -> torch.Tensor:
+    """rollout 阶段 student 的动作生成逻辑。
+
+    部署语义下 student 只能访问 prior，因此这里固定使用 ``source='prior'``。
+    """
     state, _ = self.slicer.split(actor_obs)
     return self.model.act(
       state,
@@ -135,7 +199,16 @@ class OnlineDistillationRunner:
 
   # -- training loop -------------------------------------------------------
 
-  def _rollout(self, obs) -> Any:
+  def _rollout(self, obs, teacher_prob: float) -> Any:
+    """执行一段环境 rollout，并把 ``(actor_obs, teacher_action)`` 存入 buffer。
+
+    这里使用的是 DAgger 风格数据收集：
+
+    1. 环境主要由 student action 驱动。
+    2. teacher 仅提供监督标签。
+    3. 若 ``teacher_action_prob > 0``，则部分环境步会直接执行教师动作，
+       用于缓解早期 student rollout 偏离分布过快的问题。
+    """
     if self.teacher_policy is None:
       self.teacher_policy = self._load_teacher_policy()
     self.model.eval()
@@ -145,7 +218,6 @@ class OnlineDistillationRunner:
         teacher_action = self.teacher_policy(obs).to(self.device)
         student_action = self._student_action(actor_obs)
         rollout_action = student_action
-        teacher_prob = self.cfg["teacher_action_prob"]
         if teacher_prob > 0:
           mask = (
             torch.rand(student_action.shape[0], 1, device=self.device) < teacher_prob
@@ -155,19 +227,18 @@ class OnlineDistillationRunner:
       obs, _, _, _ = self.env.step(rollout_action)
     return obs
 
-  def _update(self) -> dict[str, float]:
+  def _update(self, kl_loss_weight: float) -> dict[str, float]:
+    """从 replay buffer 采样并执行若干次梯度更新。"""
     self.model.train()
     stats = {"loss": 0.0, "action_loss": 0.0, "kl_loss": 0.0}
     for _ in range(self.cfg["updates_per_iteration"]):
       obs, teacher_action = self.buffer.sample(self.cfg["batch_size"])
       state, target = self.slicer.split(obs)
+      # ``forward_train`` 返回 posterior / prior，便于外部显式计算 KL。
       pred_action, posterior, prior = self.model.forward_train(state, target)
       action_loss = F.mse_loss(pred_action, teacher_action)
       kl_loss = diagonal_gaussian_kl(posterior, prior).mean()
-      loss = (
-        self.cfg["action_loss_weight"] * action_loss
-        + self.cfg["kl_loss_weight"] * kl_loss
-      )
+      loss = self.cfg["action_loss_weight"] * action_loss + kl_loss_weight * kl_loss
       self.optimizer.zero_grad(set_to_none=True)
       loss.backward()
       torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.cfg["max_grad_norm"])
@@ -182,6 +253,13 @@ class OnlineDistillationRunner:
   def learn(
     self, num_learning_iterations: int, init_at_random_ep_len: bool = False
   ) -> None:
+    """主训练循环。
+
+    参数:
+      num_learning_iterations: 总迭代数。
+      init_at_random_ep_len: 为兼容 on-policy runner 接口而保留；
+        distillation 当前未使用该选项。
+    """
     del init_at_random_ep_len
     self.logger.init()
     obs = self.env.get_observations()
@@ -192,8 +270,10 @@ class OnlineDistillationRunner:
 
     for iteration in range(start_iter, end_iter):
       iter_start = time.time()
-      obs = self._rollout(obs)
-      stats = self._update()
+      teacher_prob = self._teacher_action_prob(iteration)
+      kl_loss_weight = self._kl_loss_weight(iteration)
+      obs = self._rollout(obs, teacher_prob=teacher_prob)
+      stats = self._update(kl_loss_weight=kl_loss_weight)
       iter_time = time.time() - iter_start
 
       self.logger.add_scalar("distillation/loss", stats["loss"], iteration)
@@ -201,6 +281,10 @@ class OnlineDistillationRunner:
         "distillation/action_loss", stats["action_loss"], iteration
       )
       self.logger.add_scalar("distillation/kl_loss", stats["kl_loss"], iteration)
+      self.logger.add_scalar(
+        "distillation/teacher_action_prob", teacher_prob, iteration
+      )
+      self.logger.add_scalar("distillation/kl_loss_weight", kl_loss_weight, iteration)
       self.logger.add_scalar("distillation/buffer_size", self.buffer.size, iteration)
 
       if iteration % self.cfg["save_interval"] == 0 and self.log_dir is not None:
@@ -215,6 +299,8 @@ class OnlineDistillationRunner:
           f"loss: {stats['loss']:.5f}  "
           f"action: {stats['action_loss']:.5f}  "
           f"kl: {stats['kl_loss']:.5f}  "
+          f"teacher_prob: {teacher_prob:.3f}  "
+          f"kl_w: {kl_loss_weight:.4g}  "
           f"buf: {self.buffer.size}  "
           f"iter_time: {iter_time:.2f}s  "
           f"eta: {eta / 60:.1f}min"
@@ -235,6 +321,7 @@ class OnlineDistillationRunner:
     return export_dir, filename, export_dir / filename
 
   def save(self, path: str, infos=None) -> None:
+    """保存 student/optimizer/obs_slicer，并导出 prior-only ONNX。"""
     del infos
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     torch.save(
@@ -303,6 +390,7 @@ class OnlineDistillationRunner:
     strict: bool = True,
     map_location: str | None = None,
   ) -> dict:
+    """从 checkpoint 恢复 student 权重和优化器状态。"""
     del load_cfg
     checkpoint = torch.load(
       path,
@@ -316,6 +404,7 @@ class OnlineDistillationRunner:
     return {}
 
   def get_inference_policy(self, device: str | None = None):
+    """返回可直接给外部调用的 student 推理函数。"""
     if device is not None:
       self.model.to(device)
       self.device = torch.device(device)

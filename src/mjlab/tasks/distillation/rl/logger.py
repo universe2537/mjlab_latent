@@ -1,8 +1,11 @@
-"""Lightweight tensorboard / wandb logger matching rsl_rl semantics.
+"""轻量日志封装，接口风格尽量贴近 rsl_rl。
 
 Used by the distillation runner because it does not subclass
 ``rsl_rl.runners.OnPolicyRunner`` (no PPO algorithm) and therefore cannot
 reuse rsl_rl's built-in logger directly.
+
+因为 distillation runner 不是 PPO 的 ``OnPolicyRunner`` 子类，
+所以这里单独实现了最小必需的记录能力。
 """
 
 from __future__ import annotations
@@ -18,11 +21,16 @@ from mjlab.rl import RslRlVecEnvWrapper
 
 
 class DistillationLogger:
-  """Thin tensorboard / wandb wrapper for non-PPO runners.
+  """为非 PPO runner 提供 tensorboard / wandb 记录能力。
 
   Mirrors the subset of ``rsl_rl.utils.Logger`` actually used by the
   distillation training loop: writer init, scalar logging, checkpoint
   upload, git diff snapshotting.
+
+  参数:
+    log_dir: 日志目录；若为 ``None`` 则完全禁用日志输出。
+    cfg: 训练配置字典，用于读取 logger 类型等选项。
+    env: 环境对象，用于在 wandb 中保存环境配置。
   """
 
   def __init__(
@@ -39,6 +47,7 @@ class DistillationLogger:
     self.writer = None
 
   def init(self) -> None:
+    """初始化 writer，并保存当前代码状态。"""
     if self.log_dir is None:
       return
     if self.logger_type == "wandb":
@@ -63,6 +72,7 @@ class DistillationLogger:
         self.writer.save_file(path)  # type: ignore[union-attr]
 
   def _store_code_state(self) -> list[str]:
+    """把 git commit / status / diff 保存到日志目录中。"""
     files_to_upload: list[str] = []
     if self.log_dir is None:
       return files_to_upload
@@ -91,13 +101,16 @@ class DistillationLogger:
     return files_to_upload
 
   def add_scalar(self, tag: str, value: float, step: int) -> None:
+    """记录一个标量指标。"""
     if self.writer is not None:
       self.writer.add_scalar(tag, value, step)
 
   def save_model(self, path: str, it: int) -> None:
+    """在支持的后端中注册模型文件。"""
     if self.writer is not None and self.logger_type in ("wandb", "neptune"):
       self.writer.save_model(path, it)  # type: ignore[union-attr]
 
   def stop(self) -> None:
+    """结束日志会话。"""
     if self.writer is not None and self.logger_type in ("wandb", "neptune"):
       self.writer.stop()  # type: ignore[union-attr]
