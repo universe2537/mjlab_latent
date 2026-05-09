@@ -49,8 +49,8 @@ def unitree_g1_distillation_runner_cfg() -> DistillationRunnerCfg:
     action_loss_weight=1.0,
     # 先用较强 KL 约束把 posterior 压回 state-conditioned prior，
     # 再在 2.5k-5k iter 内退火到部署期更友好的弱正则。
-    kl_loss_weight=1.0e-1,
-    kl_loss_weight_end=1.0e-3,
+    kl_loss_weight=1.0e-3,
+    kl_loss_weight_end=5.0e-3,
     kl_loss_anneal_start=2500,
     kl_loss_anneal_end=10000,
     learning_rate=8.0e-4,
@@ -60,8 +60,8 @@ def unitree_g1_distillation_runner_cfg() -> DistillationRunnerCfg:
     updates_per_iteration=8,
     # 训练初期使用较强 teacher-forcing 抑制分布漂移，随后线性退火到纯学生 rollout。
     teacher_action_prob=1.0,
-    teacher_action_prob_end=0.0,
-    teacher_action_prob_anneal_iters=10000,
+    teacher_action_prob_end=0.2,
+    teacher_action_prob_anneal_iters=30000,
     num_steps_per_env=16,
     max_iterations=30000,
     save_interval=250,
