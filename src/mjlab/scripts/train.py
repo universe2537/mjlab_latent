@@ -331,7 +331,7 @@ def launch_training(task_id: str, args: TrainConfig | None = None):
   log_root_path = (Path(args.log_root) / args.agent.experiment_name).resolve()
   log_dir_name = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
   if args.agent.run_name:
-    log_dir_name += f"_{args.agent.run_name}"
+    log_dir_name = f"{args.agent.run_name}_{log_dir_name}"
   log_dir = log_root_path / log_dir_name
 
   # Select GPUs based on CUDA_VISIBLE_DEVICES and user specification.

@@ -79,7 +79,7 @@ class DistillationRunnerCfg(RslRlBaseRunnerCfg):
   # 动作回归损失的权重，即 ``MSE(student_action, teacher_action)`` 的系数。
   action_loss_weight: float = 1.0
   # KL 正则项初始权重，即 ``KL(q(z|s,s_tilde) || p(z|s))`` 的系数。
-  kl_loss_weight: float = 1.0e-3
+  kl_loss_weight: float = 1.0e-2
   # KL 正则项的目标权重。若为 None，则训练中保持常数 ``kl_loss_weight``。
   kl_loss_weight_end: float | None = None
   # KL 退火起始迭代。小于等于 0 表示从训练一开始就按 ``kl_loss_weight`` 生效。

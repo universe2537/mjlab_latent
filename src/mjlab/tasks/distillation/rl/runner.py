@@ -230,13 +230,21 @@ class OnlineDistillationRunner:
   def _update(self, kl_loss_weight: float) -> dict[str, float]:
     """从 replay buffer 采样并执行若干次梯度更新。"""
     self.model.train()
-    stats = {"loss": 0.0, "action_loss": 0.0, "kl_loss": 0.0}
+    stats = {
+      "loss": 0.0,
+      "action_loss": 0.0,
+      "prior_action_loss": 0.0,
+      "kl_loss": 0.0,
+    }
     for _ in range(self.cfg["updates_per_iteration"]):
       obs, teacher_action = self.buffer.sample(self.cfg["batch_size"])
       state, target = self.slicer.split(obs)
       # ``forward_train`` 返回 posterior / prior，便于外部显式计算 KL。
       pred_action, posterior, prior = self.model.forward_train(state, target)
       action_loss = F.mse_loss(pred_action, teacher_action)
+      with torch.no_grad():
+        prior_action = self.model.decode(state, prior.mean)
+        prior_action_loss = F.mse_loss(prior_action, teacher_action)
       kl_loss = diagonal_gaussian_kl(posterior, prior).mean()
       loss = self.cfg["action_loss_weight"] * action_loss + kl_loss_weight * kl_loss
       self.optimizer.zero_grad(set_to_none=True)
@@ -245,6 +253,7 @@ class OnlineDistillationRunner:
       self.optimizer.step()
       stats["loss"] += float(loss.detach())
       stats["action_loss"] += float(action_loss.detach())
+      stats["prior_action_loss"] += float(prior_action_loss.detach())
       stats["kl_loss"] += float(kl_loss.detach())
     for key in stats:
       stats[key] /= self.cfg["updates_per_iteration"]
@@ -280,6 +289,9 @@ class OnlineDistillationRunner:
       self.logger.add_scalar(
         "distillation/action_loss", stats["action_loss"], iteration
       )
+      self.logger.add_scalar(
+        "distillation/prior_action_loss", stats["prior_action_loss"], iteration
+      )
       self.logger.add_scalar("distillation/kl_loss", stats["kl_loss"], iteration)
       self.logger.add_scalar(
         "distillation/teacher_action_prob", teacher_prob, iteration
@@ -298,6 +310,7 @@ class OnlineDistillationRunner:
           f"[distillation] iter: {iteration}/{end_iter - 1} "
           f"loss: {stats['loss']:.5f}  "
           f"action: {stats['action_loss']:.5f}  "
+          f"prior_action: {stats['prior_action_loss']:.5f}  "
           f"kl: {stats['kl_loss']:.5f}  "
           f"teacher_prob: {teacher_prob:.3f}  "
           f"kl_w: {kl_loss_weight:.4g}  "
