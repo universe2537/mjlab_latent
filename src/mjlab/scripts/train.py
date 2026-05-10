@@ -87,6 +87,24 @@ def _apply_env_defaults(cfg: TrainConfig) -> None:
     os.environ["WANDB_USERNAME"] = wandb_entity
 
 
+def _requires_opengl_backend(cfg: TrainConfig) -> bool:
+  """Return whether training needs an OpenGL backend in child processes.
+
+  Multi-GPU launches start fresh Python interpreters after environment variables
+  are exported. Setting ``MUJOCO_GL=egl`` unconditionally forces those fresh
+  interpreters to import MuJoCo's EGL path even for tasks that never render,
+  which can fail on machines without EGL runtime libraries installed.
+
+  We therefore only request EGL when a run will actually render frames: either
+  training video is enabled or the scene contains camera sensors.
+  """
+  if cfg.video:
+    return True
+
+  sensors = getattr(cfg.env.scene, "sensors", ()) or ()
+  return any(sensor.__class__.__name__ == "CameraSensorCfg" for sensor in sensors)
+
+
 def _normalize_wandb_motion_ref(ref: str, alias: str | None = None) -> str:
   entity = _first_env("WANDB_ENTITY")
   if "/" not in ref:
@@ -342,7 +360,12 @@ def launch_training(task_id: str, args: TrainConfig | None = None):
     os.environ["CUDA_VISIBLE_DEVICES"] = ""
   else:
     os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(map(str, selected_gpus))
-  os.environ["MUJOCO_GL"] = "egl"
+
+  if _requires_opengl_backend(args):
+    os.environ["MUJOCO_GL"] = "egl"
+  else:
+    os.environ.pop("MUJOCO_GL", None)
+    os.environ.pop("MUJOCO_EGL_DEVICE_ID", None)
 
   if num_gpus <= 1:
     # CPU or single GPU: run directly without torchrunx.

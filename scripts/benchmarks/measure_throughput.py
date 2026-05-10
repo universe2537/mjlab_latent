@@ -15,11 +15,15 @@ from pathlib import Path
 
 import torch
 import tyro
-import wandb
 
 import mjlab
 import mjlab.tasks  # noqa: F401 - registers tasks
 from mjlab.envs import ManagerBasedRlEnv
+from mjlab.scripts.train import (
+  _download_motion_from_registry,
+  _load_env_file,
+  _normalize_wandb_motion_ref,
+)
 from mjlab.tasks.registry import load_env_cfg
 from mjlab.tasks.tracking.mdp.commands import MotionCommandCfg
 
@@ -73,8 +77,8 @@ class ThroughputConfig:
   )
   """Tasks to benchmark."""
 
-  tracking_motion: str = "rll_humanoid/wandb-registry-Motions/lafan_cartwheel:latest"
-  """W&B artifact path for tracking task motion (entity/project/name:alias)."""
+  tracking_motion: str | None = None
+  """Optional tracking motion override as a local NPZ path or W&B artifact ref."""
 
   output_dir: Path | None = None
   """Output directory for JSON results. If None, results are only printed."""
@@ -119,6 +123,46 @@ def measure_env_sps(env: ManagerBasedRlEnv, num_steps: int) -> float:
   return (num_steps * env.num_envs) / elapsed
 
 
+def _motion_refs(motion_files: str | tuple[str, ...]) -> tuple[str, ...]:
+  if isinstance(motion_files, str):
+    return (motion_files,) if motion_files else ()
+  return tuple(motion_files)
+
+
+def _resolve_tracking_motion(task: str, cfg: ThroughputConfig, motion_cmd: MotionCommandCfg) -> None:
+  override = cfg.tracking_motion
+  if override:
+    override_path = Path(override).expanduser()
+    if override_path.exists():
+      motion_cmd.motion_files = str(override_path)
+      print(f"[INFO] Using local tracking motion override for {task}: {override_path}")
+      return
+
+    registry_name = _normalize_wandb_motion_ref(override)
+    motion_path = _download_motion_from_registry(registry_name)
+    motion_cmd.motion_files = str(motion_path)
+    print(f"[INFO] Downloaded tracking motion override for {task}: {registry_name}")
+    return
+
+  if motion_cmd.motion_source != "wandb":
+    return
+
+  registry_names = tuple(
+    _normalize_wandb_motion_ref(ref) for ref in _motion_refs(motion_cmd.motion_files)
+  )
+  if not registry_names:
+    raise ValueError(
+      f"Task {task} has motion_source='wandb' but no motion_files were configured."
+    )
+
+  motion_paths = tuple(
+    str(_download_motion_from_registry(registry_name))
+    for registry_name in registry_names
+  )
+  motion_cmd.motion_files = motion_paths[0] if len(motion_paths) == 1 else motion_paths
+  print(f"[INFO] Downloaded {len(motion_paths)} configured W&B motion artifact(s) for {task}.")
+
+
 def benchmark_task(task: str, cfg: ThroughputConfig) -> BenchmarkResult:
   """Benchmark a single task."""
   print(f"\nBenchmarking {task}...")
@@ -130,10 +174,7 @@ def benchmark_task(task: str, cfg: ThroughputConfig) -> BenchmarkResult:
   if len(env_cfg.commands) > 0:
     motion_cmd = env_cfg.commands.get("motion")
     if isinstance(motion_cmd, MotionCommandCfg):
-      api = wandb.Api()
-      artifact = api.artifact(cfg.tracking_motion)
-      motion_dir = artifact.download()
-      motion_cmd.motion_files = str(Path(motion_dir) / "motion.npz")
+      _resolve_tracking_motion(task, cfg, motion_cmd)
 
   env = ManagerBasedRlEnv(cfg=env_cfg, device=cfg.device)
   env.reset()
@@ -210,6 +251,8 @@ def save_results(results: list[BenchmarkResult], output_dir: Path) -> None:
 
 def main(cfg: ThroughputConfig) -> list[BenchmarkResult]:
   """Run throughput benchmarks on all configured tasks."""
+  _load_env_file()
+
   print("Throughput Benchmark")
   print(f"  Envs: {cfg.num_envs}")
   print(f"  Steps: {cfg.num_steps} (+ {cfg.warmup_steps} warmup)")

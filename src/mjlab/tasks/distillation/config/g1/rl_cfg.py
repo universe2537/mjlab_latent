@@ -28,7 +28,7 @@ def unitree_g1_distillation_runner_cfg() -> DistillationRunnerCfg:
     teacher_task_id="Mjlab-Tracking-Flat-Unitree-G1",
     # 默认指向当前可用的 G1 tracking teacher 检查点。
     # 若实验中需要替换教师，可在 CLI 中覆盖该字段。
-    teacher_checkpoint=("./logs/rsl_rl/g1_tracking/2026-04-30_21-55-08/model_19500.pt"),
+    teacher_checkpoint=("./logs/rsl_rl/g1_tracking/2026-05-07_13-52-37/model_20500.pt"),
     latent_dim=16,
     posterior_feature_multiplier=3,
     encoder_hidden_dims=(512, 256),
@@ -47,23 +47,21 @@ def unitree_g1_distillation_runner_cfg() -> DistillationRunnerCfg:
     # ``target_terms`` 是训练时才可见的目标项，供 posterior 使用。
     target_terms=("command",),
     action_loss_weight=1.0,
-    # 先用较强 KL 约束把 posterior 压回 state-conditioned prior，
-    # 再在 2.5k-5k iter 内退火到部署期更友好的弱正则。
     kl_loss_weight=1.0e-3,
     kl_loss_weight_end=5.0e-3,
     kl_loss_anneal_start=2500,
     kl_loss_anneal_end=10000,
     learning_rate=8.0e-4,
     # 扩大 buffer，让每批 DAgger 数据在被覆盖前能被 SGD 重复利用约 2 次。
-    buffer_capacity=524_288,
-    batch_size=16_384,
-    updates_per_iteration=8,
+    buffer_capacity=1048576,
+    batch_size=32768,
+    updates_per_iteration=16,
     # 训练初期使用较强 teacher-forcing 抑制分布漂移，随后线性退火到纯学生 rollout。
     teacher_action_prob=1.0,
     teacher_action_prob_end=0.2,
-    teacher_action_prob_anneal_iters=30000,
+    teacher_action_prob_anneal_iters=15000,
     num_steps_per_env=16,
-    max_iterations=30000,
+    max_iterations=300000,
     save_interval=250,
     upload_model=False,
   )
