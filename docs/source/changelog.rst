@@ -37,6 +37,10 @@ Added
   distillation task that reuses the G1 tracking environment, loads a
   frozen tracker teacher, and trains a conditional VAE-style student with
   action reconstruction plus KL regularization.
+- Added ``Mjlab-Tennis-Hit-Unitree-G1``, a tennis task for the
+  racket-equipped G1 that composes the robot, a free tennis ball, and court
+  props as separate mjlab entities while training a high-level latent policy
+  through a frozen distillation decoder.
 
 Changed
 ^^^^^^^

@@ -1,0 +1,1758 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8" />
+    <title>Tennis RL Environment — 顶层设计</title>
+    <style>
+        :root {
+            --bg: #0f1115;
+            --panel: #161a22;
+            --panel-2: #1b212c;
+            --border: #2a3140;
+            --fg: #e6e8ee;
+            --muted: #9aa3b2;
+            --accent: #7cc4ff;
+            --accent-2: #ffd479;
+            --good: #8ce99a;
+            --warn: #ffa94d;
+            --bad: #ff6b6b;
+            --code-bg: #0b0d12;
+            --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        html,
+        body {
+            margin: 0;
+            padding: 0;
+            background: var(--bg);
+            color: var(--fg);
+            font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", Roboto, sans-serif;
+            line-height: 1.65;
+        }
+
+        .wrap {
+            max-width: 980px;
+            margin: 0 auto;
+            padding: 48px 28px 96px;
+        }
+
+        h1,
+        h2,
+        h3,
+        h4 {
+            color: #fff;
+            line-height: 1.3;
+        }
+
+        h1 {
+            font-size: 32px;
+            margin: 0 0 6px;
+            letter-spacing: 0.5px;
+        }
+
+        .subtitle {
+            color: var(--muted);
+            margin-bottom: 36px;
+            font-size: 15px;
+        }
+
+        h2 {
+            font-size: 22px;
+            margin: 48px 0 14px;
+            padding-bottom: 8px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        h3 {
+            font-size: 17px;
+            margin: 24px 0 8px;
+            color: var(--accent);
+        }
+
+        h4 {
+            font-size: 15px;
+            margin: 18px 0 6px;
+            color: var(--accent-2);
+        }
+
+        p {
+            color: #d6dae3;
+            margin: 8px 0;
+        }
+
+        ul,
+        ol {
+            padding-left: 22px;
+        }
+
+        li {
+            margin: 4px 0;
+        }
+
+        code {
+            font-family: var(--mono);
+            font-size: 13px;
+            background: var(--code-bg);
+            color: #d6dae3;
+            padding: 2px 6px;
+            border-radius: 4px;
+            border: 1px solid var(--border);
+        }
+
+        pre {
+            background: var(--code-bg);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 14px 16px;
+            overflow: auto;
+            font-family: var(--mono);
+            font-size: 13px;
+            line-height: 1.55;
+        }
+
+        .panel {
+            background: var(--panel);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 18px 22px;
+            margin: 14px 0;
+        }
+
+        .panel.alt {
+            background: var(--panel-2);
+        }
+
+        .grid-2 {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 14px;
+        }
+
+        .grid-3 {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr;
+            gap: 12px;
+        }
+
+        .tag {
+            display: inline-block;
+            font-size: 11px;
+            padding: 2px 8px;
+            border-radius: 999px;
+            border: 1px solid var(--border);
+            color: var(--muted);
+            margin-right: 6px;
+        }
+
+        .tag.good {
+            color: var(--good);
+            border-color: #2f5c3a;
+        }
+
+        .tag.warn {
+            color: var(--warn);
+            border-color: #6b4a23;
+        }
+
+        .tag.bad {
+            color: var(--bad);
+            border-color: #6b2e2e;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 10px 0;
+            font-size: 14px;
+        }
+
+        th,
+        td {
+            border: 1px solid var(--border);
+            padding: 8px 10px;
+            text-align: left;
+            vertical-align: top;
+        }
+
+        th {
+            background: var(--panel-2);
+            color: #fff;
+            font-weight: 600;
+        }
+
+        tr:nth-child(even) td {
+            background: #14181f;
+        }
+
+        .muted {
+            color: var(--muted);
+        }
+
+        .kbd {
+            font-family: var(--mono);
+            font-size: 12px;
+            background: var(--code-bg);
+            color: var(--accent);
+            padding: 1px 6px;
+            border-radius: 4px;
+            border: 1px solid var(--border);
+        }
+
+        .toc {
+            background: var(--panel);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 14px 22px;
+            margin-bottom: 28px;
+        }
+
+        .toc ol {
+            margin: 6px 0;
+        }
+
+        .toc a {
+            color: var(--accent);
+            text-decoration: none;
+        }
+
+        .toc a:hover {
+            text-decoration: underline;
+        }
+
+        .callout {
+            border-left: 3px solid var(--accent);
+            background: #14202b;
+            padding: 10px 16px;
+            border-radius: 0 8px 8px 0;
+            margin: 12px 0;
+        }
+
+        .callout.warn {
+            border-color: var(--warn);
+            background: #2a1f12;
+        }
+
+        .callout.good {
+            border-color: var(--good);
+            background: #14241a;
+        }
+
+        hr {
+            border: none;
+            border-top: 1px solid var(--border);
+            margin: 36px 0;
+        }
+
+        .center {
+            text-align: center;
+        }
+
+        .court-svg {
+            display: block;
+            margin: 12px auto;
+            max-width: 100%;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="wrap">
+
+        <h1>Tennis RL Environment — 顶层抽象设计</h1>
+        <div class="subtitle">
+            目标：让仿人机器人像人类一样打网球。<br />
+            本文档不依赖任何现有代码实现，仅从规则、任务、与强化学习交互三个维度做抽象设计。
+        </div>
+
+        <div class="toc">
+            <strong>目录</strong>
+            <ol>
+                <li><a href="#sec-vision">1. 设计愿景与原则</a></li>
+                <li><a href="#sec-rules">2. 网球规则的形式化</a></li>
+                <li><a href="#sec-hierarchy">3. 能力层级与课程</a></li>
+                <li><a href="#sec-arch">4. 环境总体架构</a></li>
+                <li><a href="#sec-mdp">5. MDP 形式化（观测 / 动作 / 奖励 / 终止）</a></li>
+                <li><a href="#sec-ball">6. 球的生成与对手模型</a></li>
+                <li><a href="#sec-scoring">7. 得分系统与回合调度</a></li>
+                <li><a href="#sec-curriculum">8. 课程学习与难度旋钮</a></li>
+                <li><a href="#sec-eval">9. 评估协议</a></li>
+                <li><a href="#sec-extensions">10. 扩展方向（双打 / 自我对弈）</a></li>
+            </ol>
+        </div>
+
+        <!-- ========================================================== -->
+        <h2 id="sec-vision">1. 设计愿景与原则</h2>
+
+        <p>
+            我们追求的不是「能把球击回」的脚本动作，而是
+            <strong>具备网球比赛意义上「打球能力」的策略</strong>：能跑位、能击球、能选择落点、
+            能根据比分情境调整风险，并且动作姿态接近人类。
+        </p>
+
+        <div class="panel">
+            <h3>核心设计原则</h3>
+            <ul>
+                <li><strong>规则即环境</strong>：网球规则不是奖励工程的副产品，而是环境状态机的骨架。
+                    得分、换发、终止都由规则机驱动，奖励只是稀疏信号的稠密化。</li>
+                <li><strong>分层解耦</strong>：低层负责「人形动作 + 球拍接触」，高层负责「跑位 + 落点 + 战术」。
+                    两层通过明确接口通信，便于单独替换/迁移。</li>
+                <li><strong>对手即课程</strong>：对手（球的分发者）从「可预测发球机」逐步演化到
+                    「自我对弈策略」，难度由数据驱动而非手工调参。</li>
+                <li><strong>可逆抽象</strong>：单打 / 双打 / 仅发球 / 仅接发，都是同一抽象在不同
+                    <em>规则配置</em> 下的实例化，而不是各写一份环境。
+                </li>
+                <li><strong>姿态可信</strong>：人类相似性通过 motion prior（参考动作分布）约束，
+                    而不是把所有「像人」的行为写进 reward。</li>
+            </ul>
+        </div>
+
+        <!-- ========================================================== -->
+        <h2 id="sec-rules">2. 网球规则的形式化</h2>
+
+        <p>
+            我们把网球规则压缩为强化学习需要的最小集合：
+            <strong>场地几何、击球合法性、回合结束条件、计分</strong>。
+        </p>
+
+        <h3>2.1 场地几何（单打）</h3>
+        <table>
+            <tr>
+                <th>元素</th>
+                <th>尺寸</th>
+                <th>RL 中的角色</th>
+            </tr>
+            <tr>
+                <td>球场长度</td>
+                <td>23.77 m</td>
+                <td>定义出界与底线区</td>
+            </tr>
+            <tr>
+                <td>单打宽度</td>
+                <td>8.23 m</td>
+                <td>定义边线</td>
+            </tr>
+            <tr>
+                <td>双打宽度</td>
+                <td>10.97 m</td>
+                <td>双打模式启用</td>
+            </tr>
+            <tr>
+                <td>球网高度</td>
+                <td>0.914 m（中心）</td>
+                <td>过网约束</td>
+            </tr>
+            <tr>
+                <td>发球区</td>
+                <td>对角 6.40 × 4.115 m</td>
+                <td>发球合法落点</td>
+            </tr>
+            <tr>
+                <td>底线 / 中线 / 边线</td>
+                <td>—</td>
+                <td>裁判判定的离散事件源</td>
+            </tr>
+        </table>
+
+        <h3>2.2 球的生命周期（状态机）</h3>
+
+        <div class="panel alt">
+            <pre>
+                  ┌──────────────┐
+                  │   IDLE       │  回合未开始
+                  └──────┬───────┘
+                         │ serve_trigger
+                         ▼
+                  ┌──────────────┐
+                  │ TOSS / SERVE │  发球方控制
+                  └──────┬───────┘
+                         │ ball_struck
+                         ▼
+       ┌──────────────────────────────┐
+       │       IN_FLIGHT              │  飞行中
+       └────┬───────────┬──────────┬──┘
+            │ bounce    │ net_hit  │ out_of_bounds
+            ▼           ▼          ▼
+     ┌───────────┐  ┌────────┐  ┌────────────┐
+     │ BOUNCED   │  │ NET    │  │ OUT        │
+     └─────┬─────┘  └────┬───┘  └─────┬──────┘
+           │ second_bounce / racket_hit │ FAULT/POINT_END
+           ▼                            ▼
+     ┌───────────┐                 ┌────────────┐
+     │  RETURN   │ ─── racket ───▶ │ POINT_END  │
+     └───────────┘                 └────────────┘
+</pre>
+        </div>
+
+        <p>
+            关键事件原子（events）：<br />
+            <span class="kbd">ball_struck</span>
+            <span class="kbd">bounce_on_court</span>
+            <span class="kbd">bounce_out</span>
+            <span class="kbd">net_contact</span>
+            <span class="kbd">double_bounce</span>
+            <span class="kbd">racket_contact</span>
+            <span class="kbd">serve_fault</span>
+            <span class="kbd">point_won(side)</span>
+        </p>
+
+        <h3>2.3 合法性判定（统一裁判函数）</h3>
+
+        <div class="panel">
+            裁判函数 <code>Referee(state, events) → Verdict</code>，输出三选一：
+            <ul>
+                <li><span class="tag good">CONTINUE</span>回合继续</li>
+                <li><span class="tag warn">FAULT</span>本次发球失败（一发→二发，二发→失分）</li>
+                <li><span class="tag bad">POINT_END(winner)</span>一分结束，进入计分子系统</li>
+            </ul>
+            裁判不依赖物理细节，只消费 <em>事件流</em>，因此可与任意物理后端解耦。
+        </div>
+
+        <h3>2.4 计分（嵌套有限状态机）</h3>
+
+        <table>
+            <tr>
+                <th>层级</th>
+                <th>状态</th>
+                <th>转移</th>
+            </tr>
+            <tr>
+                <td>Point</td>
+                <td>0 / 15 / 30 / 40 / Adv / Game</td>
+                <td>每分一次转移</td>
+            </tr>
+            <tr>
+                <td>Game</td>
+                <td>0–6（含 deuce/advantage）</td>
+                <td>赢一局后递增</td>
+            </tr>
+            <tr>
+                <td>Set</td>
+                <td>0–N（含抢七）</td>
+                <td>赢一盘后递增</td>
+            </tr>
+            <tr>
+                <td>Match</td>
+                <td>三盘两胜 / 五盘三胜</td>
+                <td>终止条件</td>
+            </tr>
+        </table>
+
+        <div class="callout">
+            RL 训练中通常 <strong>只跑到 Point 或 Game 粒度</strong>；Set / Match 用于评估。
+            计分 FSM 是奖励 shaping 的来源，但 <em>不应</em> 把分数差直接当 reward 主项。
+        </div>
+
+        <!-- ========================================================== -->
+        <h2 id="sec-hierarchy">3. 能力层级与课程</h2>
+
+        <p>
+            把「打网球」拆成可独立训练、可拼装的能力模块。每一层都是一个完整 MDP，
+            但共享物理与裁判抽象。
+        </p>
+
+        <div class="grid-3">
+            <div class="panel">
+                <h4>L0 — 运动基元</h4>
+                <p class="muted">行走、跑动、转身、急停、挥拍轨迹。来自 motion tracking 的 latent space。</p>
+            </div>
+            <div class="panel">
+                <h4>L1 — 接触技能</h4>
+                <p class="muted">把球以期望速度/方向击出。给定球状态与目标击球点，输出动作序列。</p>
+            </div>
+            <div class="panel">
+                <h4>L2 — 单球回合</h4>
+                <p class="muted">给定来球，跑位 + 击球 + 落点选择，让对方无法回球或失误。</p>
+            </div>
+            <div class="panel">
+                <h4>L3 — 发球</h4>
+                <p class="muted">抛球 → 击球 → 落入对角发球区，含一发/二发风险权衡。</p>
+            </div>
+            <div class="panel">
+                <h4>L4 — 多拍对抗</h4>
+                <p class="muted">连续 N 拍中保持回球质量，引入对手反应。</p>
+            </div>
+            <div class="panel">
+                <h4>L5 — 比赛策略</h4>
+                <p class="muted">基于比分、对手习惯选择战术。可用 self-play 训练。</p>
+            </div>
+        </div>
+
+        <div class="callout good">
+            <strong>模块约定</strong>：L1 的输出接口（球的出射状态分布）就是 L2 的动作空间，
+            L2 的输出接口（落点选择）就是 L5 的动作空间。这样可以用 hierarchical RL
+            或 distillation 把上层策略与下层策略解耦训练。
+        </div>
+
+        <!-- ========================================================== -->
+        <h2 id="sec-arch">4. 环境总体架构</h2>
+
+        <div class="panel alt">
+            <pre>
+┌─────────────────────────────────────────────────────────────────────┐
+│                       TennisEnvironment                             │
+│                                                                     │
+│  ┌────────────┐    ┌────────────┐    ┌─────────────┐                │
+│  │  Physics   │◀──▶│   Scene    │◀──▶│  Sensors    │                │
+│  │  (humanoid │    │ (court,    │    │  (proprio,  │                │
+│  │   + ball)  │    │  net,ball) │    │   ball obs) │                │
+│  └─────┬──────┘    └─────┬──────┘    └──────┬──────┘                │
+│        │                 │                  │                       │
+│        ▼                 ▼                  ▼                       │
+│  ┌──────────────────────────────────────────────────┐               │
+│  │              EventDetector                       │  纯函数       │
+│  │  (bounce / net / racket-contact / out)           │               │
+│  └─────────────────────┬────────────────────────────┘               │
+│                        ▼                                            │
+│  ┌──────────────────────────────────────────────────┐               │
+│  │              Referee  (rules FSM)                │  规则层       │
+│  └─────────────────────┬────────────────────────────┘               │
+│                        ▼                                            │
+│  ┌──────────────────────────────────────────────────┐               │
+│  │   GameDirector (回合调度 / 发球切换 / 重置)       │               │
+│  └─────────────────────┬────────────────────────────┘               │
+│                        ▼                                            │
+│  ┌──────────────────────────────────────────────────┐               │
+│  │  BallProvider (Opponent / Server / Self-play)    │               │
+│  └──────────────────────────────────────────────────┘               │
+│                                                                     │
+│  ┌──────────────────────────────────────────────────┐               │
+│  │  RewardComposer  +  TerminationComposer           │               │
+│  └──────────────────────────────────────────────────┘               │
+└─────────────────────────────────────────────────────────────────────┘
+</pre>
+        </div>
+
+        <h3>4.1 模块职责</h3>
+        <table>
+            <tr>
+                <th>模块</th>
+                <th>输入</th>
+                <th>输出</th>
+                <th>职责</th>
+            </tr>
+            <tr>
+                <td>Physics</td>
+                <td>action</td>
+                <td>state</td>
+                <td>仿真步进</td>
+            </tr>
+            <tr>
+                <td>EventDetector</td>
+                <td>state, prev_state</td>
+                <td>事件流</td>
+                <td>把连续物理量转成离散事件</td>
+            </tr>
+            <tr>
+                <td>Referee</td>
+                <td>事件流</td>
+                <td>Verdict</td>
+                <td>规则裁定，无状态依赖物理</td>
+            </tr>
+            <tr>
+                <td>GameDirector</td>
+                <td>Verdict</td>
+                <td>reset / serve 信号</td>
+                <td>回合 / 局 / 盘调度</td>
+            </tr>
+            <tr>
+                <td>BallProvider</td>
+                <td>director 信号</td>
+                <td>球初始/轨迹</td>
+                <td>对手抽象</td>
+            </tr>
+            <tr>
+                <td>RewardComposer</td>
+                <td>state + 事件 + verdict</td>
+                <td>scalar</td>
+                <td>稠密化稀疏胜负</td>
+            </tr>
+            <tr>
+                <td>TerminationComposer</td>
+                <td>verdict + 安全检查</td>
+                <td>bool</td>
+                <td>软/硬终止</td>
+            </tr>
+        </table>
+
+        <div class="callout">
+            <strong>关键解耦</strong>：物理与规则之间隔着 EventDetector。
+            任何后端（MuJoCo、Isaac、真实硬件）只要能产出统一事件流，规则层就完全可复用。
+        </div>
+
+        <!-- ========================================================== -->
+        <h2 id="sec-mdp">5. MDP 形式化</h2>
+
+        <h3>5.1 观测空间（分组）</h3>
+
+        <div class="grid-2">
+            <div class="panel">
+                <h4>本体感知 (proprio)</h4>
+                <ul>
+                    <li>关节位置 / 速度</li>
+                    <li>根姿态、根线/角速度</li>
+                    <li>足底接触</li>
+                    <li>上一动作（动作平滑用）</li>
+                </ul>
+            </div>
+            <div class="panel">
+                <h4>球与场景 (exteroceptive)</h4>
+                <ul>
+                    <li>球相对位置 / 速度（机器人坐标系）</li>
+                    <li>球的预测落点（短时窗预测）</li>
+                    <li>球当前阶段（one-hot of ball state）</li>
+                    <li>距离边线 / 距离网的标量</li>
+                </ul>
+            </div>
+            <div class="panel">
+                <h4>任务上下文 (task ctx)</h4>
+                <ul>
+                    <li>本方/对方比分</li>
+                    <li>当前是发球/接发/对拉</li>
+                    <li>剩余发球次数（一/二发）</li>
+                    <li>目标落点提示（仅高层策略可见）</li>
+                </ul>
+            </div>
+            <div class="panel">
+                <h4>风格条件 (style cond, 可选)</h4>
+                <ul>
+                    <li>motion latent（来自 tracking 教师）</li>
+                    <li>风格指令（正手 / 反手 / 截击）</li>
+                </ul>
+            </div>
+        </div>
+
+        <h3>5.2 动作空间（按层级）</h3>
+
+        <table>
+            <tr>
+                <th>层</th>
+                <th>动作语义</th>
+                <th>维度量级</th>
+                <th>频率</th>
+            </tr>
+            <tr>
+                <td>低层</td>
+                <td>关节目标位置 / PD target</td>
+                <td>~30</td>
+                <td>50–100 Hz</td>
+            </tr>
+            <tr>
+                <td>中层</td>
+                <td>motion latent z（由 tracking VAE 解码）</td>
+                <td>~32</td>
+                <td>25–50 Hz</td>
+            </tr>
+            <tr>
+                <td>高层</td>
+                <td>击球目标点 (x, y, 旋转, 弧高)</td>
+                <td>~4</td>
+                <td>每拍 1 次</td>
+            </tr>
+        </table>
+
+        <div class="callout">
+            推荐主训练形态：<strong>中层 latent + 高层目标点</strong>。
+            低层由已训练好的 motion tracking 策略提供，避免重复学习人形控制。
+        </div>
+
+        <h3>5.3 奖励组合（按事件类型分桶）</h3>
+
+        <table>
+            <tr>
+                <th>类型</th>
+                <th>奖励项</th>
+                <th>稠密/稀疏</th>
+                <th>说明</th>
+            </tr>
+            <tr>
+                <td rowspan="3">任务结果</td>
+                <td>赢得一分</td>
+                <td>稀疏 +</td>
+                <td>主信号</td>
+            </tr>
+            <tr>
+                <td>失分</td>
+                <td>稀疏 −</td>
+                <td>对称</td>
+            </tr>
+            <tr>
+                <td>合法过网且落界内</td>
+                <td>事件 +</td>
+                <td>shaping</td>
+            </tr>
+            <tr>
+                <td rowspan="3">击球质量</td>
+                <td>球拍接触能量匹配</td>
+                <td>事件 +</td>
+                <td>避免「碰一下」</td>
+            </tr>
+            <tr>
+                <td>出射方向接近目标</td>
+                <td>事件 +</td>
+                <td>战术性</td>
+            </tr>
+            <tr>
+                <td>击球点在身体合理区域</td>
+                <td>事件 +</td>
+                <td>动作可信</td>
+            </tr>
+            <tr>
+                <td rowspan="2">移动</td>
+                <td>朝预测落点的接近</td>
+                <td>稠密 +</td>
+                <td>跑位 shaping</td>
+            </tr>
+            <tr>
+                <td>无效移动惩罚</td>
+                <td>稠密 −</td>
+                <td>能量项</td>
+            </tr>
+            <tr>
+                <td rowspan="2">姿态正则</td>
+                <td>motion prior log-prob</td>
+                <td>稠密 +</td>
+                <td>类人</td>
+            </tr>
+            <tr>
+                <td>关节限位 / 力矩</td>
+                <td>稠密 −</td>
+                <td>安全</td>
+            </tr>
+            <tr>
+                <td>失败安全</td>
+                <td>跌倒 / 越界</td>
+                <td>稀疏 −</td>
+                <td>硬约束</td>
+            </tr>
+        </table>
+
+        <h3>5.4 终止条件</h3>
+
+        <div class="grid-2">
+            <div class="panel">
+                <h4>硬终止 (terminated)</h4>
+                <ul>
+                    <li>机器人跌倒 / 自碰严重</li>
+                    <li>机器人越出场地外围安全区</li>
+                    <li>仿真发散（NaN）</li>
+                </ul>
+            </div>
+            <div class="panel">
+                <h4>软终止 (truncated)</h4>
+                <ul>
+                    <li>一分结束（POINT_END）</li>
+                    <li>一局 / 一盘结束（按训练粒度选）</li>
+                    <li>达到最大步数</li>
+                </ul>
+            </div>
+        </div>
+
+        <div class="callout warn">
+            区分 terminated / truncated 对 RL 至关重要：硬终止意味着「该状态没有未来价值」，
+            软终止仅是「episode 切片」，价值应 bootstrap。
+        </div>
+
+        <!-- ========================================================== -->
+        <h2 id="sec-ball">6. 球的生成与对手模型</h2>
+
+        <p>
+            「球从哪里来」决定了任务难度和真实性。我们把球的来源抽象为
+            <code>BallProvider</code> 接口：
+        </p>
+
+        <pre>
+class BallProvider:
+    def reset(self, context) -> BallState: ...
+    def respond(self, last_event, context) -> BallTrajectory | None: ...
+</pre>
+
+        <h3>6.1 Provider 谱系（按拟人化程度）</h3>
+
+        <table>
+            <tr>
+                <th>等级</th>
+                <th>Provider</th>
+                <th>行为</th>
+                <th>用途</th>
+            </tr>
+            <tr>
+                <td>P0</td>
+                <td>FixedSpawner</td>
+                <td>球以固定初始状态出现</td>
+                <td>L1 接触技能训练</td>
+            </tr>
+            <tr>
+                <td>P1</td>
+                <td>RandomFeeder</td>
+                <td>从分布中采样落点 / 速度</td>
+                <td>L2 单球回合</td>
+            </tr>
+            <tr>
+                <td>P2</td>
+                <td>BallisticOpponent</td>
+                <td>分析机器人位置后选择落点，球以解析弹道飞来</td>
+                <td>L4 多拍训练</td>
+            </tr>
+            <tr>
+                <td>P3</td>
+                <td>ScriptedAgent</td>
+                <td>简化人形对手 + 启发式策略</td>
+                <td>对抗课程</td>
+            </tr>
+            <tr>
+                <td>P4</td>
+                <td>SelfPlayAgent</td>
+                <td>另一份本策略的快照</td>
+                <td>L5 战术训练</td>
+            </tr>
+            <tr>
+                <td>P5</td>
+                <td>LeaguePlay</td>
+                <td>策略池 + 优先采样</td>
+                <td>避免循环克制</td>
+            </tr>
+        </table>
+
+        <div class="callout good">
+            Provider 接口对外只暴露 <em>球的轨迹/状态</em>，不暴露对手的人形姿态。
+            这意味着即使没有第二个机器人，环境也能完整运行。对手的 visualization
+            是可选的渲染层。
+        </div>
+
+        <h3>6.2 发球的特殊性</h3>
+        <ul>
+            <li>发球时球由 <strong>本方</strong> 持有，BallProvider 退化为 <em>self-feed</em>：
+                机器人需要先抛球（toss）再击球。</li>
+            <li>必须落入对角发球区，否则 FAULT。</li>
+            <li>一发追求威力，二发追求安全。可以用一个标量
+                <code>risk ∈ [0,1]</code> 作为高层动作的一部分，由策略学会权衡。
+            </li>
+        </ul>
+
+        <!-- ========================================================== -->
+        <h2 id="sec-scoring">7. 得分系统与回合调度</h2>
+
+        <h3>7.1 ScoreState 数据结构</h3>
+
+        <pre>
+ScoreState:
+  point:   {self: int, opp: int}      # 0/15/30/40/Adv
+  game:    {self: int, opp: int}
+  set:     {self: int, opp: int}
+  server:  {self | opp}
+  serve_count: 1 | 2                  # first / second serve
+  side:    deuce | ad                 # 发球落点对角
+  tiebreak: bool
+</pre>
+
+        <h3>7.2 GameDirector 主循环（伪代码）</h3>
+
+        <pre>
+loop:
+    director.start_point()              # 决定 server / side
+    ball_provider.reset(score_state)
+    while not point_ended:
+        action = policy(obs)
+        state  = physics.step(action)
+        events = detector(state)
+        verdict = referee(events, score_state)
+        reward = composer(state, events, verdict)
+        if verdict == POINT_END(winner):
+            score_state = score_fsm.update(winner, score_state)
+            break
+    if score_state.match_over: env.reset_match()
+</pre>
+
+        <h3>7.3 回合粒度选择</h3>
+
+        <table>
+            <tr>
+                <th>训练粒度</th>
+                <th>episode = ?</th>
+                <th>优点</th>
+                <th>缺点</th>
+            </tr>
+            <tr>
+                <td>Point-level</td>
+                <td>1 分</td>
+                <td>反馈快，方差小</td>
+                <td>缺战术上下文</td>
+            </tr>
+            <tr>
+                <td>Game-level</td>
+                <td>1 局</td>
+                <td>含发球切换</td>
+                <td>奖励更稀疏</td>
+            </tr>
+            <tr>
+                <td>Set-level</td>
+                <td>1 盘</td>
+                <td>战术信号充分</td>
+                <td>训练效率低，建议仅 self-play</td>
+            </tr>
+        </table>
+
+        <!-- ========================================================== -->
+        <h2 id="sec-curriculum">8. 课程学习与难度旋钮</h2>
+
+        <p>
+            难度由一组 <strong>正交的旋钮</strong> 组成，由 curriculum manager
+            根据成功率自动调节。每个旋钮都对应规则或 BallProvider 的参数，不需要改动环境结构。
+        </p>
+
+        <table>
+            <tr>
+                <th>旋钮</th>
+                <th>低难度</th>
+                <th>高难度</th>
+            </tr>
+            <tr>
+                <td>来球速度</td>
+                <td>慢</td>
+                <td>专业速度</td>
+            </tr>
+            <tr>
+                <td>来球落点分布</td>
+                <td>身体附近</td>
+                <td>覆盖全场角度</td>
+            </tr>
+            <tr>
+                <td>来球旋转</td>
+                <td>无旋</td>
+                <td>上旋 / 切削</td>
+            </tr>
+            <tr>
+                <td>反应时间</td>
+                <td>提前可见</td>
+                <td>临近击球才可见</td>
+            </tr>
+            <tr>
+                <td>合法落点要求</td>
+                <td>整片半场</td>
+                <td>必须落入指定区域</td>
+            </tr>
+            <tr>
+                <td>多拍数</td>
+                <td>1 拍即终止</td>
+                <td>需连续 N 拍</td>
+            </tr>
+            <tr>
+                <td>对手类型</td>
+                <td>P0–P1</td>
+                <td>P4–P5</td>
+            </tr>
+            <tr>
+                <td>风格约束</td>
+                <td>无</td>
+                <td>必须正手 / 反手</td>
+            </tr>
+        </table>
+
+        <div class="callout">
+            课程进度由 <strong>多目标成功率向量</strong> 驱动，避免单一指标饱和。
+            推荐：每个旋钮独立维护成功率窗口，超过阈值后才提升对应难度。
+        </div>
+
+        <!-- ========================================================== -->
+        <h2 id="sec-eval">9. 评估协议</h2>
+
+        <p>训练奖励 ≠ 真实能力。设立独立的评估场景，跨多个维度打分。</p>
+
+        <h3>9.1 评估指标</h3>
+        <table>
+            <tr>
+                <th>维度</th>
+                <th>指标</th>
+            </tr>
+            <tr>
+                <td>结果</td>
+                <td>赢分率、Ace 率、双误率</td>
+            </tr>
+            <tr>
+                <td>击球质量</td>
+                <td>过网率、落界率、出射速度分布</td>
+            </tr>
+            <tr>
+                <td>战术</td>
+                <td>落点熵、深球比例、角度覆盖</td>
+            </tr>
+            <tr>
+                <td>动作可信</td>
+                <td>motion prior 似然、跌倒次数、关节力矩 RMS</td>
+            </tr>
+            <tr>
+                <td>鲁棒</td>
+                <td>抗扰动成功率、对未见来球分布的迁移</td>
+            </tr>
+        </table>
+
+        <h3>9.2 标准评估场次</h3>
+        <ul>
+            <li><strong>Drill</strong>：固定来球的接发，测量 L1/L2 能力。</li>
+            <li><strong>Rally-N</strong>：与 P2 对抗 N 拍，测多拍稳定性。</li>
+            <li><strong>Match</strong>：与 P3/P4 进行一局/一盘，测综合能力。</li>
+            <li><strong>OOD</strong>：评估时使用训练未见过的旋转 / 风速 / 球速分布。</li>
+        </ul>
+
+        <!-- ========================================================== -->
+        <h2 id="sec-extensions">10. 扩展方向</h2>
+
+        <div class="grid-2">
+            <div class="panel">
+                <h4>双打模式</h4>
+                <p>同侧两个 agent，引入合作维度。架构上只需：
+                    场地宽度切换、Referee 增加双打边线、BallProvider 视为对方两人组合。</p>
+            </div>
+            <div class="panel">
+                <h4>真实自我对弈</h4>
+                <p>把 P4/P5 提升为完整双 agent 仿真。两个 policy 同步步进，
+                    Referee 视角对称化，奖励为零和。</p>
+            </div>
+            <div class="panel">
+                <h4>视觉观测</h4>
+                <p>把 ball state 替换为 egocentric 相机 + ball detector。
+                    架构其余部分零修改，验证模块化的真正收益。</p>
+            </div>
+            <div class="panel">
+                <h4>Sim-to-Real</h4>
+                <p>EventDetector 改为消费真实传感器（球追踪 + IMU），
+                    Referee 与 RewardComposer 完全复用。</p>
+            </div>
+        </div>
+
+        <hr />
+
+        <div class="panel">
+            <h3>总结：抽象层次</h3>
+            <ol>
+                <li><strong>规则层</strong>（Referee + ScoreFSM）：与物理、机器人无关，纯逻辑。</li>
+                <li><strong>事件层</strong>（EventDetector）：把物理量翻译成规则消费的语言。</li>
+                <li><strong>调度层</strong>（GameDirector + BallProvider）：决定每个 episode 长什么样。</li>
+                <li><strong>学习层</strong>（Obs / Action / Reward / Termination）：标准 RL 接口。</li>
+                <li><strong>课程层</strong>：在以上四层之上调参，不改结构。</li>
+            </ol>
+            <p>
+                任何一层可以独立替换：换机器人只动 Physics；换裁判规则只动 Referee；
+                换训练目标只动 RewardComposer；换难度只动 Curriculum。这就是「打网球」
+                这件事被设计成可演化系统的方式。
+            </p>
+        </div>
+
+        <!-- ================================================================= -->
+        <!--   Part II — 把抽象映射到 mjlab 框架的优雅实现                       -->
+        <!-- ================================================================= -->
+
+        <hr />
+
+        <h1 style="margin-top:48px;">Part II — 在 mjlab 中的优雅实现</h1>
+        <div class="subtitle">
+            本部分基于对 mjlab 框架（<code>Entity / Scene / Manager / Term</code>
+            体系）以及四个参考任务（<code>cartpole</code>、<code>manipulation</code>、<code>velocity</code>、<code>tracking</code>）的研读，给出
+            Tennis 任务的落地方案。<br />
+            原则：<strong>遵循 mjlab 既有模式，把网球规则放进它已有的扩展点</strong>，而不是绕开框架另起炉灶。
+        </div>
+
+        <div class="toc">
+            <strong>目录</strong>
+            <ol>
+                <li><a href="#mj-1">1. mjlab 框架要点回顾</a></li>
+                <li><a href="#mj-2">2. 抽象 → mjlab 概念的映射表</a></li>
+                <li><a href="#mj-3">3. 文件与目录布局</a></li>
+                <li><a href="#mj-4">4. Scene 组合：Robot + Ball + Court</a></li>
+                <li><a href="#mj-5">5. CommandTerm：网球的「规则 + 调度」中枢</a></li>
+                <li><a href="#mj-6">6. EventDetector：从传感器到事件流</a></li>
+                <li><a href="#mj-7">7. ActionTerm：分层动作</a></li>
+                <li><a href="#mj-8">8. Observations / Rewards / Terminations 设计</a></li>
+                <li><a href="#mj-9">9. CurriculumTerm：难度旋钮</a></li>
+                <li><a href="#mj-10">10. 渐进式实现路线图</a></li>
+                <li><a href="#mj-11">11. 与现有 tennis 实现的差异与迁移</a></li>
+            </ol>
+        </div>
+
+        <h2 id="mj-1">1. mjlab 框架要点回顾</h2>
+
+        <div class="panel">
+            <h3>1.1 三层结构</h3>
+            <ol>
+                <li><strong>EntityCfg / SceneCfg</strong>：通过 <code>spec_fn</code> 构建 MuJoCo spec，多个 entity 拼接为一个
+                    <code>MjModel</code>。</li>
+                <li><strong>ManagerBasedRlEnvCfg</strong>：声明式配置
+                    <code>{observations, actions, rewards, terminations, commands, events, curriculum}</code>。每一项是
+                    <em>名字 → TermCfg</em> 的字典。</li>
+                <li><strong>Manager</strong>：每步按字典顺序调用所有 term，把结果聚合为 obs dict / 标量 reward / done flag。</li>
+            </ol>
+        </div>
+
+        <div class="panel">
+            <h3>1.2 Term 的两种形态</h3>
+            <table>
+                <tr>
+                    <th>形态</th>
+                    <th>使用场景</th>
+                    <th>例子</th>
+                </tr>
+                <tr>
+                    <td>函数</td>
+                    <td>无状态、纯计算</td>
+                    <td><code>joint_pos_rel(env, asset_cfg)</code></td>
+                </tr>
+                <tr>
+                    <td>类（继承 <code>ManagerTermBase</code>）</td>
+                    <td>需要跨步状态、缓存、reset 钩子</td>
+                    <td><code>LiftingCommand</code>、<code>MotionCommand</code></td>
+                </tr>
+            </table>
+            <p class="muted">类形态有
+                <code>__init__(cfg, env)</code>、<code>__call__(env, ...)</code>、<code>reset(env_ids)</code> 三个钩子，是承载「规则
+                FSM」的天然位置。</p>
+        </div>
+
+        <div class="panel">
+            <h3>1.3 框架对网球友好的特性</h3>
+            <ul>
+                <li><strong>多 Entity 场景</strong>：robot / ball / court 可独立建模（manipulation 已示范 cube）。</li>
+                <li><strong>ContactSensor</strong>：原生支持几何对几何的接触力检测，是事件检测的关键基元。</li>
+                <li><strong>CommandTerm 的状态化能力</strong>：tracking 的 <code>MotionCommand</code> 每步推进帧、维护 metrics、写入 sim，证明
+                    CommandTerm 完全有能力承载复杂的「来球 + 规则 FSM」逻辑。</li>
+                <li><strong>EventTerm 的 mode</strong>：<code>startup / reset / interval / prestep</code>
+                    四种触发时机覆盖发球、重置、随机扰动等所有需求。</li>
+                <li><strong>ActionTerm 可包装</strong>：Tennis 已有的 latent decoder 动作就是嵌套 <code>JointPositionAction</code>
+                    的组合模式，可直接复用。</li>
+            </ul>
+        </div>
+
+        <h2 id="mj-2">2. 抽象 → mjlab 概念的映射表</h2>
+
+        <table>
+            <tr>
+                <th>Part I 抽象</th>
+                <th>mjlab 实现位置</th>
+                <th>形态</th>
+            </tr>
+            <tr>
+                <td>Physics</td>
+                <td><code>Scene</code> + <code>Simulation</code></td>
+                <td>框架原生</td>
+            </tr>
+            <tr>
+                <td>Robot / Ball / Court</td>
+                <td><code>EntityCfg</code> × 3，挂在 <code>SceneCfg.entities</code></td>
+                <td>声明式</td>
+            </tr>
+            <tr>
+                <td>EventDetector</td>
+                <td><code>ContactSensorCfg</code> + 一组无状态 helper（在 <code>mdp/events.py</code>）</td>
+                <td>函数</td>
+            </tr>
+            <tr>
+                <td>Referee + ScoreFSM</td>
+                <td><strong>自定义 <code>RallyCommand(CommandTerm)</code></strong>，承载比分 / 球生命周期 FSM</td>
+                <td>类</td>
+            </tr>
+            <tr>
+                <td>BallProvider</td>
+                <td>策略模式：<code>BallProvider</code> 抽象基类，由 <code>RallyCommand</code> 在 reset 时调用</td>
+                <td>类</td>
+            </tr>
+            <tr>
+                <td>GameDirector</td>
+                <td>融合进 <code>RallyCommand</code>（episode = 一分）；跨 episode 状态由
+                    <code>EventTerm("score_bookkeeping", mode="reset")</code> 维护</td>
+                <td>类 + 函数</td>
+            </tr>
+            <tr>
+                <td>RewardComposer</td>
+                <td><code>rewards: dict[str, RewardTermCfg]</code></td>
+                <td>声明式</td>
+            </tr>
+            <tr>
+                <td>TerminationComposer</td>
+                <td><code>terminations: dict[str, TerminationTermCfg]</code>，区分
+                    <code>time_out=True</code>（truncated）与默认（terminated）</td>
+                <td>声明式</td>
+            </tr>
+            <tr>
+                <td>Curriculum 旋钮</td>
+                <td><code>CurriculumTermCfg</code>，操作 <code>RallyCommand</code> 的难度参数和奖励权重</td>
+                <td>类 + 函数</td>
+            </tr>
+            <tr>
+                <td>分层动作</td>
+                <td><code>ActionTermCfg</code>：低层 <code>JointPositionAction</code>，中层
+                    <code>FrozenDecoderLatentJointPositionAction</code>，高层 <code>StrokeIntentAction</code>（可选）</td>
+                <td>类</td>
+            </tr>
+        </table>
+
+        <div class="callout good">
+            <strong>关键洞察</strong>：网球规则状态机不是 mjlab 缺失的概念，而是 <code>CommandTerm</code> 的天然实例。把 <code>RallyCommand</code>
+            当作「会观察物理、会写入物理、会报告 metrics」的有限状态机来写，整个规则层就落进了框架内，无需新增任何抽象。
+        </div>
+
+        <h2 id="mj-3">3. 文件与目录布局</h2>
+
+        <pre>
+src/mjlab/tasks/tennis/
+├── __init__.py
+├── tennis_env_cfg.py            # robot-agnostic 基础 env 工厂
+├── scene.py                     # ball / court / net / terrain 的 EntityCfg 工厂
+│
+├── mdp/
+│   ├── __init__.py
+│   │
+│   ├── commands.py              # RallyCommand (Referee + ScoreFSM + BallProvider 入口)
+│   ├── ball_providers.py        # BallProvider 抽象 + 各级实现 (P0~P5)
+│   ├── events.py                # 事件检测 helper：bounce / net / racket_contact
+│   │
+│   ├── actions.py               # FrozenDecoderLatentJointPositionAction（已存在）
+│   │                            # + StrokeIntentAction（可选高层）
+│   │
+│   ├── observations.py          # racket-to-ball、ball-flight、score-context 等
+│   ├── rewards.py               # 事件触发型 + 稠密 shaping
+│   ├── terminations.py          # POINT_END / FAULT / 安全终止
+│   ├── curriculums.py           # 难度旋钮调度器
+│   └── metrics.py               # 评估指标（赢分率、过网率、…）
+│
+├── rl/
+│   ├── __init__.py
+│   ├── runner.py                # TennisOnPolicyRunner（处理 decoder 加载等）
+│   └── config.py
+│
+├── config/
+│   └── g1/
+│       ├── __init__.py          # register_mjlab_task(...)
+│       ├── env_cfgs.py          # G1 + 球拍特化、resampling、奖励权重
+│       └── rl_cfg.py            # PPO 超参
+│
+└── scripts/
+    └── evaluate.py              # 跑标准评估场次（Drill / Rally-N / Match）
+</pre>
+
+        <div class="callout">
+            布局严格对齐 <code>tracking/</code>：<em>base env_cfg + mdp/ + rl/ + config/&lt;robot&gt;/</em> 四段式。新增的两个文件
+            <code>ball_providers.py</code> 与 <code>events.py</code> 是网球独有的，<em>但仍然是 MDP 包的内部细节</em>，不污染框架。
+        </div>
+
+        <h2 id="mj-4">4. Scene 组合：Robot + Ball + Court</h2>
+
+        <p>沿用 manipulation 模式，三个独立 Entity，court 不带 free joint。</p>
+
+        <pre>
+# scene.py
+def get_tennis_ball_cfg() -&gt; EntityCfg:
+  """Free-floating ball: sphere geom + free joint."""
+  return EntityCfg(
+    spec_fn=_build_ball_spec,    # 半径 0.0335 m，质量 0.057 kg
+    init_state=EntityCfg.InitialStateCfg(pos=(0.0, 0.0, 1.0)),
+  )
+
+def get_tennis_court_cfg() -&gt; EntityCfg:
+  """Static court: 球场地面、网柱、网带、单/双打边线 site."""
+  return EntityCfg(spec_fn=_build_court_spec)
+
+# tennis_env_cfg.py
+scene = SceneCfg(
+  terrain=get_tennis_terrain_cfg(),
+  entities={"ball": get_tennis_ball_cfg(),
+            "court": get_tennis_court_cfg()},
+  sensors=(racket_ball_contact, ball_court_contact, ball_net_contact),
+)
+</pre>
+
+        <div class="panel">
+            <h3>4.1 Court 中的语义 site</h3>
+            <p>把规则相关的几何信息预先编码为 site，<strong>裁判函数无需读 XML</strong>：</p>
+            <ul>
+                <li><code>baseline_self</code>, <code>baseline_opp</code>：底线 y 坐标</li>
+                <li><code>service_box_deuce</code>, <code>service_box_ad</code>：发球区中心 + 范围</li>
+                <li><code>net_top_center</code>：网带高度判定</li>
+                <li><code>singles_sideline_left/right</code>, <code>doubles_*</code></li>
+            </ul>
+            <p class="muted">运行时通过 <code>court.indexing.site_ids["service_box_deuce"]</code> 获取索引，向量化判断球的落点是否在区域内。</p>
+        </div>
+
+        <div class="panel">
+            <h3>4.2 三个 ContactSensor</h3>
+            <pre>
+racket_ball_contact = ContactSensorCfg(
+  primary=ContactMatch(mode="geom", pattern="tennis_ball", entity="ball"),
+  secondary=ContactMatch(mode="geom", pattern="tennis_racket_collision", entity="robot"),
+  fields=("found", "force"), reduce="maxforce", history_length=4,
+)
+ball_court_contact = ContactSensorCfg(
+  primary=ContactMatch(mode="geom", pattern="tennis_ball", entity="ball"),
+  secondary=ContactMatch(mode="geom", pattern="court_floor", entity="court"),
+  fields=("found", "pos"),    # 落点位置 → 判界
+  reduce="first", history_length=8,
+)
+ball_net_contact = ContactSensorCfg(
+  primary=ContactMatch(mode="geom", pattern="tennis_ball", entity="ball"),
+  secondary=ContactMatch(mode="geom", pattern="net_band", entity="court"),
+  fields=("found",), reduce="any", history_length=2,
+)
+</pre>
+        </div>
+
+        <h2 id="mj-5">5. CommandTerm：<code>RallyCommand</code> — 网球的中枢</h2>
+
+        <p><strong>核心设计</strong>：把球的生命周期 FSM、裁判逻辑、计分、来球生成全部封装在 <em>一个</em> <code>CommandTerm</code>
+            里。它输出的「command」就是对策略可见的任务上下文（球状态阶段 + 比分 + 任务目标）。</p>
+
+        <pre>
+# mdp/commands.py
+@dataclass(kw_only=True)
+class RallyCommandCfg(CommandTermCfg):
+  ball_provider: BallProviderCfg     # 决定来球（P0~P5）
+  rules: RulesCfg                    # 单/双打、有效区、二发开关
+  scoring: ScoringCfg = field(...)   # point / game / set 粒度
+  episode_granularity: Literal["point","game","set"] = "point"
+  resampling_time_range = (1e9, 1e9) # 由 FSM 自驱，不让 manager 自动重采样
+  def build(self, env): return RallyCommand(self, env)
+
+
+class BallPhase(IntEnum):
+  IDLE = 0
+  SERVE = 1
+  IN_FLIGHT = 2
+  BOUNCED = 3       # 已合法落地一次，等机器人挥拍
+  RETURN = 4        # 机器人已击出，飞向对方
+  POINT_END = 5
+
+
+class RallyCommand(CommandTerm):
+  """规则 FSM + 球状态机 + 来球生成器，三合一。"""
+
+  def __init__(self, cfg, env):
+    super().__init__(cfg, env)
+    self.ball   = env.scene["ball"]
+    self.court  = env.scene["court"]
+    self.robot  = env.scene["robot"]
+    self.provider = build_provider(cfg.ball_provider, env)
+
+    # 状态张量（per-env）
+    self.phase         = torch.zeros(N, dtype=torch.long)   # BallPhase
+    self.serve_count   = torch.ones(N, dtype=torch.long)    # 1 或 2
+    self.score_point   = torch.zeros(N, 2, dtype=torch.long)  # [self, opp]
+    self.last_event    = torch.zeros(N, dtype=torch.long)
+    self.bounce_xy     = torch.zeros(N, 2)
+    self.point_winner  = torch.full((N,), -1, dtype=torch.long)
+    self.is_point_end  = torch.zeros(N, dtype=torch.bool)
+
+    # metrics（自动记录到日志）
+    self.metrics["aces"]          = torch.zeros(N)
+    self.metrics["double_faults"] = torch.zeros(N)
+    self.metrics["points_won"]    = torch.zeros(N)
+    self.metrics["rally_length"]  = torch.zeros(N)
+    self.metrics["over_net_rate"] = torch.zeros(N)
+
+  @property
+  def command(self) -&gt; torch.Tensor:
+    """暴露给 obs：one-hot phase + score + serve flag。"""
+    return torch.cat([F.one_hot(self.phase, 6),
+                      self.score_point.float() / 4.0,
+                      self.serve_count.float().unsqueeze(-1)], dim=-1)
+
+  def _resample_command(self, env_ids):
+    """每分开始：让 BallProvider 把球放到合法位置。"""
+    self.phase[env_ids]        = BallPhase.SERVE
+    self.point_winner[env_ids] = -1
+    self.is_point_end[env_ids] = False
+    self.provider.spawn(env_ids, context=self._context(env_ids))
+
+  def _update_command(self):
+    """每个 env 步：消费事件流，推进 FSM。"""
+    events = detect_events(self._env)            # 见 §6
+    verdict = self._referee(events)              # CONTINUE / FAULT / POINT_END
+    self._apply_verdict(verdict)
+    self._update_metrics(events, verdict)
+    self.provider.respond(events, self.phase)
+    self.is_point_end = (self.phase == BallPhase.POINT_END)
+</pre>
+
+        <div class="callout">
+            <strong>为什么用 CommandTerm 而不是新建 Manager？</strong><br />
+            - CommandTerm 已有：<em>观察 entity</em>、<em>写入 sim</em>、<em>per-env reset 钩子</em>、<em>metrics
+                上报</em>、<em>debug_vis</em>、<em>GUI 集成</em>。<br />
+            - <code>command</code> 属性天然成为 <em>对策略可见的任务上下文向量</em>，通过
+            <code>mdp.generated_commands(env, command_name="rally")</code> 就能注入 obs。<br />
+            - 不破坏框架范式，不需要在 <code>ManagerBasedRlEnv</code> 里塞东西。
+        </div>
+
+        <h3>5.1 触发 episode 终止</h3>
+        <p><code>RallyCommand</code> 不直接调用 <code>env.reset()</code>。它只把 <code>is_point_end</code> 置位，由一个轻量
+            <code>TerminationTerm</code> 读取：</p>
+        <pre>
+def point_ended(env, command_name="rally") -&gt; torch.Tensor:
+  return env.command_manager.get_term(command_name).is_point_end
+
+terminations = {
+  "point_end": TerminationTermCfg(func=mdp.point_ended,
+                                  time_out=True,   # truncated, bootstrap value
+                                  params={"command_name": "rally"}),
+  ...
+}
+</pre>
+
+        <h3>5.2 跨 episode 维持比分（Game / Set 粒度）</h3>
+        <p>当训练粒度 = point 时，比分在 reset 时清零；当 = game / set 时，<code>RallyCommand</code> 在 <code>reset()</code> 里 <em>不</em>
+            清零比分，而是只清零本分相关字段。<code>CommandTerm.reset(env_ids)</code> 钩子完美契合。</p>
+
+        <h2 id="mj-6">6. EventDetector：从传感器到事件流</h2>
+
+        <p>事件检测是<strong>无状态</strong>函数，输入当前帧 ContactSensor + 球状态，输出离散事件枚举。这一层是规则与物理的<em>翻译器</em>。</p>
+
+        <pre>
+# mdp/events.py（与 EventTermCfg 无关，是工具函数）
+class EventCode(IntFlag):
+  NONE          = 0
+  RACKET_HIT    = 1 &lt;&lt; 0
+  BOUNCE_IN     = 1 &lt;&lt; 1   # 落地且在合法区
+  BOUNCE_OUT    = 1 &lt;&lt; 2   # 落地但出界
+  NET_TOUCH     = 1 &lt;&lt; 3
+  CROSSED_NET   = 1 &lt;&lt; 4   # 球跨过网平面
+  DOUBLE_BOUNCE = 1 &lt;&lt; 5
+
+def detect_events(env) -&gt; torch.Tensor:        # (N,) IntFlag
+  hit  = env.sensor("racket_ball_contact").force &gt; THRESH
+  bnc  = env.sensor("ball_court_contact").found
+  net  = env.sensor("ball_net_contact").found
+  bnc_pos = env.sensor("ball_court_contact").pos
+  in_play = court_polygon_check(bnc_pos, mode="singles")
+  ...
+  return events_int_flags
+</pre>
+
+        <div class="callout good">
+            事件函数与 ContactSensor 是 <em>纯前向</em> 的：换物理后端只需保证传感器接口一致。这正是 Part I 中「物理与规则解耦」的具体体现。
+        </div>
+
+        <h2 id="mj-7">7. ActionTerm：分层动作</h2>
+
+        <table>
+            <tr>
+                <th>层级</th>
+                <th>ActionTerm</th>
+                <th>动作维度</th>
+                <th>状态</th>
+            </tr>
+            <tr>
+                <td>低层</td>
+                <td><code>JointPositionAction</code></td>
+                <td>~29 关节</td>
+                <td>框架原生</td>
+            </tr>
+            <tr>
+                <td>中层</td>
+                <td><code>FrozenDecoderLatentJointPositionAction</code></td>
+                <td>16 latent</td>
+                <td>已存在，复用</td>
+            </tr>
+            <tr>
+                <td>高层（可选）</td>
+                <td><code>StrokeIntentAction</code></td>
+                <td>4 = (落点 x, y, 弧高, 风险)</td>
+                <td>规划接口</td>
+            </tr>
+        </table>
+
+        <h3>7.1 中层（推荐主训练形态）</h3>
+        <p>继续使用现有的 <code>FrozenDecoderLatentJointPositionAction</code>。它本身就是「外层 ActionTerm 包装内层
+            JointPositionAction」的优雅范式 —— 与 mjlab 的组合设计完全一致。无需改动。</p>
+
+        <h3>7.2 高层 StrokeIntentAction（未来扩展）</h3>
+        <pre>
+class StrokeIntentAction(ActionTerm):
+  """高层策略输出击球意图，由内部短期规划/学习的 mapping 转成 latent。"""
+  action_dim = 4   # (target_x, target_y, arc_height, risk)
+  def process_actions(self, a):
+    self._intent[:] = a
+    z = self._intent_to_latent(a, self._env)
+    self._mid_level.process_actions(z)
+  def apply_actions(self):
+    self._mid_level.apply_actions()
+</pre>
+        <p class="muted">高层只在 <em>击球前一刻</em> 被调用一次（用 ActionTerm 的 update frequency 机制或简单的 phase gating）。低层每物理步运行。</p>
+
+        <h2 id="mj-8">8. Observations / Rewards / Terminations</h2>
+
+        <h3>8.1 Observations 分组</h3>
+        <pre>
+actor_terms = {
+  # —— 本体（继承 tracking 的标准 5 项）——
+  "base_lin_vel": ObservationTermCfg(func=mdp.builtin_sensor,
+                                      params={"sensor_name":"robot/imu_lin_vel"}),
+  "base_ang_vel": ObservationTermCfg(...),
+  "joint_pos":    ObservationTermCfg(func=mdp.joint_pos_rel, params={"biased":True}),
+  "joint_vel":    ObservationTermCfg(func=mdp.joint_vel_rel),
+  "actions":      ObservationTermCfg(func=mdp.low_level_action,
+                                      params={"action_name":"latent_joint_pos"}),
+
+  # —— 球与场景 ——
+  "racket_to_ball":         ObservationTermCfg(func=mdp.racket_to_ball_b),
+  "ball_velocity":          ObservationTermCfg(func=mdp.ball_velocity_b),
+  "ball_predicted_landing": ObservationTermCfg(func=mdp.ball_predicted_landing_b),
+
+  # —— 任务上下文（来自 RallyCommand）——
+  "rally_ctx": ObservationTermCfg(func=mdp.generated_commands,
+                                   params={"command_name":"rally"}),
+}
+
+critic_terms = {**actor_terms,
+  # 特权信息：完整球轨迹、对手 provider 内部状态、场地距离
+  "ball_full_state": ObservationTermCfg(func=mdp.ball_full_state),
+  "court_geometry":  ObservationTermCfg(func=mdp.court_distances),
+}
+</pre>
+
+        <h3>8.2 Rewards 分桶（与 Part I §5.3 一一对应）</h3>
+        <table>
+            <tr>
+                <th>桶</th>
+                <th>RewardTerm</th>
+                <th>权重直觉</th>
+            </tr>
+            <tr>
+                <td rowspan="3">任务</td>
+                <td><code>point_won</code> / <code>point_lost</code>（事件型）</td>
+                <td>±100~200</td>
+            </tr>
+            <tr>
+                <td><code>over_net_in_bounds</code></td>
+                <td>+50</td>
+            </tr>
+            <tr>
+                <td><code>fault</code>（发球/二发失败）</td>
+                <td>−50</td>
+            </tr>
+            <tr>
+                <td rowspan="3">击球质量</td>
+                <td><code>contact_energy</code></td>
+                <td>+10</td>
+            </tr>
+            <tr>
+                <td><code>shot_direction_cos</code>（与目标落点夹角）</td>
+                <td>+10</td>
+            </tr>
+            <tr>
+                <td><code>contact_zone_quality</code>（击球点在 sweet spot）</td>
+                <td>+5</td>
+            </tr>
+            <tr>
+                <td rowspan="2">移动</td>
+                <td><code>approach_predicted_landing</code></td>
+                <td>+5</td>
+            </tr>
+            <tr>
+                <td><code>idle_penalty</code></td>
+                <td>−0.05</td>
+            </tr>
+            <tr>
+                <td rowspan="2">姿态</td>
+                <td><code>posture</code> / motion prior</td>
+                <td>+0.2</td>
+            </tr>
+            <tr>
+                <td><code>joint_torques_l2</code> / <code>joint_acc_l2</code></td>
+                <td>−2e-5</td>
+            </tr>
+            <tr>
+                <td>安全</td>
+                <td><code>fall_penalty</code></td>
+                <td>−200</td>
+            </tr>
+        </table>
+
+        <div class="callout">
+            所有「事件型」奖励的实现模板都是「读 RallyCommand 的 last_event，命中事件时返回标量」。这意味着 <code>rewards.py</code> 几乎都是 3-5 行的小函数，主复杂度收敛在
+            <code>RallyCommand</code> 内部。
+        </div>
+
+        <h3>8.3 Terminations 区分</h3>
+        <pre>
+terminations = {
+  # —— 软终止（truncated, value bootstraps）——
+  "time_out":  TerminationTermCfg(func=mdp.time_out, time_out=True),
+  "point_end": TerminationTermCfg(func=mdp.point_ended, time_out=True,
+                                  params={"command_name":"rally"}),
+
+  # —— 硬终止（terminated, no future value）——
+  "fall":      TerminationTermCfg(func=mdp.bad_orientation,
+                                  params={"limit_angle": math.radians(70)}),
+  "low_root":  TerminationTermCfg(func=mdp.root_height_below_minimum,
+                                  params={"minimum_height": 0.45}),
+  "nan":       TerminationTermCfg(func=mdp.nan_detection),
+}
+</pre>
+
+        <h2 id="mj-9">9. CurriculumTerm：难度旋钮</h2>
+
+        <p>课程的<em>状态</em>（当前难度等级）保存在 <code>RallyCommand</code> 内部张量；<em>调度</em> 由 <code>CurriculumTermCfg</code>
+            触发的函数完成。这两层正交。</p>
+
+        <pre>
+# mdp/curriculums.py
+def ball_speed_curriculum(env, command_name, success_metric, threshold):
+  rally = env.command_manager.get_term(command_name)
+  win_rate = env.metrics_manager.get_recent(success_metric, window=200)
+  if win_rate &gt; threshold:
+    rally.provider.bump_difficulty("ball_speed")
+  return float(rally.provider.difficulty["ball_speed"])
+
+curriculum = {
+  "ball_speed":          CurriculumTermCfg(func=mdp.ball_speed_curriculum, ...),
+  "ball_angle_spread":   CurriculumTermCfg(...),
+  "rally_length_target": CurriculumTermCfg(...),
+  "opponent_level":      CurriculumTermCfg(...),    # 切 P0→P1→P2→P3
+}
+</pre>
+
+        <p>每个旋钮独立判断、独立提升，对应 Part I §8 的「正交旋钮」原则。</p>
+
+        <h2 id="mj-10">10. 渐进式实现路线图</h2>
+
+        <table>
+            <tr>
+                <th>阶段</th>
+                <th>Task ID</th>
+                <th>BallProvider</th>
+                <th>规则深度</th>
+                <th>目标</th>
+            </tr>
+            <tr>
+                <td>M0（已完成）</td>
+                <td>Mjlab-Tennis-Hit-G1</td>
+                <td>P0 FixedSpawner</td>
+                <td>无规则，仅碰球</td>
+                <td>验证 latent 接口 + 球拍接触</td>
+            </tr>
+            <tr>
+                <td>M1</td>
+                <td>Mjlab-Tennis-Return-G1</td>
+                <td>P1 RandomFeeder</td>
+                <td>过网 + 落界判定</td>
+                <td>跑位 + 合法回球</td>
+            </tr>
+            <tr>
+                <td>M2</td>
+                <td>Mjlab-Tennis-Serve-G1</td>
+                <td>P0 self-feed</td>
+                <td>发球区 + 一/二发</td>
+                <td>独立训练发球技能</td>
+            </tr>
+            <tr>
+                <td>M3</td>
+                <td>Mjlab-Tennis-Rally-G1</td>
+                <td>P2 BallisticOpponent</td>
+                <td>多拍连续</td>
+                <td>持续对拉</td>
+            </tr>
+            <tr>
+                <td>M4</td>
+                <td>Mjlab-Tennis-Match-G1</td>
+                <td>P4 SelfPlay</td>
+                <td>完整 point + 计分</td>
+                <td>战术学习</td>
+            </tr>
+            <tr>
+                <td>M5</td>
+                <td>Mjlab-Tennis-League-G1</td>
+                <td>P5 LeaguePlay</td>
+                <td>game / set</td>
+                <td>稳定且多样化</td>
+            </tr>
+        </table>
+
+        <div class="callout good">
+            每个阶段<strong>只需切换 <code>RallyCommandCfg.ball_provider</code> 与 <code>RallyCommandCfg.rules</code>
+                两项，</strong>核心代码不变。新增 BallProvider 只是新增一个 <code>BallProvider</code> 子类，对环境其余部分完全透明。
+        </div>
+
+        <h2 id="mj-11">11. 与现有 tennis 实现的差异与迁移</h2>
+
+        <table>
+            <tr>
+                <th>维度</th>
+                <th>当前实现</th>
+                <th>建议演进</th>
+            </tr>
+            <tr>
+                <td>规则承载</td>
+                <td>分散在 <code>rewards.py</code> / <code>terminations.py</code>
+                    的多个常量（<code>SUCCESS_TARGET_LINE_X</code>、<code>VALID_HIT_MIN_*</code>），每个 reward term 重复传 7~8 个参数
+                </td>
+                <td>合并进 <code>RallyCommand</code>，常量收敛到 <code>RulesCfg</code>，term 只读 command 状态</td>
+            </tr>
+            <tr>
+                <td>球的来源</td>
+                <td><code>EventTermCfg("reset_ball", reset_root_state_uniform)</code> —— 直接采样位置/速度，与规则无关</td>
+                <td>替换为 <code>BallProvider</code> 体系，第一步实现 <code>RandomFeederProvider</code> 作为现有行为的等价物</td>
+            </tr>
+            <tr>
+                <td>事件检测</td>
+                <td>每个 reward / termination 内部独立判断「是否击球 + 是否有效」（参见 <code>hit_state.py</code>）</td>
+                <td>抽取到 <code>events.py</code>，由 RallyCommand 统一消费、缓存到张量，下游纯查询</td>
+            </tr>
+            <tr>
+                <td>场地</td>
+                <td>court 已是独立 entity</td>
+                <td>给 court 加 <em>语义 site</em>（发球区中心、各边线），裁判函数通过 site 索引向量化判界，避免硬编码坐标</td>
+            </tr>
+            <tr>
+                <td>课程</td>
+                <td>未启用</td>
+                <td>引入 <code>CurriculumTermCfg</code>，让 BallProvider 暴露 <code>bump_difficulty(key)</code></td>
+            </tr>
+            <tr>
+                <td>评估</td>
+                <td>play 脚本即评估</td>
+                <td>新增 <code>scripts/evaluate.py</code>，跑 Drill / Rally-N / Match 三套独立 task ID，输出 §9 指标</td>
+            </tr>
+            <tr>
+                <td>奖励复杂度</td>
+                <td><code>approach_ball_pre_hit</code> 之类 term 同时承担「跑位」「击球时机」「失败惩罚」三件事，逻辑紧耦合</td>
+                <td>单一职责拆分：<code>approach_predicted_landing</code>（移动）+ <code>contact_energy</code>（击球）+
+                    <code>fault</code>（事件）</td>
+            </tr>
+        </table>
+
+        <h3>11.1 迁移建议（最小破坏性顺序）</h3>
+        <ol>
+            <li><strong>Step 1</strong>：新增 <code>events.py</code>，把现有 <code>hit_state.py</code>
+                的判定逻辑抽出，<em>不改任何配置</em>。所有 reward term 改为读 events 缓存，行为等价。</li>
+            <li><strong>Step 2</strong>：新增 <code>RallyCommand</code> 与
+                <code>RandomFeederBallProvider</code>，先只承担<em>来球生成</em>，不接管规则。把 <code>reset_ball</code> 事件移除。</li>
+            <li><strong>Step 3</strong>：把规则常量 / 比分 / phase 迁入 <code>RallyCommand</code>，reward term 改为查询
+                command；<em>策略不变，奖励数值不变</em>。</li>
+            <li><strong>Step 4</strong>：实现 <code>BallisticOpponentProvider</code>，启用多拍课程。</li>
+            <li><strong>Step 5</strong>：开放 self-play / league。</li>
+        </ol>
+
+        <div class="callout warn">
+            迁移时关键：每一步保持训练曲线可对照。先用 RandomFeeder 复现当前性能，再叠加新规则。
+        </div>
+
+        <hr />
+
+        <div class="panel">
+            <h3>结语</h3>
+            <p>
+                mjlab 提供的
+                <code>EntityCfg</code>、<code>CommandTerm</code>、<code>ContactSensor</code>、<code>CurriculumTerm</code>
+                已经是网球任务所需的全部基元。优雅实现的关键不是扩展框架，而是<strong>把网球规则状态机识别为一个 CommandTerm 实例</strong>，把对手识别为<strong>该 CommandTerm
+                    的策略对象</strong>，把课程识别为<strong>对该对象的旋钮调度</strong>。
+            </p>
+            <p>
+                最终的 tennis 任务在框架内的形态与 tracking、velocity 一致：一个 base env_cfg + 一组 mdp/ 函数与类 + per-robot
+                config。但其内部，通过单点封装（<code>RallyCommand</code>），承载了远比一般任务复杂的规则世界。这就是「优雅」在工程上的含义。
+            </p>
+        </div>
+
+    </div>
+</body>
+
+</html>

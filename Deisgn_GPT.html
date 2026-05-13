@@ -1,0 +1,1385 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Tennis RL Environment Design</title>
+    <style>
+        :root {
+            --bg: #f4efe6;
+            --paper: rgba(255, 251, 245, 0.82);
+            --paper-strong: rgba(255, 248, 239, 0.96);
+            --ink: #1d221d;
+            --muted: #5a665b;
+            --line: rgba(39, 60, 41, 0.14);
+            --green: #284f33;
+            --green-soft: #dfe9da;
+            --clay: #b86d4b;
+            --clay-soft: #f2ddd2;
+            --blue: #2c4f70;
+            --blue-soft: #d8e5ef;
+            --gold: #9b7d33;
+            --shadow: 0 18px 50px rgba(32, 40, 31, 0.12);
+            --radius-xl: 28px;
+            --radius-lg: 20px;
+            --radius-md: 14px;
+            --max-width: 1320px;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        html {
+            scroll-behavior: smooth;
+        }
+
+        body {
+            margin: 0;
+            color: var(--ink);
+            background:
+                radial-gradient(circle at top left, rgba(175, 212, 170, 0.38), transparent 26%),
+                radial-gradient(circle at top right, rgba(205, 150, 118, 0.25), transparent 24%),
+                linear-gradient(180deg, #f6f1e8 0%, #efe7db 55%, #ece4d8 100%);
+            font-family: "Avenir Next", "Segoe UI", "PingFang SC", "Hiragino Sans GB", sans-serif;
+            line-height: 1.6;
+            letter-spacing: 0.01em;
+        }
+
+        body::before {
+            content: "";
+            position: fixed;
+            inset: 0;
+            background-image:
+                linear-gradient(rgba(42, 62, 44, 0.04) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(42, 62, 44, 0.04) 1px, transparent 1px);
+            background-size: 36px 36px;
+            pointer-events: none;
+            mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.28), transparent 80%);
+        }
+
+        .shell {
+            position: relative;
+            width: min(100% - 40px, var(--max-width));
+            margin: 0 auto;
+            padding: 28px 0 72px;
+        }
+
+        .topbar {
+            position: sticky;
+            top: 14px;
+            z-index: 20;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 16px;
+            padding: 14px 18px;
+            margin-bottom: 22px;
+            border: 1px solid var(--line);
+            border-radius: 999px;
+            background: rgba(255, 249, 241, 0.72);
+            backdrop-filter: blur(16px);
+            box-shadow: 0 10px 30px rgba(39, 47, 38, 0.08);
+        }
+
+        .topbar .brand {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            min-width: 0;
+        }
+
+        .badge {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            padding: 8px 12px;
+            border-radius: 999px;
+            border: 1px solid rgba(40, 79, 51, 0.18);
+            background: rgba(223, 233, 218, 0.72);
+            color: var(--green);
+            font-size: 12px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.12em;
+            white-space: nowrap;
+        }
+
+        .brand-copy {
+            min-width: 0;
+        }
+
+        .brand-title {
+            margin: 0;
+            font-family: "Baskerville", "Times New Roman", serif;
+            font-size: 18px;
+            font-weight: 700;
+            letter-spacing: 0.02em;
+        }
+
+        .brand-subtitle {
+            margin: 2px 0 0;
+            color: var(--muted);
+            font-size: 13px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .nav {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: flex-end;
+            gap: 8px;
+        }
+
+        .nav a {
+            padding: 8px 12px;
+            border-radius: 999px;
+            color: var(--ink);
+            text-decoration: none;
+            font-size: 13px;
+            background: rgba(255, 252, 246, 0.58);
+            border: 1px solid transparent;
+            transition: 160ms ease;
+        }
+
+        .nav a:hover {
+            border-color: rgba(40, 79, 51, 0.14);
+            background: rgba(255, 252, 246, 0.95);
+            transform: translateY(-1px);
+        }
+
+        .hero {
+            display: grid;
+            grid-template-columns: minmax(0, 1.2fr) minmax(340px, 0.8fr);
+            gap: 22px;
+            margin-bottom: 22px;
+        }
+
+        .hero-card,
+        .panel,
+        .section {
+            border: 1px solid var(--line);
+            background: var(--paper);
+            backdrop-filter: blur(10px);
+            box-shadow: var(--shadow);
+        }
+
+        .hero-card {
+            position: relative;
+            overflow: hidden;
+            border-radius: 34px;
+            padding: 34px;
+            background:
+                linear-gradient(135deg, rgba(255, 252, 246, 0.95), rgba(245, 235, 225, 0.88)),
+                radial-gradient(circle at top right, rgba(86, 135, 96, 0.18), transparent 28%);
+        }
+
+        .hero-card::after {
+            content: "";
+            position: absolute;
+            right: -90px;
+            top: -110px;
+            width: 280px;
+            height: 280px;
+            border-radius: 50%;
+            background: radial-gradient(circle, rgba(40, 79, 51, 0.14), transparent 68%);
+            pointer-events: none;
+        }
+
+        .eyebrow {
+            margin: 0 0 14px;
+            color: var(--green);
+            font-size: 12px;
+            font-weight: 700;
+            letter-spacing: 0.18em;
+            text-transform: uppercase;
+        }
+
+        h1 {
+            margin: 0;
+            max-width: 13ch;
+            font-family: "Baskerville", "Times New Roman", serif;
+            font-size: clamp(38px, 5vw, 72px);
+            line-height: 0.96;
+            letter-spacing: -0.03em;
+        }
+
+        .hero-summary {
+            max-width: 64ch;
+            margin: 18px 0 24px;
+            color: #354238;
+            font-size: 17px;
+        }
+
+        .hero-grid {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 12px;
+        }
+
+        .hero-metric {
+            padding: 14px 16px;
+            border-radius: 18px;
+            background: rgba(255, 250, 244, 0.84);
+            border: 1px solid rgba(40, 79, 51, 0.08);
+        }
+
+        .hero-metric strong {
+            display: block;
+            margin-bottom: 6px;
+            color: var(--green);
+            font-size: 12px;
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+        }
+
+        .hero-metric span {
+            font-size: 15px;
+            color: var(--ink);
+            font-weight: 600;
+        }
+
+        .hero-side {
+            display: grid;
+            gap: 16px;
+        }
+
+        .panel {
+            border-radius: 28px;
+            padding: 24px;
+            background: var(--paper-strong);
+        }
+
+        .panel h2,
+        .section h2 {
+            margin: 0 0 8px;
+            font-family: "Baskerville", "Times New Roman", serif;
+            font-size: 28px;
+            line-height: 1.05;
+            letter-spacing: -0.02em;
+        }
+
+        .panel p,
+        .section p {
+            margin: 0;
+            color: var(--muted);
+        }
+
+        .court {
+            position: relative;
+            aspect-ratio: 1.35;
+            margin-top: 18px;
+            border-radius: 22px;
+            overflow: hidden;
+            background:
+                linear-gradient(180deg, rgba(31, 86, 55, 0.95), rgba(19, 58, 39, 0.96));
+            box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.18);
+        }
+
+        .court::before,
+        .court::after {
+            content: "";
+            position: absolute;
+            left: 8%;
+            right: 8%;
+            border: 2px solid rgba(255, 255, 255, 0.84);
+            border-radius: 6px;
+        }
+
+        .court::before {
+            top: 8%;
+            bottom: 8%;
+        }
+
+        .court::after {
+            top: 22%;
+            bottom: 22%;
+        }
+
+        .court .net,
+        .court .service,
+        .court .center,
+        .court .agent-zone,
+        .court .target-zone,
+        .court .ball-path,
+        .court .agent,
+        .court .ball,
+        .court .opponent {
+            position: absolute;
+        }
+
+        .court .net {
+            top: 50%;
+            left: 4%;
+            right: 4%;
+            height: 8px;
+            border-radius: 999px;
+            transform: translateY(-50%);
+            background: repeating-linear-gradient(90deg,
+                    rgba(255, 255, 255, 0.78),
+                    rgba(255, 255, 255, 0.78) 12px,
+                    rgba(255, 255, 255, 0.18) 12px,
+                    rgba(255, 255, 255, 0.18) 16px);
+            box-shadow: 0 0 0 1px rgba(20, 28, 21, 0.12);
+        }
+
+        .court .service {
+            left: 50%;
+            top: 22%;
+            bottom: 22%;
+            width: 2px;
+            transform: translateX(-50%);
+            background: rgba(255, 255, 255, 0.85);
+        }
+
+        .court .center {
+            left: 8%;
+            right: 8%;
+            top: 50%;
+            height: 2px;
+            transform: translateY(-50%);
+            background: rgba(255, 255, 255, 0.85);
+        }
+
+        .court .agent-zone,
+        .court .target-zone {
+            left: 18%;
+            right: 18%;
+            border-radius: 16px;
+            border: 2px dashed rgba(255, 255, 255, 0.5);
+        }
+
+        .court .agent-zone {
+            bottom: 10%;
+            top: 58%;
+            background: rgba(184, 109, 75, 0.2);
+        }
+
+        .court .target-zone {
+            top: 10%;
+            bottom: 58%;
+            background: rgba(58, 101, 154, 0.2);
+        }
+
+        .court .ball-path {
+            left: 48%;
+            top: 70%;
+            width: 2px;
+            height: 42%;
+            transform: rotate(18deg);
+            transform-origin: bottom center;
+            background: linear-gradient(180deg, rgba(255, 241, 170, 0.0), rgba(255, 241, 170, 0.95));
+            filter: drop-shadow(0 0 12px rgba(255, 247, 188, 0.48));
+        }
+
+        .court .agent,
+        .court .opponent,
+        .court .ball {
+            border-radius: 50%;
+            box-shadow: 0 10px 20px rgba(20, 25, 19, 0.22);
+        }
+
+        .court .agent,
+        .court .opponent {
+            width: 20px;
+            height: 20px;
+            background: #f8f4ee;
+        }
+
+        .court .agent {
+            right: 38%;
+            bottom: 20%;
+            box-shadow: 0 0 0 8px rgba(255, 238, 230, 0.18), 0 8px 18px rgba(20, 25, 19, 0.22);
+        }
+
+        .court .opponent {
+            left: 34%;
+            top: 18%;
+            opacity: 0.78;
+        }
+
+        .court .ball {
+            width: 12px;
+            height: 12px;
+            left: 50%;
+            top: 67%;
+            background: #e4f568;
+            border: 1px solid rgba(26, 36, 23, 0.14);
+            animation: pulse 2.4s ease-in-out infinite;
+        }
+
+        @keyframes pulse {
+
+            0%,
+            100% {
+                transform: scale(1);
+            }
+
+            50% {
+                transform: scale(1.18);
+            }
+        }
+
+        .court-legend {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 10px;
+            margin-top: 16px;
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            color: var(--muted);
+            font-size: 13px;
+        }
+
+        .legend-swatch {
+            width: 14px;
+            height: 14px;
+            border-radius: 50%;
+            flex: 0 0 auto;
+        }
+
+        .legend-swatch.agent {
+            background: var(--clay);
+        }
+
+        .legend-swatch.target {
+            background: var(--blue);
+        }
+
+        .legend-swatch.ball {
+            background: #cadb53;
+        }
+
+        .legend-swatch.net {
+            background: var(--green);
+        }
+
+        .main-grid {
+            display: grid;
+            grid-template-columns: 320px minmax(0, 1fr);
+            gap: 22px;
+            align-items: start;
+        }
+
+        .aside {
+            position: sticky;
+            top: 92px;
+            display: grid;
+            gap: 16px;
+        }
+
+        .aside .panel {
+            padding: 20px;
+            border-radius: 24px;
+        }
+
+        .mini-list {
+            display: grid;
+            gap: 10px;
+            margin-top: 14px;
+        }
+
+        .mini-item {
+            padding: 12px 14px;
+            border-radius: 16px;
+            background: rgba(255, 251, 246, 0.84);
+            border: 1px solid rgba(40, 79, 51, 0.08);
+        }
+
+        .mini-item strong {
+            display: block;
+            margin-bottom: 4px;
+            color: var(--green);
+            font-size: 12px;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+        }
+
+        .content {
+            display: grid;
+            gap: 22px;
+        }
+
+        .section {
+            border-radius: var(--radius-xl);
+            padding: 28px;
+        }
+
+        .section-header {
+            display: flex;
+            align-items: end;
+            justify-content: space-between;
+            gap: 16px;
+            margin-bottom: 20px;
+        }
+
+        .section-tag {
+            padding: 8px 12px;
+            border-radius: 999px;
+            font-size: 12px;
+            font-weight: 700;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            color: var(--green);
+            background: rgba(223, 233, 218, 0.78);
+            white-space: nowrap;
+        }
+
+        .cards {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 16px;
+        }
+
+        .card {
+            padding: 18px;
+            border-radius: 20px;
+            background: rgba(255, 251, 246, 0.84);
+            border: 1px solid rgba(40, 79, 51, 0.08);
+        }
+
+        .card h3 {
+            margin: 0 0 8px;
+            font-size: 18px;
+            line-height: 1.2;
+        }
+
+        .card p {
+            font-size: 14px;
+        }
+
+        .chip-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-top: 12px;
+        }
+
+        .chip {
+            display: inline-flex;
+            align-items: center;
+            padding: 7px 10px;
+            border-radius: 999px;
+            font-size: 12px;
+            font-weight: 600;
+            color: #334436;
+            background: rgba(223, 233, 218, 0.68);
+            border: 1px solid rgba(40, 79, 51, 0.08);
+        }
+
+        .architecture {
+            display: grid;
+            gap: 14px;
+        }
+
+        .layer {
+            display: grid;
+            grid-template-columns: 220px minmax(0, 1fr);
+            gap: 16px;
+            align-items: start;
+            padding: 18px;
+            border-radius: 22px;
+            background: rgba(255, 251, 246, 0.84);
+            border: 1px solid rgba(40, 79, 51, 0.08);
+        }
+
+        .layer-title {
+            display: inline-flex;
+            flex-direction: column;
+            gap: 6px;
+            padding: 14px;
+            border-radius: 18px;
+            background: linear-gradient(180deg, rgba(224, 233, 219, 0.82), rgba(235, 240, 229, 0.62));
+        }
+
+        .layer-title strong {
+            font-size: 18px;
+        }
+
+        .layer-title span {
+            color: var(--muted);
+            font-size: 13px;
+        }
+
+        .flow {
+            display: grid;
+            gap: 12px;
+        }
+
+        .flow-row {
+            position: relative;
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 10px;
+        }
+
+        .flow-box {
+            position: relative;
+            min-height: 88px;
+            padding: 14px;
+            border-radius: 18px;
+            background: rgba(255, 251, 246, 0.9);
+            border: 1px solid rgba(40, 79, 51, 0.08);
+        }
+
+        .flow-box strong {
+            display: block;
+            margin-bottom: 6px;
+            font-size: 15px;
+        }
+
+        .flow-box::after {
+            content: "→";
+            position: absolute;
+            top: 50%;
+            right: -11px;
+            transform: translateY(-50%);
+            color: rgba(40, 79, 51, 0.42);
+            font-size: 20px;
+            font-weight: 700;
+        }
+
+        .flow-box:last-child::after {
+            display: none;
+        }
+
+        .state-machine {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 14px;
+            margin-top: 14px;
+        }
+
+        .state {
+            position: relative;
+            padding: 16px;
+            border-radius: 18px;
+            background: rgba(255, 251, 246, 0.84);
+            border: 1px solid rgba(40, 79, 51, 0.08);
+            min-height: 126px;
+        }
+
+        .state strong {
+            display: block;
+            margin-bottom: 8px;
+            font-size: 16px;
+        }
+
+        .state small {
+            color: var(--green);
+            font-size: 11px;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            font-weight: 700;
+        }
+
+        .columns-3 {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 16px;
+        }
+
+        .rule-stack {
+            display: grid;
+            gap: 12px;
+        }
+
+        .rule-item {
+            padding: 16px;
+            border-left: 4px solid var(--green);
+            border-radius: 0 18px 18px 0;
+            background: rgba(255, 251, 246, 0.82);
+            border-top: 1px solid rgba(40, 79, 51, 0.08);
+            border-right: 1px solid rgba(40, 79, 51, 0.08);
+            border-bottom: 1px solid rgba(40, 79, 51, 0.08);
+        }
+
+        .curriculum {
+            display: grid;
+            gap: 14px;
+        }
+
+        .stage {
+            display: grid;
+            grid-template-columns: 86px minmax(0, 1fr);
+            gap: 14px;
+            align-items: start;
+            padding: 16px;
+            border-radius: 20px;
+            background: rgba(255, 251, 246, 0.86);
+            border: 1px solid rgba(40, 79, 51, 0.08);
+        }
+
+        .stage-index {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            height: 52px;
+            border-radius: 16px;
+            background: linear-gradient(180deg, rgba(40, 79, 51, 0.92), rgba(60, 105, 70, 0.82));
+            color: white;
+            font-size: 18px;
+            font-weight: 700;
+            letter-spacing: 0.08em;
+        }
+
+        .stage h3 {
+            margin: 0 0 6px;
+            font-size: 18px;
+        }
+
+        .split {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 16px;
+        }
+
+        .callout {
+            padding: 18px 20px;
+            border-radius: 22px;
+            border: 1px solid rgba(44, 79, 112, 0.12);
+            background: linear-gradient(180deg, rgba(219, 232, 244, 0.76), rgba(255, 251, 246, 0.74));
+        }
+
+        .callout strong {
+            display: block;
+            margin-bottom: 8px;
+            font-size: 18px;
+            color: var(--blue);
+        }
+
+        .decision-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 16px;
+        }
+
+        .decision {
+            padding: 18px;
+            border-radius: 18px;
+            background: rgba(255, 251, 246, 0.86);
+            border: 1px solid rgba(40, 79, 51, 0.08);
+        }
+
+        .decision strong {
+            display: block;
+            margin-bottom: 8px;
+            font-size: 16px;
+        }
+
+        .footer {
+            margin-top: 22px;
+            padding: 24px 28px;
+            border-radius: 30px;
+            background: rgba(255, 251, 246, 0.84);
+            border: 1px solid var(--line);
+            box-shadow: var(--shadow);
+        }
+
+        .footer-grid {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 16px;
+        }
+
+        .footer h3 {
+            margin: 0 0 8px;
+            font-size: 17px;
+        }
+
+        ul.clean {
+            margin: 10px 0 0;
+            padding-left: 18px;
+            color: var(--muted);
+        }
+
+        ul.clean li+li {
+            margin-top: 6px;
+        }
+
+        .mono {
+            font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+            font-size: 0.95em;
+        }
+
+        @media (max-width: 1180px) {
+
+            .hero,
+            .main-grid,
+            .split,
+            .cards,
+            .columns-3,
+            .decision-grid,
+            .footer-grid,
+            .flow-row,
+            .state-machine {
+                grid-template-columns: 1fr;
+            }
+
+            .aside {
+                position: static;
+            }
+
+            .layer,
+            .stage {
+                grid-template-columns: 1fr;
+            }
+
+            .hero-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .flow-box::after {
+                display: none;
+            }
+        }
+
+        @media (max-width: 820px) {
+            .shell {
+                width: min(100% - 20px, var(--max-width));
+                padding-top: 12px;
+            }
+
+            .topbar {
+                position: static;
+                border-radius: 24px;
+            }
+
+            .hero-card,
+            .panel,
+            .section,
+            .footer {
+                padding: 22px;
+            }
+
+            h1 {
+                max-width: none;
+                font-size: clamp(34px, 10vw, 54px);
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div class="shell">
+        <header class="topbar">
+            <div class="brand">
+                <div class="badge">Tennis RL</div>
+                <div class="brand-copy">
+                    <p class="brand-title">Human-Like Tennis Environment</p>
+                    <p class="brand-subtitle">从比赛规则出发，而不是从当前 reward 拼接出发</p>
+                </div>
+            </div>
+            <nav class="nav">
+                <a href="#north-star">北极星</a>
+                <a href="#layers">系统分层</a>
+                <a href="#state">规则状态机</a>
+                <a href="#curriculum">课程学习</a>
+                <a href="#mapping">落地路径</a>
+            </nav>
+        </header>
+
+        <section class="hero">
+            <article class="hero-card" id="north-star">
+                <p class="eyebrow">Design Brief</p>
+                <h1>把网球环境设计成一场比赛，而不是一次击球。</h1>
+                <p class="hero-summary">
+                    最终目标不是“拍到球”，也不是“让球朝某个方向飞”，而是让 humanoid 在一套逐步加严的规则里，学会像人类一样完成发球、接发、相持、得分与失分决策。
+                    因此环境的第一原则应是：规则先于奖励，比赛状态先于终止条件，课程先于完整复杂度。
+                </p>
+                <div class="hero-grid">
+                    <div class="hero-metric">
+                        <strong>核心抽象</strong>
+                        <span>规则状态机 + 生成器 + 课程</span>
+                    </div>
+                    <div class="hero-metric">
+                        <strong>训练单位</strong>
+                        <span>以 point 为最小闭环，以 match 为长期上下文</span>
+                    </div>
+                    <div class="hero-metric">
+                        <strong>方法论</strong>
+                        <span>先简化规则，再逐层逼近真实网球</span>
+                    </div>
+                </div>
+            </article>
+
+            <aside class="hero-side">
+                <section class="panel">
+                    <h2>世界坐标</h2>
+                    <p>建议固定球网为世界坐标的唯一语义中轴，所有 side、serve、landing、out 判定都以 court-relative frame 定义。</p>
+                    <div class="court" aria-label="tennis court overview">
+                        <div class="target-zone"></div>
+                        <div class="agent-zone"></div>
+                        <div class="net"></div>
+                        <div class="service"></div>
+                        <div class="center"></div>
+                        <div class="ball-path"></div>
+                        <div class="opponent"></div>
+                        <div class="agent"></div>
+                        <div class="ball"></div>
+                    </div>
+                    <div class="court-legend">
+                        <div class="legend-item"><span class="legend-swatch agent"></span>Agent side / own half</div>
+                        <div class="legend-item"><span class="legend-swatch target"></span>Target / opponent half</div>
+                        <div class="legend-item"><span class="legend-swatch ball"></span>Ball state and trajectory</div>
+                        <div class="legend-item"><span class="legend-swatch net"></span>Net plane as rule boundary</div>
+                    </div>
+                </section>
+
+                <section class="panel">
+                    <h2>设计原则</h2>
+                    <div class="mini-list">
+                        <div class="mini-item">
+                            <strong>Rule First</strong>
+                            先定义 legal / illegal event，再写 reward。
+                        </div>
+                        <div class="mini-item">
+                            <strong>Point First</strong>
+                            先学会赢下一分，再考虑整局、整盘与整场。
+                        </div>
+                        <div class="mini-item">
+                            <strong>Curriculum First</strong>
+                            先学 one-shot hit，再学过网、落点、相持、发球。
+                        </div>
+                    </div>
+                </section>
+            </aside>
+        </section>
+
+        <div class="main-grid">
+            <aside class="aside">
+                <section class="panel">
+                    <h2>一句话架构</h2>
+                    <p>Physics state → Event detector → Rule state → Reward / Termination / Metrics</p>
+                    <div class="chip-row">
+                        <span class="chip">Singles first</span>
+                        <span class="chip">Scripted opponent first</span>
+                        <span class="chip">Point scoring first</span>
+                    </div>
+                </section>
+
+                <section class="panel">
+                    <h2>最小闭环</h2>
+                    <div class="mini-list">
+                        <div class="mini-item">
+                            <strong>Serve or incoming ball</strong>
+                            球生成器把一分送入可学习的起点。
+                        </div>
+                        <div class="mini-item">
+                            <strong>Valid return</strong>
+                            机器人完成合法接触、过网与落点。
+                        </div>
+                        <div class="mini-item">
+                            <strong>Point result</strong>
+                            规则层决定这一分谁赢，而不是 reward 凭经验猜。
+                        </div>
+                    </div>
+                </section>
+
+                <section class="panel">
+                    <h2>推荐起点</h2>
+                    <p>第一版完整环境建议：单打、无 let、point-only scoring、scripted ball launcher / scripted opponent、latent low-level
+                        control。</p>
+                </section>
+            </aside>
+
+            <main class="content">
+                <section class="section" id="layers">
+                    <div class="section-header">
+                        <div>
+                            <h2>环境分层</h2>
+                            <p>先抽象层，再落回具体的 manager、reward、termination 或 decoder 接口。</p>
+                        </div>
+                        <div class="section-tag">Layered Architecture</div>
+                    </div>
+
+                    <div class="architecture">
+                        <div class="layer">
+                            <div class="layer-title">
+                                <strong>World Layer</strong>
+                                <span>场地与物理世界</span>
+                            </div>
+                            <div class="cards">
+                                <div class="card">
+                                    <h3>Court Geometry</h3>
+                                    <p>边线、底线、发球线、服务盒、网平面、可玩区域、target zone 都作为独立语义区域定义。</p>
+                                </div>
+                                <div class="card">
+                                    <h3>Dynamic Entities</h3>
+                                    <p>ball、agent、opponent、racket 及其 contact / bounce / crossing 可观测事件。</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="layer">
+                            <div class="layer-title">
+                                <strong>Rule Layer</strong>
+                                <span>比赛规则状态机</span>
+                            </div>
+                            <div class="cards">
+                                <div class="card">
+                                    <h3>Legal Event Semantics</h3>
+                                    <p>合法接触、过网、首次落地、界内/界外、二跳、双误、漏球都在此层定义。</p>
+                                </div>
+                                <div class="card">
+                                    <h3>Point Lifecycle</h3>
+                                    <p>一分从 serve_setup / incoming_ball 开始，到 point_over 结束，不和 RL episode 强绑定。</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="layer">
+                            <div class="layer-title">
+                                <strong>Interaction Layer</strong>
+                                <span>生成器与对手</span>
+                            </div>
+                            <div class="cards">
+                                <div class="card">
+                                    <h3>Ball Generator</h3>
+                                    <p>按 phase 生成球：静态球、背离网球、incoming return、serve trajectory、scripted rally ball。</p>
+                                </div>
+                                <div class="card">
+                                    <h3>Opponent Model</h3>
+                                    <p>从最初的 ball launcher，到 scripted opponent，再到 learned opponent / self-play。</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="layer">
+                            <div class="layer-title">
+                                <strong>Learning Layer</strong>
+                                <span>reward、termination、metrics</span>
+                            </div>
+                            <div class="cards">
+                                <div class="card">
+                                    <h3>Reward Reads Rule State</h3>
+                                    <p>reward 不定义 legality，只读取规则层输出的 event 与 result。</p>
+                                </div>
+                                <div class="card">
+                                    <h3>Termination Ends The Rollout</h3>
+                                    <p>termination 表示 rollout 边界，不应该替代 point result 或 scoring rule。</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <section class="section" id="state">
+                    <div class="section-header">
+                        <div>
+                            <h2>规则状态机</h2>
+                            <p>当前 one-shot hit state 只是一种 proof-of-concept。最终结构应覆盖 serve、return、rally 与 point result。
+                            </p>
+                        </div>
+                        <div class="section-tag">Finite-State Rule Engine</div>
+                    </div>
+
+                    <div class="flow">
+                        <div class="flow-row">
+                            <div class="flow-box">
+                                <strong>Physics</strong>
+                                球、拍、地面、网、身体的连续状态。
+                            </div>
+                            <div class="flow-box">
+                                <strong>Event Detector</strong>
+                                contact edge、bounce edge、net touch、crossing、landing。
+                            </div>
+                            <div class="flow-box">
+                                <strong>Rule State</strong>
+                                phase、hitter、fault、bounce、winner、score context。
+                            </div>
+                            <div class="flow-box">
+                                <strong>Outputs</strong>
+                                reward、termination、metrics、curriculum adaptation。
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="state-machine">
+                        <div class="state">
+                            <small>Phase 01</small>
+                            <strong>reset</strong>
+                            统一重置一分所需的球、人、side、serve context 与 opponent context。
+                        </div>
+                        <div class="state">
+                            <small>Phase 02</small>
+                            <strong>serve_setup</strong>
+                            发球方、发球盒、fault count、站位合法性确定。
+                        </div>
+                        <div class="state">
+                            <small>Phase 03</small>
+                            <strong>serve_hit / serve_flight</strong>
+                            发球出手、过网、发球盒判定、fault / let / in。
+                        </div>
+                        <div class="state">
+                            <small>Phase 04</small>
+                            <strong>return_ready</strong>
+                            接发方等待回球窗口，合法击球机会开始。
+                        </div>
+                        <div class="state">
+                            <small>Phase 05</small>
+                            <strong>rally</strong>
+                            双方轮流击球，跟踪 net、landing、bounce、out、miss。
+                        </div>
+                        <div class="state">
+                            <small>Phase 06</small>
+                            <strong>point_over</strong>
+                            point winner 与 result 写入 score state，并决定是否继续 game / set / match。
+                        </div>
+                    </div>
+
+                    <div class="split" style="margin-top:16px;">
+                        <div class="callout">
+                            <strong>核心状态字段</strong>
+                            <p><span class="mono">phase, last_hit_side, expected_receiver_side, fault_count,
+                                    bounce_count_per_side, ball_crossed_net, first_landing_pos, first_landing_in,
+                                    second_bounce, point_winner, point_result</span></p>
+                        </div>
+                        <div class="callout">
+                            <strong>设计原则</strong>
+                            <p>不要把合法击球、出界、得分等规则散落在 reward term 里。所有 rule event 必须先进入同一个状态机，再由训练信号读取。</p>
+                        </div>
+                    </div>
+                </section>
+
+                <section class="section">
+                    <div class="section-header">
+                        <div>
+                            <h2>人类网球规则到 RL 的映射</h2>
+                            <p>不是所有真实规则都要第一天完整模拟，但必须知道哪些是北极星，哪些只是阶段性简化。</p>
+                        </div>
+                        <div class="section-tag">Rules To Learning Signals</div>
+                    </div>
+
+                    <div class="columns-3">
+                        <div class="rule-stack">
+                            <div class="rule-item">
+                                <strong>必须直接模拟</strong>
+                                发球是否合法、是否过网、首次落地是否界内、二跳、出界、漏球、网碰撞、point winner。
+                            </div>
+                            <div class="rule-item">
+                                <strong>可阶段性简化</strong>
+                                let、deuce / advantage、set / match scoring、复杂发球站位、spin 精确建模。
+                            </div>
+                        </div>
+                        <div class="rule-stack">
+                            <div class="rule-item" style="border-left-color: var(--clay);">
+                                <strong>适合做 Reward</strong>
+                                intercept 准备、有效接触、过网 margin、landing target、相持成功、point win。
+                            </div>
+                            <div class="rule-item" style="border-left-color: var(--clay);">
+                                <strong>不应只做 Reward</strong>
+                                out、net、double fault、second bounce、miss。它们先是规则事件，再可能伴随惩罚。</n+ </div>
+                            </div>
+                            <div class="rule-stack">
+                                <div class="rule-item" style="border-left-color: var(--blue);">
+                                    <strong>适合做 Metrics</strong>
+                                    serve-in rate、valid return rate、landing-in rate、rally length、point win rate、double
+                                    fault rate。
+                                </div>
+                                <div class="rule-item" style="border-left-color: var(--blue);">
+                                    <strong>适合做 Curriculum Knobs</strong>
+                                    球速、球高、落点难度、网约束严格度、目标区大小、对手质量、point duration 上限。
+                                </div>
+                            </div>
+                        </div>
+                </section>
+
+                <section class="section">
+                    <div class="section-header">
+                        <div>
+                            <h2>球与对手生成规则</h2>
+                            <p>“球怎么来”决定了 agent 在学什么。生成器应由 phase 与 curriculum 控制，而不是只有 reset 随机化。</p>
+                        </div>
+                        <div class="section-tag">Generators</div>
+                    </div>
+
+                    <div class="cards">
+                        <div class="card">
+                            <h3>Ball Generator</h3>
+                            <p>按阶段生成 stationary easy-hit ball、away-from-net ball、incoming return、serve flight、scripted
+                                opponent return。参数包括 spawn side、spawn region、height、velocity、spin placeholder 与 target
+                                intent。</p>
+                            <div class="chip-row">
+                                <span class="chip">spawn_side</span>
+                                <span class="chip">speed_range</span>
+                                <span class="chip">height_range</span>
+                                <span class="chip">target_intent</span>
+                            </div>
+                        </div>
+                        <div class="card">
+                            <h3>Opponent Model</h3>
+                            <p>从 ball launcher 到 scripted opponent，再到 learned opponent / self-play。建议先让“对手能力”作为课程参数，不把
+                                humanoid 对手学习和 agent 基础击球学习绑死。</p>
+                            <div class="chip-row">
+                                <span class="chip">launcher</span>
+                                <span class="chip">scripted return</span>
+                                <span class="chip">reactive opponent</span>
+                                <span class="chip">self-play</span>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <section class="section" id="curriculum">
+                    <div class="section-header">
+                        <div>
+                            <h2>课程学习蓝图</h2>
+                            <p>完整网球规则应当渐进引入，否则 reward 过稀疏、credit assignment 过长、行为容易坍缩。</p>
+                        </div>
+                        <div class="section-tag">Curriculum Roadmap</div>
+                    </div>
+
+                    <div class="curriculum">
+                        <div class="stage">
+                            <div class="stage-index">S1</div>
+                            <div>
+                                <h3>One-Shot Directional Hit</h3>
+                                <p>只要求一次有效击球，把球打离球拍并朝对方半场飞行。先消除 juggling、贴球与无效挥拍。</p>
+                            </div>
+                        </div>
+                        <div class="stage">
+                            <div class="stage-index">S2</div>
+                            <div>
+                                <h3>Net Clearance + Landing</h3>
+                                <p>引入过网和首次落地区域，目标从“打出去”升级为“合法打过去”。</p>
+                            </div>
+                        </div>
+                        <div class="stage">
+                            <div class="stage-index">S3</div>
+                            <div>
+                                <h3>Incoming Return</h3>
+                                <p>球从对方半场飞来，agent 需要在合法时间窗口内回击，而不是等待友好的初始球。</p>
+                            </div>
+                        </div>
+                        <div class="stage">
+                            <div class="stage-index">S4</div>
+                            <div>
+                                <h3>Scripted Rally</h3>
+                                <p>加入可控质量的 scripted opponent，开始学习多拍相持与 point result。</p>
+                            </div>
+                        </div>
+                        <div class="stage">
+                            <div class="stage-index">S5</div>
+                            <div>
+                                <h3>Serve + Return</h3>
+                                <p>发球盒、fault、double fault、return ready 全部进入规则状态机。</p>
+                            </div>
+                        </div>
+                        <div class="stage">
+                            <div class="stage-index">S6</div>
+                            <div>
+                                <h3>Scoring Pressure + Opponent Variation</h3>
+                                <p>从 point-only scoring 提升到 game scoring，并引入对手差异、落点策略和局面压力。</p>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <section class="section">
+                    <div class="section-header">
+                        <div>
+                            <h2>Observation / Action / Score</h2>
+                            <p>高层 tennis policy 和低层 humanoid controller 不应该共享同一套语义边界。</p>
+                        </div>
+                        <div class="section-tag">Interfaces</div>
+                    </div>
+
+                    <div class="split">
+                        <div class="cards">
+                            <div class="card">
+                                <h3>High-Level Observation</h3>
+                                <p>proprioception、ball kinematics、court-relative geometry、rule bits、target
+                                    context、opponent context、score context。</p>
+                            </div>
+                            <div class="card">
+                                <h3>Low-Level Control</h3>
+                                <p>若继续使用 latent decoder，低层只需要稳定的人形运动控制状态；高层 game state 不应直接污染 decoder state。</p>
+                            </div>
+                        </div>
+                        <div class="cards">
+                            <div class="card">
+                                <h3>Point Scoring</h3>
+                                <p>训练先做 point-only，评估时再读 game scoring / deuce / advantage；score 是上下文，不是最初唯一 reward。</p>
+                            </div>
+                            <div class="card">
+                                <h3>Episode Semantics</h3>
+                                <p>一分结束不一定意味着整个 RL episode 结束。后期应该允许多 point 同 episode，以学习策略性与比分压力。</p>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <section class="section" id="mapping">
+                    <div class="section-header">
+                        <div>
+                            <h2>如何映射回当前项目</h2>
+                            <p>先定抽象，再决定放进哪个 manager。不要因为当前 one-shot tennis 的 wiring 已经存在，就让它限制结构设计。</p>
+                        </div>
+                        <div class="section-tag">Implementation Mapping</div>
+                    </div>
+
+                    <div class="decision-grid">
+                        <div class="decision">
+                            <strong>TennisRuleState</strong>
+                            作为 stateful shared object，供 reward、termination、metrics 读取。它应取代当前仅服务于 one-shot hit 的局部状态对象。
+                        </div>
+                        <div class="decision">
+                            <strong>Ball / Opponent Generators</strong>
+                            优先挂在 reset / step events 或 command-like generator 上，让生成过程按 phase 与 curriculum 调整。
+                        </div>
+                        <div class="decision">
+                            <strong>Scoring State</strong>
+                            作为规则层的独立子状态，point result 更新它，而不是让 reward 或 termination 顺手维护比分。
+                        </div>
+                        <div class="decision">
+                            <strong>Reward / Termination Terms</strong>
+                            保持为 thin readers：只读取已决策完成的 rule event，而不是自行判断 legality。
+                        </div>
+                    </div>
+                </section>
+            </main>
+        </div>
+
+        <footer class="footer">
+            <div class="footer-grid">
+                <div>
+                    <h3>推荐第一版完整环境</h3>
+                    <ul class="clean">
+                        <li>Singles only</li>
+                        <li>Scripted ball launcher / scripted opponent</li>
+                        <li>Point-only scoring for training</li>
+                        <li>No let at the beginning</li>
+                    </ul>
+                </div>
+                <div>
+                    <h3>验证重点</h3>
+                    <ul class="clean">
+                        <li>serve-in rate</li>
+                        <li>valid return rate</li>
+                        <li>landing-in rate</li>
+                        <li>rally length</li>
+                        <li>point win rate</li>
+                    </ul>
+                </div>
+                <div>
+                    <h3>架构警戒线</h3>
+                    <ul class="clean">
+                        <li>不要让 reward 定义规则</li>
+                        <li>不要把 point result 和 episode 绑定死</li>
+                        <li>不要让当前 one-shot 实现反过来约束最终设计</li>
+                    </ul>
+                </div>
+            </div>
+        </footer>
+    </div>
+</body>
+
+</html>
