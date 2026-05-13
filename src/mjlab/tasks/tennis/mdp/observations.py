@@ -1,4 +1,4 @@
-"""Observation terms for tennis latent-control tasks."""
+"""网球潜变量控制任务的观测项。"""
 
 from __future__ import annotations
 
@@ -19,18 +19,18 @@ _BALL_CFG = SceneEntityCfg("ball")
 
 
 def neutral_motion_anchor_pos_b(env: ManagerBasedRlEnv) -> torch.Tensor:
-  """Return a neutral root-target position compatible with tracking decoder state."""
+  """返回与追踪解码器状态兼容的中性根目标位置。"""
   return torch.zeros(env.num_envs, 3, device=env.device)
 
 
 def neutral_motion_anchor_ori_b(env: ManagerBasedRlEnv) -> torch.Tensor:
-  """Return a neutral root-target orientation in 6D rotation representation."""
+  """返回 6D 旋转表示下的中性根目标朝向。"""
   ori = torch.tensor((1.0, 0.0, 0.0, 1.0, 0.0, 0.0), device=env.device)
   return ori.repeat(env.num_envs, 1)
 
 
 def low_level_action(env: ManagerBasedRlEnv, action_name: str) -> torch.Tensor:
-  """Return decoded low-level actions from the latent action term."""
+  """返回潜变量动作项解码后的低层动作。"""
   term = env.action_manager.get_term(action_name)
   action = getattr(term, "low_level_action", None)
   if action is None:
@@ -44,7 +44,7 @@ def racket_to_ball_b(
   ball_cfg: SceneEntityCfg = _BALL_CFG,
   robot_cfg: SceneEntityCfg = _ROBOT_CFG,
 ) -> torch.Tensor:
-  """Vector from racket center to ball, expressed in the robot base frame."""
+  """从球拍中心到球的向量，以机器人基座坐标系表示。"""
   robot: Entity = env.scene[robot_cfg.name]
   ball: Entity = env.scene[ball_cfg.name]
   racket_pos_w = robot.data.site_pos_w[:, racket_cfg.site_ids].squeeze(1)
@@ -57,7 +57,7 @@ def ball_velocity_b(
   ball_cfg: SceneEntityCfg = _BALL_CFG,
   robot_cfg: SceneEntityCfg = _ROBOT_CFG,
 ) -> torch.Tensor:
-  """Ball linear velocity in the robot base frame."""
+  """球的线速度，以机器人基座坐标系表示。"""
   robot: Entity = env.scene[robot_cfg.name]
   ball: Entity = env.scene[ball_cfg.name]
   return quat_apply_inverse(robot.data.root_link_quat_w, ball.data.root_link_lin_vel_w)
@@ -68,7 +68,7 @@ def racket_velocity_b(
   racket_cfg: SceneEntityCfg = _RACKET_CFG,
   robot_cfg: SceneEntityCfg = _ROBOT_CFG,
 ) -> torch.Tensor:
-  """Racket center linear velocity in the robot base frame."""
+  """球拍中心的线速度，以机器人基座坐标系表示。"""
   robot: Entity = env.scene[robot_cfg.name]
   racket_vel_w = robot.data.site_lin_vel_w[:, racket_cfg.site_ids].squeeze(1)
   return quat_apply_inverse(robot.data.root_link_quat_w, racket_vel_w)
@@ -82,10 +82,10 @@ def ball_predicted_landing_b(
   gravity: float = 9.81,
   max_horizon: float = 1.5,
 ) -> torch.Tensor:
-  """Predicted (x, y, t_to_land) of the ball under simple gravity, in robot base frame.
+  """预测球在简单重力下的落点 (x, y, t_to_land)，以机器人基座坐标系表示。
 
-  Uses ballistic forward integration ignoring drag and bounces.  Returns
-  zeros for environments where the ball is already below ``ground_z``.
+  使用弹道前向积分，忽略空气阻力和弹跳。对于球已低于 ``ground_z`` 的
+  环境，返回零向量。
   """
   robot: Entity = env.scene[robot_cfg.name]
   ball: Entity = env.scene[ball_cfg.name]
@@ -94,7 +94,7 @@ def ball_predicted_landing_b(
 
   pz = pos[:, 2]
   vz = vel[:, 2]
-  # Solve pz + vz*t - 0.5*g*t^2 = ground_z  =>  0.5g t^2 - vz t - (pz - gz) = 0
+  # 求解 pz + vz*t - 0.5*g*t^2 = ground_z  =>  0.5g t^2 - vz t - (pz - gz) = 0
   a = 0.5 * gravity
   b = -vz
   c = -(pz - ground_z)

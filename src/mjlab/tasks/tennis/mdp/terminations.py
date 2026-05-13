@@ -1,4 +1,4 @@
-"""Termination terms for tennis latent-control tasks."""
+"""网球潜变量控制任务的终止项。"""
 
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ def ball_in_play(
   y_limits: tuple[float, float] = (-2.7, 2.7),
   z_limits: tuple[float, float] = (BALL_MIN_HEIGHT, 2.6),
 ) -> torch.Tensor:
-  """Terminate when the ball leaves the playable court workspace."""
+  """当球离开可玩球场工作区间时终止。"""
   ball: Entity = env.scene[ball_cfg.name]
   pos = ball.data.root_link_pos_w - env.scene.env_origins
   out_x = (pos[:, 0] < x_limits[0]) | (pos[:, 0] > x_limits[1])
@@ -35,7 +35,7 @@ def ball_in_play(
 
 
 class miss_ball(TennisHitStateTerm):
-  """Terminate when the ball has passed the racket plane without a valid hit."""
+  """当球已经穿过球拍平面且无有效击球时终止。"""
 
   def __init__(self, cfg: TerminationTermCfg, env: ManagerBasedRlEnv):
     super().__init__(cfg, env)
@@ -63,7 +63,7 @@ class miss_ball(TennisHitStateTerm):
 
 
 class second_contact_after_valid_hit(TennisHitStateTerm):
-  """Terminate to stop the policy from juggling after a valid hit."""
+  """终止，以防止策略在有效击球后抡球。"""
 
   def __init__(self, cfg: TerminationTermCfg, env: ManagerBasedRlEnv):
     super().__init__(cfg, env)
@@ -91,7 +91,7 @@ class second_contact_after_valid_hit(TennisHitStateTerm):
 
 
 class successful_return(TennisHitStateTerm):
-  """Terminate once a valid hit drives the ball through the target line."""
+  """一旦有效击球将球推过目标线，则终止。"""
 
   def __init__(self, cfg: TerminationTermCfg, env: ManagerBasedRlEnv):
     super().__init__(cfg, env)
@@ -122,7 +122,7 @@ def point_ended(
   env: ManagerBasedRlEnv,
   command_name: str = "rally",
 ) -> torch.Tensor:
-  """Terminate when the rally command marks the current point as ended."""
+  """当回球指令将当前得分标记为已结束时终止。"""
   from mjlab.tasks.tennis.mdp.commands import RallyCommand
 
   rally = env.command_manager.get_term(command_name)
@@ -131,18 +131,17 @@ def point_ended(
 
 
 # ---------------------------------------------------------------------------
-# Refactored Hit-task terminations (built on TennisRallyTracker).
+# 重构后的击球任务终止项（基于 TennisRallyTracker）。
 # ---------------------------------------------------------------------------
 
 from mjlab.tasks.tennis.mdp.hit_state import TennisRallyTrackerTerm  # noqa: E402
 
 
 class second_contact(TennisRallyTrackerTerm):
-  """End the episode once the ball has registered its second contact.
+  """当球完成第二次接触后结束回合。
 
-  A "contact" is either a racket hit or a ground bounce. The first hit
-  starts the rally; the second contact (a return-bounce, a juggling
-  re-hit, or simply the ball bouncing twice on the floor) ends it.
+  「接触」指球拍击球或落地弹跳任意一种。第一次击球开始回球；
+  第二次接触（回球弹跳、抡球重击或球在地面弹跳两次）则终止。
   """
 
   def __init__(self, cfg: TerminationTermCfg, env: ManagerBasedRlEnv):
@@ -162,7 +161,7 @@ class second_contact(TennisRallyTrackerTerm):
 
 
 class crossed_net_after_hit(TennisRallyTrackerTerm):
-  """End the episode the step the ball first crosses the net after a hit."""
+  """在击球后球首次过网的步骤结束回合。"""
 
   def __init__(self, cfg: TerminationTermCfg, env: ManagerBasedRlEnv):
     super().__init__(cfg, env)

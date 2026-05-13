@@ -1,4 +1,4 @@
-"""Unitree G1 configuration for tennis latent-control tasks."""
+"""网球潜变量控制任务的 Unitree G1 配置。"""
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ DEFAULT_DECODER_CHECKPOINT = "logs/rsl_rl/g1_distillation/distill_cloud_unitree_
 def unitree_g1_tennis_latent_hit_env_cfg(
   play: bool = False,
 ) -> ManagerBasedRlEnvCfg:
-  """Create the G1 tennis hit task with a frozen decoder latent action space."""
+  """创建带冻结解码器潜变量动作空间的 G1 网球击球任务。"""
   cfg = make_tennis_latent_env_cfg()
   cfg.scene.entities = {
     "robot": get_g1_w_racket_robot_cfg(),

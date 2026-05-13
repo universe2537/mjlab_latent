@@ -1,19 +1,18 @@
-"""Tennis rally command term.
+"""网球回球指令项。
 
-The :class:`RallyCommand` is the single source of truth for the *state of the
-current point* (FSM phase, last events, point outcome, score, metrics). It
-drives the high-level tennis rules layer:
+:class:`RallyCommand` 是*当前得分状态*（FSM 阶段、最新事件、得分结果、
+比分、指标）的唯一权威中心。它驱动高层网球规则层：
 
-- Owns a :class:`BallProvider` which spawns the ball at point start and may
-  optionally respond mid-rally.
-- Calls :func:`detect_events` each step and applies a small finite-state
-  machine to maintain ``phase`` and ``is_point_end``.
-- Exposes a compact float "command vector" that observation/reward terms
-  can consume via :func:`mdp.generated_commands`.
+- 持有一个 :class:`BallProvider`，在得分开始时生成球，并可选地
+  在回球过程中响应。
+- 每步调用 :func:`detect_events`，并应用小型有限状态机以维护
+  ``phase`` 和 ``is_point_end``。
+- 暴露简洁的浮点“指令向量”，供观测/奖励项通过
+  :func:`mdp.generated_commands` 消费。
 
-Reward / termination terms read ``rally.is_point_end``,
-``rally.point_winner`` and ``rally.last_events`` rather than re-deriving
-events from sensors. This keeps the rule logic in one place.
+奖励/终止项读取 ``rally.is_point_end``、
+``rally.point_winner`` 和 ``rally.last_events``，而不是
+从传感器重新推导事件。这将规则逻辑集中在一处。
 """
 
 from __future__ import annotations
@@ -44,12 +43,12 @@ if TYPE_CHECKING:
 
 
 # ---------------------------------------------------------------------------
-# Phase enum.
+# 阶段枚举。
 # ---------------------------------------------------------------------------
 
 
 class BallPhase(IntEnum):
-  """Coarse FSM phase for one rally point."""
+  """单个回球得分的粗粒度 FSM 阶段。"""
 
   IDLE = 0
   SERVE = 1  # ball just spawned, no contact yet
@@ -63,13 +62,13 @@ _NUM_PHASES = len(BallPhase)
 
 
 # ---------------------------------------------------------------------------
-# Rules + command configs.
+# 规则 + 指令配置。
 # ---------------------------------------------------------------------------
 
 
 @dataclass(kw_only=True)
 class RulesCfg:
-  """Static rule parameters used by the rally FSM."""
+  """回球 FSM 使用的静态规则参数。"""
 
   bounds: CourtBounds = field(default_factory=CourtBounds)
   hit_force_threshold: float = 1.0
@@ -77,41 +76,41 @@ class RulesCfg:
   valid_hit_min_leftward_speed: float = 2.0
   valid_hit_min_ball_speed: float = 2.5
   target_line_x: float = -2.2
-  # If True, an out-of-play ball ends the point even before any contact.
+  # 如果为 True，就算尚无任何接触，超出可玩球也会结束得分。
   end_on_ball_out_of_play: bool = True
 
 
 @dataclass(kw_only=True)
 class RallyCommandCfg(CommandTermCfg):
-  """Configuration for :class:`RallyCommand`.
+  """:class:`RallyCommand` 的配置。
 
-  ``resampling_time_range`` defaults to a sentinel that effectively disables
-  the time-driven resampler; the rally is resampled (= ball respawn) on
-  episode reset, and on point end if ``auto_respawn_on_point_end`` is True.
+  ``resampling_time_range`` 默认为一个哨兵値，实质上禁用时间驱动的重采样器；
+  回球在回合重置时重采样（= 球重新生成），若 ``auto_respawn_on_point_end``
+  为 True 则得分结束时也重采样。
   """
 
   ball_provider: BallProviderCfg | None = None
-  """Ball provider strategy. Must be set before the env is built."""
+  """球提供器策略。必须在构建环境前设置。"""
   rules: RulesCfg = field(default_factory=RulesCfg)
 
   ball_cfg: SceneEntityCfg = field(default_factory=lambda: SceneEntityCfg("ball"))
   racket_ball_sensor: str = "racket_ball_contact"
-  ball_net_sensor: str | None = None  # set if a ball-net contact sensor exists
+  ball_net_sensor: str | None = None  # 如果存在球-网接触传感器则设置
 
   resampling_time_range: tuple[float, float] = (1e9, 1e9)
-  episode_granularity: bool = True  # one point per episode (recommended)
+  episode_granularity: bool = True  # 每回合一个得分（推荐）
 
   def build(self, env: "ManagerBasedRlEnv") -> "RallyCommand":
     return RallyCommand(self, env)
 
 
 # ---------------------------------------------------------------------------
-# Command term.
+# 指令项。
 # ---------------------------------------------------------------------------
 
 
 class RallyCommand(CommandTerm):
-  """Tennis rally finite-state machine + ball provider driver."""
+  """网球回球有限状态机 + 球提供器驱动器。"""
 
   cfg: RallyCommandCfg
 
@@ -127,24 +126,24 @@ class RallyCommand(CommandTerm):
     dev = env.device
     B = env.num_envs
 
-    # FSM state (per-env).
+    # FSM 状态（每环境）。
     self.phase = torch.zeros(B, dtype=torch.long, device=dev)
     self.last_events = torch.zeros(B, dtype=torch.long, device=dev)
     self.is_point_end = torch.zeros(B, dtype=torch.bool, device=dev)
-    self.point_winner = torch.zeros(B, dtype=torch.long, device=dev)  # +1 self, -1 opp
+    self.point_winner = torch.zeros(B, dtype=torch.long, device=dev)  # +1 己方, -1 对手
     self.bounce_xy = torch.zeros(B, 2, device=dev)
     self.has_valid_hit = torch.zeros(B, dtype=torch.bool, device=dev)
 
-    # Event-detector persistent state.
+    # 事件检测器持久状态。
     self._event_state = EventState.zeros(B, dev)
 
-    # Metrics for rsl-rl logging (mean over envs at reset time).
+    # rsl-rl 日志用指标（重置时对各环境求均値）。
     self.metrics["points_won"] = torch.zeros(B, device=dev)
     self.metrics["valid_hits"] = torch.zeros(B, device=dev)
     self.metrics["over_net"] = torch.zeros(B, device=dev)
     self.metrics["bounce_in_opp"] = torch.zeros(B, device=dev)
 
-    # Cached command tensor (one-hot phase + scalars).
+    # 缓存指令张量（阶段独热编码 + 标量）。
     self._command = torch.zeros(B, _NUM_PHASES + 4, device=dev)
 
   # ---- CommandTerm API -------------------------------------------------
@@ -167,7 +166,7 @@ class RallyCommand(CommandTerm):
   def _resample_command(self, env_ids: torch.Tensor) -> None:
     if env_ids.numel() == 0:
       return
-    # Clear FSM state.
+    # 清除 FSM 状态。
     self.phase[env_ids] = int(BallPhase.SERVE)
     self.last_events[env_ids] = 0
     self.is_point_end[env_ids] = False
@@ -175,7 +174,7 @@ class RallyCommand(CommandTerm):
     self.bounce_xy[env_ids] = 0.0
     self.has_valid_hit[env_ids] = False
     self._event_state.reset(env_ids)
-    # Spawn a fresh ball via provider.
+    # 通过提供器生成全新的球。
     self._provider.spawn(env_ids)
 
   def _update_command(self) -> None:
@@ -183,10 +182,10 @@ class RallyCommand(CommandTerm):
     self._refresh_command_tensor()
 
   def _update_metrics(self) -> None:
-    # Metrics are accumulated inside ``_step_fsm`` as events fire.
+    # 指标在 ``_step_fsm`` 中随事件触发累积。
     pass
 
-  # ---- FSM core --------------------------------------------------------
+  # ---- FSM 核心 --------------------------------------------------------
 
   def _step_fsm(self) -> None:
     flags = detect_events(
@@ -220,8 +219,8 @@ class RallyCommand(CommandTerm):
     )
     self.has_valid_hit |= valid_hit_now
 
-    # --- Phase transitions (vectorised) ----------------------------------
-    # SERVE/IN_FLIGHT → BOUNCED on a bounce on self side.
+    # --- 阶段转换（向量化）------------------------------------------
+    # SERVE/IN_FLIGHT → BOUNCED：己方侧弹跳。
     pre_bounce_mask = (
       (self.phase == int(BallPhase.SERVE)) | (self.phase == int(BallPhase.IN_FLIGHT))
     ) & e_bounce_self
@@ -231,16 +230,16 @@ class RallyCommand(CommandTerm):
       self.phase,
     )
 
-    # SERVE → IN_FLIGHT once the ball crosses the net plane (best-effort).
+    # SERVE → IN_FLIGHT：球过网平面（尽力而为）。
     in_flight_mask = (self.phase == int(BallPhase.SERVE)) & ~pre_bounce_mask
-    # Move SERVE → IN_FLIGHT one step after spawn unconditionally.
+    # 无条件地将 SERVE 在生成后一步转为 IN_FLIGHT。
     self.phase = torch.where(
       in_flight_mask,
       torch.full_like(self.phase, int(BallPhase.IN_FLIGHT)),
       self.phase,
     )
 
-    # BOUNCED → RETURN on a valid racket hit.
+    # BOUNCED → RETURN：有效球拍击球。
     return_mask = (self.phase == int(BallPhase.BOUNCED)) & valid_hit_now
     self.phase = torch.where(
       return_mask,
@@ -248,18 +247,17 @@ class RallyCommand(CommandTerm):
       self.phase,
     )
 
-    # Cache last bounce x,y position from event-state for reward terms.
+    # 从事件状态缓存弹跳位置，供奖励项使用。
     bounce_mask = e_bounce_self | e_bounce_opp | e_bounce_out
     if bounce_mask.any():
       idx = bounce_mask.nonzero().flatten()
       self.bounce_xy[idx] = self._event_state.last_bounce_pos[idx, :2]
 
-    # --- Point-end conditions --------------------------------------------
-    # 1. Self wins: ball bounced on opp side after a valid return.
+    # --- 得分结束条件 -----------------------------------------------
+    # 1. 己方得分：有效回球后球在对方侧弹跳。
     self_win = (self.phase == int(BallPhase.RETURN)) & e_bounce_opp
-    # 2. Opp wins: ball went out of bounds, or net touched, or second
-    #    bounce on self side after a valid hit, or ball out of play, or
-    #    ball bounced twice on self side without a hit.
+    # 2. 对手得分：球越界、网打球、有效击球后在己方侧二次弹跳、
+    #    球超出可玩空间，或未击球就在己方侧弹跳两次。
     opp_win_out = e_bounce_out
     opp_win_net = e_net
     opp_win_double = (self.phase == int(BallPhase.BOUNCED)) & e_bounce_self
@@ -280,7 +278,7 @@ class RallyCommand(CommandTerm):
       new_end, torch.full_like(self.phase, int(BallPhase.POINT_END)), self.phase
     )
 
-    # --- Metric accumulation --------------------------------------------
+    # --- 指标累积 ---------------------------------------------------
     self.metrics["points_won"] += (new_end & self_win).float()
     self.metrics["valid_hits"] += valid_hit_now.float()
     self.metrics["over_net"] += has_event(flags, EventCode.CROSSED_NET_TO_OPP).float()

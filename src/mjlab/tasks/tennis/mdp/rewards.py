@@ -1,4 +1,4 @@
-"""Reward terms for tennis latent-control tasks."""
+"""网球潜变量控制任务的奖励项。"""
 
 from __future__ import annotations
 
@@ -27,21 +27,21 @@ def racket_ball_distance_exp(
   ball_cfg: SceneEntityCfg = _BALL_CFG,
   robot_cfg: SceneEntityCfg = _ROBOT_CFG,
 ) -> torch.Tensor:
-  """Dense reward for bringing the racket center close to the ball."""
+  """将球拍中心带近球的密集奖励。"""
   delta_b = racket_to_ball_b(env, racket_cfg, ball_cfg, robot_cfg)
   error = torch.sum(torch.square(delta_b), dim=-1)
   return torch.exp(-error / std**2)
 
 
 def termination_term(env: ManagerBasedRlEnv, term_name: str) -> torch.Tensor:
-  """Return a termination mask as a float reward signal."""
+  """将终止掩码作为浮点奖励信号返回。"""
   return env.termination_manager.get_term(term_name).float()
 
 
 def termination_terms_any(
   env: ManagerBasedRlEnv, term_names: tuple[str, ...]
 ) -> torch.Tensor:
-  """Return 1 if any named termination term fired this step."""
+  """如果本步任何指定终止项激活，则返回 1。"""
   if len(term_names) == 0:
     return torch.zeros(env.num_envs, dtype=torch.float, device=env.device)
   stacked = torch.stack(
@@ -51,7 +51,7 @@ def termination_terms_any(
 
 
 class approach_ball_pre_hit(TennisHitStateTerm):
-  """Dense reward for approaching the ball before the first valid hit."""
+  """首次有效击球前走近球的密集奖励。"""
 
   def __init__(self, cfg: RewardTermCfg, env: ManagerBasedRlEnv):
     super().__init__(cfg, env)
@@ -84,7 +84,7 @@ class approach_ball_pre_hit(TennisHitStateTerm):
 
 
 class closing_ball_pre_hit(TennisHitStateTerm):
-  """Reward racket velocity that closes the distance to the incoming ball."""
+  """奖励球拍速度向来球靠近的分量。"""
 
   def __init__(self, cfg: RewardTermCfg, env: ManagerBasedRlEnv):
     super().__init__(cfg, env)
@@ -127,7 +127,7 @@ class closing_ball_pre_hit(TennisHitStateTerm):
 
 
 class first_valid_hit_reward(TennisHitStateTerm):
-  """Large sparse reward for the first valid directional hit."""
+  """首次有效定向击球的大稀疏奖励。"""
 
   def __init__(self, cfg: RewardTermCfg, env: ManagerBasedRlEnv):
     super().__init__(cfg, env)
@@ -155,7 +155,7 @@ class first_valid_hit_reward(TennisHitStateTerm):
 
 
 class post_hit_ball_leftward_speed(TennisHitStateTerm):
-  """Reward sustaining post-hit ball velocity toward the target side."""
+  """奖励击球后球的速度持续指向目标侧。"""
 
   def __init__(self, cfg: RewardTermCfg, env: ManagerBasedRlEnv):
     super().__init__(cfg, env)
@@ -190,7 +190,7 @@ def low_level_action_rate_l2(
   env: ManagerBasedRlEnv,
   action_name: str,
 ) -> torch.Tensor:
-  """Penalize changes in decoded low-level joint actions."""
+  """惩罚解码后低层关节动作的变化。"""
   term = env.action_manager.get_term(action_name)
   action = getattr(term, "low_level_action", None)
   prev_action = getattr(term, "prev_low_level_action", None)
@@ -202,7 +202,7 @@ def low_level_action_rate_l2(
 
 
 # ---------------------------------------------------------------------------
-# Rally-command-driven rewards (used by the new return task).
+# 回球指令驱动的奖励（用于新回球任务）。
 # ---------------------------------------------------------------------------
 
 
@@ -210,7 +210,7 @@ def rally_point_won(
   env: ManagerBasedRlEnv,
   command_name: str = "rally",
 ) -> torch.Tensor:
-  """+1 on the step the player wins a point, 0 otherwise."""
+  """玩家得分的步骤返回 +1，其他情况返回 0。"""
   from mjlab.tasks.tennis.mdp.commands import RallyCommand
 
   rally = env.command_manager.get_term(command_name)
@@ -222,7 +222,7 @@ def rally_point_lost(
   env: ManagerBasedRlEnv,
   command_name: str = "rally",
 ) -> torch.Tensor:
-  """+1 on the step the opponent wins a point (penalty when used with neg weight)."""
+  """对手得分的步骤返回 +1（配合负权重用作惩罚）。"""
   from mjlab.tasks.tennis.mdp.commands import RallyCommand
 
   rally = env.command_manager.get_term(command_name)
@@ -234,21 +234,19 @@ def rally_valid_hit_event(
   env: ManagerBasedRlEnv,
   command_name: str = "rally",
 ) -> torch.Tensor:
-  """Edge reward: +1 only on the single step where a *valid* hit is first registered.
+  """边缘奖励：仅在首次登记到「有效」击球的单步返回 +1。
 
-  Bug fix: previous version combined ``hit_now & has_valid_hit``, which fired
-  on every subsequent contact after the first valid hit. Correct logic is to
-  check ``valid_hit_now`` — the edge that occurs only when the hit *becomes*
-  valid (speed thresholds satisfied at the moment of racket contact).
+  错误修复：之前的版本组合了 ``hit_now & has_valid_hit``，导致首次
+  有效击球后的每次后续接触都会触发。正确的逻辑是检查
+  ``valid_hit_now``——仅当击球「变为」有效时（球拍接触时速度閘值满足）才会出现的边缘。
   """
   from mjlab.tasks.tennis.mdp.commands import RallyCommand
   from mjlab.tasks.tennis.mdp.events import EventCode, has_event
 
   rally = env.command_manager.get_term(command_name)
   assert isinstance(rally, RallyCommand)
-  # ``valid_hit_now`` is computed inside _step_fsm and stored as the edge that
-  # caused has_valid_hit to first become True. We re-derive it here from the
-  # event flags (RACKET_HIT) plus per-step velocity state on the ball.
+  # ``valid_hit_now`` 在 _step_fsm 内部计算，存储为首次使 has_valid_hit 变为 True 的边缘。
+  # 此处从事件标志（RACKET_HIT）以及球的每步速度状态重新推导。
   hit_now = has_event(rally.last_events, EventCode.RACKET_HIT)
   ball = env.scene[rally.cfg.ball_cfg.name]
   ball_lin = ball.data.root_link_lin_vel_w
@@ -266,10 +264,10 @@ def rally_over_net_event(
   env: ManagerBasedRlEnv,
   command_name: str = "rally",
 ) -> torch.Tensor:
-  """Edge reward: +1 when the ball crosses the net toward the opponent.
+  """边缘奖励：球过网向对手侧时返回 +1。
 
-  Bug fix: gated to RETURN phase so it only fires after a valid hit, not during
-  incoming ball flight (which also triggers CROSSED_NET_TO_OPP on approach).
+  错误修复：将触发限制在 RETURN 阶段，从而确保它仅在有效击球后触发，
+  而不是在入球飞行时（入球近距也会触发 CROSSED_NET_TO_OPP）。
   """
   from mjlab.tasks.tennis.mdp.commands import BallPhase, RallyCommand
   from mjlab.tasks.tennis.mdp.events import EventCode, has_event
@@ -290,11 +288,10 @@ def rally_approach_ball_pre_hit(
   ball_cfg: SceneEntityCfg = _BALL_CFG,
   robot_cfg: SceneEntityCfg = _ROBOT_CFG,
 ) -> torch.Tensor:
-  """Dense approach reward gated to phases where the ball is incoming (pre-hit).
+  """仅在来球阶段（击球前）开启的密集接近奖励。
 
-  Bug fix: plain ``racket_ball_distance_exp`` has no phase mask, so it keeps
-  rewarding after the ball has been struck and is flying away, which creates a
-  gradient toward chasing the departing ball. Gate to SERVE/IN_FLIGHT/BOUNCED.
+  错误修复：纯 ``racket_ball_distance_exp`` 没有阶段掩码，击球后球飞离时
+  仍继续奖励，导致产生追逐离开的球的梯度。将限制至 SERVE/IN_FLIGHT/BOUNCED 阶段。
   """
   from mjlab.tasks.tennis.mdp.commands import BallPhase, RallyCommand
 
@@ -315,13 +312,12 @@ def rally_hit_ball_speed_bonus(
   max_speed: float = 8.0,
   ball_cfg: SceneEntityCfg = _BALL_CFG,
 ) -> torch.Tensor:
-  """One-shot speed bonus on the valid-hit edge.
+  """有效击球边缘时的一次性速度奖励。
 
-  Bug fix for ``post_hit_ball_leftward_speed``: that term fired every step
-  after a valid hit, but episodes typically terminate on the same or next
-  step after ``successful_return``, so the dense term accumulated ~0 integral.
-  Replacing with an edge-based bonus that fires once makes the shaping signal
-  reliable and removes the erroneous post-termination reward.
+  修复 ``post_hit_ball_leftward_speed`` 的错误：该项在每次有效击球后的每步都会
+  触发，但回合通常在 ``successful_return`` 后的同一步或下一步终止，
+  因此密集项积分约为 0。改用一次性边缘奖励可使形塑信号可靠，
+  并消除错误的终止后奖励。
   """
   from mjlab.tasks.tennis.mdp.commands import RallyCommand
   from mjlab.tasks.tennis.mdp.events import EventCode, has_event
@@ -335,7 +331,7 @@ def rally_hit_ball_speed_bonus(
 
 
 # ---------------------------------------------------------------------------
-# Refactored Hit-task rewards (built on TennisRallyTracker).
+# 重构后的击球任务奖励（基于 TennisRallyTracker）。
 # ---------------------------------------------------------------------------
 
 from mjlab.tasks.tennis.mdp.hit_state import TennisRallyTrackerTerm  # noqa: E402
@@ -348,17 +344,16 @@ def racket_to_ball_distance_dense(
   ball_cfg: SceneEntityCfg = _BALL_CFG,
   robot_cfg: SceneEntityCfg = _ROBOT_CFG,
 ) -> torch.Tensor:
-  """Always-on dense reward for racket-to-ball proximity.
+  """常开的球拍到球距离密集奖励。
 
-  Unlike :func:`approach_ball_pre_hit`, this term has no phase mask: it
-  rewards proximity throughout the episode, which works for the simplified
-  Hit task that ends on the first major ball event anyway.
+  与 :func:`approach_ball_pre_hit` 不同，该项没有阶段掩码：全回合奖励距离，
+  适用于简化击球任务（该任务在首个重大球事件时就会结束）。
   """
   return racket_ball_distance_exp(env, std, racket_cfg, ball_cfg, robot_cfg)
 
 
 class racket_hit_event(TennisRallyTrackerTerm):
-  """Sparse one-shot reward for the first racket-ball contact."""
+  """首次球拍接触的稀疏一次性奖励。"""
 
   def __init__(self, cfg: RewardTermCfg, env: ManagerBasedRlEnv):
     super().__init__(cfg, env)
@@ -374,12 +369,12 @@ class racket_hit_event(TennisRallyTrackerTerm):
   ) -> torch.Tensor:
     del env, sensor_name, ball_cfg, force_threshold, ground_z, net_x
     t = self.tracker
-    # Only reward the very first racket hit (count incremented this step).
+    # 仅奖励第一次球拍击球（本步计数递增）。
     return (t.racket_hit_edge & (t.racket_hit_count == 1)).float()
 
 
 class crossed_net_event(TennisRallyTrackerTerm):
-  """Sparse one-shot reward when the ball first crosses the net after a hit."""
+  """球在击球后首次过网的稀疏一次性奖励。"""
 
   def __init__(self, cfg: RewardTermCfg, env: ManagerBasedRlEnv):
     super().__init__(cfg, env)

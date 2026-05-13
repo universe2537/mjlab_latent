@@ -1,4 +1,4 @@
-"""Action terms for tennis latent-control tasks."""
+"""网球潜变量控制任务的动作项。"""
 
 from __future__ import annotations
 
@@ -17,28 +17,28 @@ from mjlab.tasks.distillation.rl.obs_slicer import ObservationSlicer
 
 @dataclass(kw_only=True)
 class FrozenDecoderLatentJointPositionActionCfg(ActionTermCfg):
-  """Decode a high-level latent action into low-level joint-position actions."""
+  """将高层潜变量动作解码为低层关节位置动作。"""
 
   actuator_names: tuple[str, ...] | list[str]
-  """Actuator name patterns controlled by the frozen decoder output."""
+  """冻结解码器输出所控制的执行器名称模式。"""
   scale: float | dict[str, float] = 1.0
-  """Low-level joint action scale applied after decoding."""
+  """解码后施加的低层关节动作缩放系数。"""
   offset: float | dict[str, float] = 0.0
-  """Low-level joint action offset applied after decoding."""
+  """解码后施加的低层关节动作偏置。"""
   use_default_offset: bool = True
-  """Use robot default joint positions as the low-level offset."""
+  """以机器人默认关节位置作为低层偏置。"""
   latent_dim: int = 16
-  """Dimension of the high-level action passed in by PPO."""
+  """PPO 传入的高层动作维度。"""
   decoder_checkpoint: str = ""
-  """Path to an online distillation checkpoint containing a decoder."""
+  """包含解码器的在线蒸馏检查点路径。"""
   decoder_state_terms: tuple[str, ...] = ()
-  """Observation terms sliced and passed to ``LatentStudentModel.decode``."""
+  """切片后传递给 ``LatentStudentModel.decode`` 的观测项。"""
   decoder_obs_group: str = "actor"
-  """Observation group containing ``decoder_state_terms``."""
+  """包含 ``decoder_state_terms`` 的观测组名称。"""
   strict_checkpoint_load: bool = True
-  """Whether to strictly load the distillation model checkpoint."""
+  """是否严格加载蒸馏模型检查点。"""
   target_dim: int = 67
-  """Fallback posterior target dim used when no checkpoint is available."""
+  """无检查点时使用的后验目标维度（回退值）。"""
   encoder_hidden_dims: tuple[int, ...] = (512, 256)
   prior_hidden_dims: tuple[int, ...] = (512, 256)
   decoder_hidden_dims: tuple[int, ...] = (512, 256)
@@ -54,7 +54,7 @@ class FrozenDecoderLatentJointPositionActionCfg(ActionTermCfg):
 
 
 class FrozenDecoderLatentJointPositionAction(ActionTerm):
-  """Action term that exposes latent actions and applies decoded joint targets."""
+  """暴露潜变量动作并应用解码后关节目标的动作项。"""
 
   cfg: FrozenDecoderLatentJointPositionActionCfg
 
@@ -170,7 +170,7 @@ class FrozenDecoderLatentJointPositionAction(ActionTerm):
       state_dim=state_dim,
       # base_lin_vel, base_ang_vel, joint_pos, joint_vel, actions =3+3+29+29+29=93
       target_dim=target_dim,
-      # motion_anchor_pos_b, motion_anchor_ori_b, command = 3+6+58=67
+      # motion_anchor_pos_b, motion_anchor_ori_b, command = 3+6+58=67（目标维度注释）
       action_dim=self.low_level_action_dim,
       latent_dim=self.cfg.latent_dim,
       encoder_hidden_dims=tuple(model_cfg["encoder_hidden_dims"]),

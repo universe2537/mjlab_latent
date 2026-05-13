@@ -1,25 +1,24 @@
-"""Robot-agnostic tennis Hit task configuration (refactored).
+"""与机器人无关的网球击球任务配置（重构版）。
 
-Refactor highlights
+重构亮点
 -------------------
-* **Court** : G1-scaled tennis court built in :mod:`mjlab.tasks.tennis.scene`
-              (14 m x 4.8 m total, net center 0.52 m).  See ``scene.py``.
-* **Ball generation** : :class:`RandomFeederCfg` ballistic-trajectory feeder.
-              Ball spawns above the net, target landing point is sampled on
-              the robot's side, vz is sampled, and (vx, vy) are computed
-              analytically from the kinematic inverse so the ball arcs into
-              the target.
-* **Terminations** :
-              - ball out of court bounds
-              - ball's second contact (racket OR ground)
-              - ball successfully crosses the net after a hit
-              - robot bad orientation / fell over
-* **Rewards** : approach (1x), racket_hit_event (10x), crossed_net_event (100x),
-              plus standard penalties (joint limits, torques, action rate, etc.).
-* **Observations** :
-              - **actor**: noisy proprioception + ball position window of 10
-              - **critic**: full clean state (proprioception + ball/racket
-                pos+vel + relative vector + predicted landing)
+* **球场** : G1 比例网球场，由 :mod:`mjlab.tasks.tennis.scene` 构建
+              （总长 14 m × 4.8 m，网中央高 0.52 m）。参见 ``scene.py``。
+* **发球逻辑** : :class:`RandomFeederCfg` 弹道轨迹发球器。
+              球生成于网上方，机器人侧落点随机采样，
+              vz 随机采样，(vx, vy) 由运动学逆解析解确定，
+              使球以弧线落入目标区域。
+* **终止条件** :
+              - 球超出球场边界
+              - 球发生第二次接触（球拍或地面）
+              - 击球后球成功越过球网
+              - 机器人姿态异常 / 倒地
+* **奖励** : 接近奖励（1×），球拍击球事件（10×），越网事件（100×），
+              以及标准惩罚（关节限位、扭矩、动作变化率等）。
+* **观测** :
+              - **actor**: 带噪声本体感知 + 10 步球位置窗口
+              - **critic**: 完整干净状态（本体感知 + 球/球拍速度 +
+                相对向量 + 预测落点）
 """
 
 from __future__ import annotations
@@ -52,7 +51,7 @@ from mjlab.utils.noise import UniformNoiseCfg as Unoise
 from mjlab.viewer import ViewerConfig
 
 # ---------------------------------------------------------------------------
-# Scene-entity configs (resolved at runtime by the scene).
+# 场景实体配置（在运行时由场景解析）。
 # ---------------------------------------------------------------------------
 _ROBOT_CFG = SceneEntityCfg("robot", joint_names=(".*",))
 _RACKET_CFG = SceneEntityCfg("robot", site_names=("tennis_racket_center",))
@@ -61,28 +60,28 @@ _COURT_CFG = SceneEntityCfg("court")
 _RACKET_BALL_SENSOR = "racket_ball_contact"
 
 # ---------------------------------------------------------------------------
-# Robot reset (mid-court self side, facing the net).
+# 机器人复位（己方半场中部，面向球网）。
 # ---------------------------------------------------------------------------
 ROBOT_RESET_X_RANGE = (3.5, 4.5)
 ROBOT_RESET_Y_RANGE = (-0.4, 0.4)
-ROBOT_RESET_YAW = math.pi  # face -x (toward the net / opponent)
+ROBOT_RESET_YAW = math.pi  # 面向 -x 方向（朝向球网 / 对手）
 
 # ---------------------------------------------------------------------------
-# Tracker thresholds.
+# 追踪器阈值。
 # ---------------------------------------------------------------------------
 HIT_FORCE_THRESHOLD = 1.0
-GROUND_Z = 0.06  # ball-radius (~0.034) + small margin
+GROUND_Z = 0.06  # 球半径（约 0.034）加小余量
 NET_X = 0.0
 
 # ---------------------------------------------------------------------------
-# Court bounds for "ball out of play" (slightly looser than painted lines).
+# 球出界判定边界（比实际线条略宽松）。
 # ---------------------------------------------------------------------------
 COURT_OUT_X_LIMITS = (-COURT_HALF_LENGTH - 1.0, BASELINE_SELF_X + 1.0)
 COURT_OUT_Y_LIMITS = (-COURT_HALF_WIDTH - 0.5, COURT_HALF_WIDTH + 0.5)
 COURT_OUT_Z_LIMITS = (0.02, 3.0)
 
 # ---------------------------------------------------------------------------
-# Frozen low-level decoder state terms (must match distillation checkpoint).
+# 冻结低层解码器的状态项（必须与蒸馏检查点一致）。
 # ---------------------------------------------------------------------------
 DECODER_STATE_TERMS = (
   "base_lin_vel",
@@ -93,10 +92,9 @@ DECODER_STATE_TERMS = (
 )
 
 # ---------------------------------------------------------------------------
-# Legacy constants kept for backward compatibility with the Rally / Return
-# task (return_env_cfg.py).  They are *not* used by the refactored Hit task,
-# whose terminations are based on the simpler TennisRallyTracker (second
-# contact / over-net) instead of the speed-thresholded "valid hit" notion.
+# 遗留常量，保留以向后兼容 Rally / Return 任务（return_env_cfg.py）。
+# 重构后的 Hit 任务**不使用**这些常量——其终止逻辑基于更简单的
+# TennisRallyTracker（第二次接触 / 越网），而非速度阈值化的"有效击球"概念。
 # ---------------------------------------------------------------------------
 VALID_HIT_MIN_LEFTWARD_SPEED = 2.0
 VALID_HIT_MIN_BALL_SPEED = 2.5
@@ -106,17 +104,15 @@ MISS_BALL_X_DIRECTION = 1.0
 
 
 def make_tennis_latent_env_cfg() -> ManagerBasedRlEnvCfg:
-  """Create the refactored Hit task with a frozen low-level latent decoder.
+  """创建重构后的击球任务，使用冻结低层潜变量解码器。
 
-  Robot-specific modules fill in the robot asset, action scale, and viewer
-  body. The actor sees decoder-compatible proprioception (with noise) plus
-  a 10-step window of the ball position; the critic sees the same
-  proprioception (clean) augmented with ball/racket velocities and the
-  predicted ball landing point.
+  机器人专属模块负责填充机器人资产、动作缩放和视角主体。
+  actor 接收解码器兼容的本体感知（带噪声）以及 10 步球位置窗口；
+  critic 接收相同的本体感知（无噪声），并追加球/球拍速度和预测落点。
   """
   # -------------------------------------------------------------------------
-  # Decoder-compatible proprioception (shared between actor / critic).
-  # The action term will slice exactly DECODER_STATE_TERMS from the actor obs.
+  # 解码器兼容的本体感知（actor 与 critic 共用）。
+  # 动作项将从 actor 观测中精确切出 DECODER_STATE_TERMS。
   # -------------------------------------------------------------------------
   proprio_actor = {
     "base_lin_vel": ObservationTermCfg(
@@ -145,9 +141,9 @@ def make_tennis_latent_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
   }
 
-  # ---- Actor: noisy proprioception + ball position with 10-step window ---
+  # ---- Actor：带噪声本体感知 + 10 步球位置窗口 ---
   actor_terms = dict(proprio_actor)
-  # Ball position relative to robot base, last 10 frames (flattened => 30 dims).
+  # 球相对于机器人底部的位置，最近 10 帧（展平后 => 30 维）。
   actor_terms["ball_pos_window"] = ObservationTermCfg(
     func=mdp.racket_to_ball_b,
     params={
@@ -160,7 +156,7 @@ def make_tennis_latent_env_cfg() -> ManagerBasedRlEnvCfg:
     flatten_history_dim=True,
   )
 
-  # ---- Critic: clean proprioception + as much state as possible ----------
+  # ---- Critic：干净本体感知 + 尽可能完整的状态信息 ----------
   critic_terms = {
     name: ObservationTermCfg(func=t.func, params=dict(t.params))
     for name, t in proprio_actor.items()
@@ -204,7 +200,7 @@ def make_tennis_latent_env_cfg() -> ManagerBasedRlEnvCfg:
   }
 
   # -------------------------------------------------------------------------
-  # Actions: latent -> frozen decoder -> joint position commands.
+  # 动作：潜变量 -> 冻结解码器 -> 关节位置指令。
   # -------------------------------------------------------------------------
   actions: dict[str, ActionTermCfg] = {
     "latent_joint_pos": FrozenDecoderLatentJointPositionActionCfg(
@@ -218,7 +214,7 @@ def make_tennis_latent_env_cfg() -> ManagerBasedRlEnvCfg:
   }
 
   # -------------------------------------------------------------------------
-  # Reset events.
+  # 重置事件。
   # -------------------------------------------------------------------------
   events = {
     "reset_robot_base": EventTermCfg(
@@ -247,8 +243,8 @@ def make_tennis_latent_env_cfg() -> ManagerBasedRlEnvCfg:
       func=mdp.spawn_ball_from_provider,
       mode="reset",
       params={
-        # Default ballistic feeder: spawn above the net, target the robot's
-        # service box on the self side.  Override fields per-robot if needed.
+        # 默认弹道发球器：在网上方生成球，目标为机器人侧发球区。
+        # 如有需要可按机器人类型覆盖各字段。
         "provider_cfg": RandomFeederCfg(
           ball_cfg=_BALL_CFG,
           spawn_x_range=(-0.4, 0.4),
@@ -272,7 +268,7 @@ def make_tennis_latent_env_cfg() -> ManagerBasedRlEnvCfg:
   }
 
   # -------------------------------------------------------------------------
-  # Racket-ball contact sensor (drives both rewards and terminations).
+  # 球拍-球接触传感器（驱动奖励与终止条件）。
   # -------------------------------------------------------------------------
   hit_sensor = ContactSensorCfg(
     name=_RACKET_BALL_SENSOR,
@@ -289,8 +285,8 @@ def make_tennis_latent_env_cfg() -> ManagerBasedRlEnvCfg:
   )
 
   # -------------------------------------------------------------------------
-  # Rewards: tiered milestones (1x approach -> 10x hit -> 100x over-net)
-  # plus standard regularizing penalties.
+  # 奖励：分层里程碑（1× 接近 -> 10× 击球 -> 100× 越网）
+  # 加上标准正则化惩罚。
   # -------------------------------------------------------------------------
   tracker_params = {
     "sensor_name": _RACKET_BALL_SENSOR,
@@ -301,10 +297,10 @@ def make_tennis_latent_env_cfg() -> ManagerBasedRlEnvCfg:
   }
 
   rewards = {
-    # --- Goal-driven (tiered) ----------------------------------------------
+    # --- 目标驱动（分层）----------------------------------------------
     "approach_ball": RewardTermCfg(
       func=mdp.racket_to_ball_distance_dense,
-      weight=1.0,
+      weight=5.0,
       params={
         "std": 0.4,
         "racket_cfg": _RACKET_CFG,
@@ -314,17 +310,17 @@ def make_tennis_latent_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
     "racket_hit_event": RewardTermCfg(
       func=mdp.racket_hit_event,
-      weight=10.0,
+      weight=50.0,
       params=dict(tracker_params),
     ),
     "crossed_net_event": RewardTermCfg(
       func=mdp.crossed_net_event,
-      weight=100.0,
+      weight=200.0,
       params=dict(tracker_params),
     ),
-    # --- Survival ----------------------------------------------------------
+    # --- 存活奖励 ----------------------------------------------------------
     "alive": RewardTermCfg(func=mdp.is_alive, weight=0.01),
-    # --- Regularization ----------------------------------------------------
+    # --- 正则化惩罚 ----------------------------------------------------
     "posture": RewardTermCfg(
       func=mdp.posture,
       weight=0.2,
@@ -362,7 +358,7 @@ def make_tennis_latent_env_cfg() -> ManagerBasedRlEnvCfg:
       weight=-0.02,
       params={"action_name": "latent_joint_pos"},
     ),
-    # --- Failure penalties (turn termination edges into negative reward) --
+    # --- 失败惩罚（将终止边沿转为负奖励）--
     "fall_penalty": RewardTermCfg(
       func=mdp.termination_terms_any,
       weight=-200.0,
@@ -381,12 +377,12 @@ def make_tennis_latent_env_cfg() -> ManagerBasedRlEnvCfg:
   }
 
   # -------------------------------------------------------------------------
-  # Terminations.
+  # 终止条件。
   # -------------------------------------------------------------------------
   terminations = {
     "time_out": TerminationTermCfg(func=mdp.time_out, time_out=True),
     "nan_detection": TerminationTermCfg(func=mdp.nan_detection),
-    # Robot pose failures.
+    # 机器人姿态失败。
     "bad_orientation": TerminationTermCfg(
       func=mdp.bad_orientation,
       params={"limit_angle": math.radians(70.0)},
@@ -395,7 +391,7 @@ def make_tennis_latent_env_cfg() -> ManagerBasedRlEnvCfg:
       func=mdp.root_height_below_minimum,
       params={"minimum_height": 0.45},
     ),
-    # Ball-event terminations (refactored).
+    # 球事件终止条件（重构版）。
     "ball_out_of_bounds": TerminationTermCfg(
       func=mdp.ball_in_play,
       params={

@@ -1,13 +1,11 @@
-"""Curriculum scaffolding for the tennis return task.
+"""网球回球任务的课程脂手架。
 
-These functions are intended to be wired into ``ManagerBasedRlEnvCfg.curriculum``
-once the base policy reaches a non-trivial success rate. They read metrics
-that ``RallyCommand`` accumulates (points won, valid hits, over-net rate)
-and call into ``rally.provider.bump_difficulty(key)`` to widen sampling
-ranges.
+这些函数旨在基础策略达到一定成功率后，接入到
+``ManagerBasedRlEnvCfg.curriculum``。它们读取 ``RallyCommand`` 累积的指标
+（得分数、有效击球次数、越网率），并调用
+``rally.provider.bump_difficulty(key)`` 来拓宽采样范围。
 
-Each curriculum function returns either ``None`` or a small ``dict`` of
-scalar metrics; the curriculum manager logs whatever is returned.
+每个课程函数返回 ``None`` 或小型 ``dict`` 标量；课程管理器将记录返回内容。
 """
 
 from __future__ import annotations
@@ -32,10 +30,10 @@ def ball_speed_curriculum(
   success_threshold: float = 0.5,
   bump_size: float = 0.05,
 ) -> dict[str, float]:
-  """Widen the incoming ball-speed range when valid-hit rate is high enough.
+  """有效击球率足够高时拓宽入球速度范围。
 
-  Reads ``rally.metrics["valid_hits"]``; if the recent mean exceeds
-  ``success_threshold`` shots-per-episode, calls ``bump_difficulty``.
+  读取 ``rally.metrics["valid_hits"]``；若近期均値超过
+  ``success_threshold`` 次/回合，则调用 ``bump_difficulty``。
   """
   rally = _get_rally(env, command_name)
   vh_mean = float(rally.metrics["valid_hits"].mean().item())
@@ -52,7 +50,7 @@ def ball_angle_spread_curriculum(
   success_threshold: float = 0.5,
   bump_size: float = 0.05,
 ) -> dict[str, float]:
-  """Widen the lateral spread of incoming balls."""
+  """有效击球率足够高时拓宽入球横向分布。"""
   rally = _get_rally(env, command_name)
   vh_mean = float(rally.metrics["valid_hits"].mean().item())
   if vh_mean >= success_threshold:
@@ -68,7 +66,7 @@ def opponent_level_curriculum(
   win_threshold: float = 0.6,
   bump_size: float = 0.05,
 ) -> dict[str, float]:
-  """Tighten the opponent's flight time when the player is winning enough."""
+  """玩家得分率足够高时压缩对手的飞行时间。"""
   rally = _get_rally(env, command_name)
   pw_mean = float(rally.metrics["points_won"].mean().item())
   if pw_mean >= win_threshold:

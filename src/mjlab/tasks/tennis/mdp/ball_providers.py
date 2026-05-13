@@ -1,21 +1,18 @@
-"""Pluggable ball providers (P0 Fixed / P1 RandomFeeder / P2 BallisticOpponent).
+"""可插拔球提供器（P0 固定 / P1 随机发球器 / P2 弹道对手）。
 
-A *ball provider* is a strategy object owned by :class:`RallyCommand` that is
-responsible for two things:
+*球提供器* 是 :class:`RallyCommand` 拥有的策略对象，负责两件事：
 
-1. **Spawning** the ball at the start of each point (``spawn``).
-2. Optionally **responding** during a point — e.g., an opponent agent that
-   returns the ball after the player hits it (``respond``).
+1. 在每个回合开始时**生成**球（``spawn``）。
+2. 可选地在回合过程中**回应**——例如在玩家击球后返回球的对手智能体（``respond``）。
 
-The abstract base class makes both methods hookable so that high-level tasks
-can be composed by swapping providers without touching reward/termination
-logic.
+抽象基类让两个方法均可被钩入，从而高层任务可以通过
+更换提供器来组合行为，而无需修改奖励/终止逻辑。
 
-Difficulty knobs
+难度旋钮
 ----------------
-``BallProvider.bump_difficulty(key)`` is invoked by curriculum terms to
-nudge sampling ranges (e.g., wider speed range) over the course of training.
-Concrete providers decide how to react.
+``BallProvider.bump_difficulty(key)`` 由课程项调用，
+以逐步调整采样范围（例如更宽的速度范围）。
+具体的提供器决定如何响应。
 """
 
 from __future__ import annotations
@@ -36,7 +33,7 @@ if TYPE_CHECKING:
 
 
 # ---------------------------------------------------------------------------
-# Spawn helper.
+# 生成辅助函数。
 # ---------------------------------------------------------------------------
 
 
@@ -49,7 +46,7 @@ def _write_ball_state(
   lin_vel: torch.Tensor,
   ang_vel: torch.Tensor,
 ) -> None:
-  """Write a ball pose+twist (env-local frame) into the simulator."""
+  """将球的位姿+速度（环境局部坐标系）写入仿真器。"""
   origins = env.scene.env_origins[env_ids]
   pos_w = pos_l + origins
   pose = torch.cat([pos_w, quat], dim=-1)  # (k, 7)
@@ -59,23 +56,23 @@ def _write_ball_state(
 
 
 # ---------------------------------------------------------------------------
-# Abstract interface.
+# 抽象接口。
 # ---------------------------------------------------------------------------
 
 
 @dataclass(kw_only=True)
 class BallProviderCfg(abc.ABC):
-  """Abstract base config for a ball provider."""
+  """球提供器的抽象基础配置。"""
 
   ball_cfg: SceneEntityCfg = field(default_factory=lambda: SceneEntityCfg("ball"))
 
   @abc.abstractmethod
   def build(self, env: "ManagerBasedRlEnv") -> "BallProvider":
-    """Instantiate the runtime provider object."""
+    """实例化运行时提供器对象。"""
 
 
 class BallProvider(abc.ABC):
-  """Strategy object that spawns the ball (and optionally responds)."""
+  """负责生成球（可选在回合中响应）的策略对象。"""
 
   cfg: BallProviderCfg
 
@@ -85,29 +82,29 @@ class BallProvider(abc.ABC):
     self._ball: Entity = env.scene[cfg.ball_cfg.name]
     self._difficulty = 0.0
 
-  # --- Lifecycle hooks --------------------------------------------------
+  # --- 生命周期钩子 --------------------------------------------------
 
   @abc.abstractmethod
   def spawn(self, env_ids: torch.Tensor) -> None:
-    """Place the ball at the start of a new point for ``env_ids``."""
+    """在新回合开始时为 ``env_ids`` 中的环境放置球。"""
 
   def respond(self, env_ids: torch.Tensor) -> None:  # noqa: B027
-    """Optional in-rally response (e.g., opponent return). Default no-op."""
+    """可选的回合内响应（例如对手回球）。默认空操作。"""
 
   def reset(self, env_ids: torch.Tensor) -> None:  # noqa: B027
-    """Optional internal-state reset (default no-op)."""
+    """可选的内部状态重置（默认空操作）。"""
 
-  # --- Curriculum hooks -------------------------------------------------
+  # --- 课程钩子 -------------------------------------------------
 
   def bump_difficulty(self, key: str, delta: float = 0.05) -> None:  # noqa: ARG002
-    """Increase difficulty. Subclasses override to widen sampling ranges."""
+    """提升难度。子类覆盖此方法以扩宽采样范围。"""
     self._difficulty = min(1.0, self._difficulty + delta)
 
   @property
   def difficulty(self) -> float:
     return self._difficulty
 
-  # --- Convenience ------------------------------------------------------
+  # --- 便捷属性 ------------------------------------------------------
 
   @property
   def device(self) -> str | torch.device:
@@ -119,15 +116,15 @@ class BallProvider(abc.ABC):
 
 
 # ---------------------------------------------------------------------------
-# P0: Fixed spawn — single deterministic state.
+# P0：固定生成——单一确定性状态。
 # ---------------------------------------------------------------------------
 
 
 @dataclass(kw_only=True)
 class FixedSpawnerCfg(BallProviderCfg):
-  """Spawn the ball at a fixed pose and velocity every point.
+  """每回合在固定位姿和速度下生成球。
 
-  Useful for unit tests, debugging reward shaping, and evaluation.
+  适用于单元测试、奖励塑形调试和评估。
   """
 
   pos: tuple[float, float, float] = (1.5, 0.0, 1.0)
@@ -151,57 +148,52 @@ class FixedSpawner(BallProvider):
 
 
 # ---------------------------------------------------------------------------
-# P1: Random feeder — ballistic trajectory from spawn region to target zone.
+# P1：随机发球器——从生成区到目标区的弹道轨迹。
 # ---------------------------------------------------------------------------
 
 
 @dataclass(kw_only=True)
 class RandomFeederCfg(BallProviderCfg):
-  """Spawn the ball in a configurable region and send it toward a random landing target.
+  """在可配置区域生成球，并将其射向随机落点。
 
-  The ball is placed at a random position within ``[spawn_x_range, spawn_y_range,
-  spawn_z_range]`` (default: above the net). A 2-D landing target is sampled
-  uniformly within ``[target_x_range, target_y_range]`` on the ground (z = 0).
-  The vertical launch speed ``vz0`` is sampled from ``lin_vel_z_range``; the
-  horizontal components (vx, vy) are then solved analytically so that the ball
-  reaches the target at z = 0 under constant gravity.
+  球放置在 ``[spawn_x_range, spawn_y_range, spawn_z_range]`` 内的随机位置
+  （默认：网上方）。落点从地面（z = 0）的 ``[target_x_range, target_y_range]``
+  内均匀采样。竖直发射速度 ``vz0`` 从 ``lin_vel_z_range`` 采样；
+  水平分量 (vx, vy) 通过解析解确定，使球在重力下落到目标点。
 
-  Solving for flight time ``t`` from the z-equation::
+  从 z 方程求解飞行时间 ``t``::
 
       z0 + vz0 * t - 0.5 * g * t^2 = 0
-      t = (vz0 + sqrt(vz0^2 + 2 * g * z0)) / g   (positive root)
+      t = (vz0 + sqrt(vz0^2 + 2 * g * z0)) / g   （正根）
 
-  Then::
+  然后::
 
       vx = (target_x - spawn_x) / t
       vy = (target_y - spawn_y) / t
 
-  Defaults place the spawn region directly above the net (x ≈ 0) and target
-  the robot's side of the court (x ∈ (0.5, 2.5)), so the ball always flies
-  toward the player.
+  默认将生成区置于网正上方（x ≈ 0），目标在机器人侧球场（x ∈ (0.5, 2.5)），
+  确保球始终朝玩家飞来。
 
-  Curriculum knobs
+  课程旋钮
   ----------------
-  ``bump_difficulty("ball_speed")`` tightens flight time by widening
-  ``lin_vel_z_range`` (larger vz0 → higher arc → more time to react declines
-  as arc flattens with further bumps).
-  ``bump_difficulty("ball_lateral")`` widens ``target_y_range``.
+  ``bump_difficulty("ball_speed")`` 通过扩宽 ``lin_vel_z_range`` 来压缩飞行时间
+  （更大的 vz0 → 更高弧线 → 随后进一步收缩时反应时间减少）。
+  ``bump_difficulty("ball_lateral")`` 扩宽 ``target_y_range``。
   """
 
-  # Spawn region (ball starting position) -- default: above the net.
+  # 生成区（球的起始位置）——默认：网上方。
   spawn_x_range: tuple[float, float] = (-0.4, 0.4)
   spawn_y_range: tuple[float, float] = (-2.0, 2.0)
   spawn_z_range: tuple[float, float] = (1.0, 1.6)
 
-  # Target landing region on the ground (z = 0) -- default: robot side service box.
+  # 地面（z = 0）上的目标落点区域——默认：机器人侧发球区。
   target_x_range: tuple[float, float] = (1.0, 4.0)
   target_y_range: tuple[float, float] = (-2.0, 2.0)
 
-  # Vertical launch speed.  Positive = upward arc; must be large enough
-  # so the ball actually reaches the landing zone (not hit the ground immediately).
+  # 竖直发射速度。正值 = 向上弧线；需足够大以使球确实到达落点（不立即落地）。
   lin_vel_z_range: tuple[float, float] = (1.5, 3.5)
 
-  # Physical constant; override for custom gravity environments.
+  # 物理常数；如需自定义重力环境可覆盖。
   gravity: float = 9.81
 
   def build(self, env: "ManagerBasedRlEnv") -> "RandomFeeder":
@@ -221,25 +213,25 @@ class RandomFeeder(BallProvider):
     cfg = self.cfg
     dev = self.device
 
-    # --- Spawn position ---------------------------------------------------
+    # --- 生成位置 ---------------------------------------------------
     px = _uniform(env_ids, *cfg.spawn_x_range, dev)
     py = _uniform(env_ids, *cfg.spawn_y_range, dev)
     pz = _uniform(env_ids, *cfg.spawn_z_range, dev)
 
-    # --- Target landing point (z = 0) -------------------------------------
+    # --- 目标落点（z = 0）------------------------------------
     tx = _uniform(env_ids, *cfg.target_x_range, dev)
     ty = _uniform(env_ids, *cfg.target_y_range, dev)
 
-    # --- Vertical speed ---------------------------------------------------
+    # --- 竖直速度 ---------------------------------------------------
     vz = _uniform(env_ids, *cfg.lin_vel_z_range, dev)
 
-    # --- Solve flight time from z-equation --------------------------------
+    # --- 从 z 方程求解飞行时间 --------------------------------
     # pz + vz*t - 0.5*g*t^2 = 0  =>  t = (vz + sqrt(vz^2 + 2*g*pz)) / g
     g = cfg.gravity
     disc = torch.clamp(vz * vz + 2.0 * g * pz, min=1e-6)
-    flight_t = (vz + torch.sqrt(disc)) / g  # always positive since pz > 0
+    flight_t = (vz + torch.sqrt(disc)) / g  # pz > 0 时始终为正
 
-    # --- Horizontal speeds (kinematic inverse) ----------------------------
+    # --- 水平速度（运动学逆解）----------------------------
     vx = (tx - px) / flight_t
     vy = (ty - py) / flight_t
 
@@ -251,10 +243,10 @@ class RandomFeeder(BallProvider):
     _write_ball_state(self._env, self._ball, env_ids, pos, quat, lin, ang)
 
   def bump_difficulty(self, key: str, delta: float = 0.05) -> None:
-    """Adjust difficulty by modifying target or speed ranges."""
+    """通过修改目标或速度范围来调整难度。"""
     super().bump_difficulty(key, delta)
     if key == "ball_speed":
-      # Flatten the arc by reducing vz upper bound → shorter flight time.
+      # 通过降低 vz 上限来压缩弧线 → 缩短飞行时间。
       lo, hi = self.cfg.lin_vel_z_range
       self.cfg.lin_vel_z_range = (
         max(0.5, lo - delta * 0.5),
@@ -266,24 +258,22 @@ class RandomFeeder(BallProvider):
 
 
 # ---------------------------------------------------------------------------
-# P2: Ballistic opponent — one-shot serve from opponent's side.
+# P2：弹道对手——从对手侧一次性发球。
 # ---------------------------------------------------------------------------
 
 
 @dataclass(kw_only=True)
 class BallisticOpponentCfg(BallProviderCfg):
-  """Compute initial velocity to land ball at a sampled point on self side.
+  """计算初速度，使球落在己方侧的采样点上。
 
-  Solves the projectile motion equations under gravity ``g`` so that a ball
-  launched from ``launch_pos`` reaches ``target_pos`` after ``flight_time``
-  seconds. ``target_pos`` is sampled per-env per-spawn from the configured
-  bounding box.
+  在重力 ``g`` 下求解抛体运动方程：从 ``launch_pos`` 出发，
+  经 ``flight_time`` 秒后到达 ``target_pos``。
+  ``target_pos`` 在每次生成时从配置的边界框中按环境独立采样。
 
-  Notes
+  注意
   -----
-  This is *not* a learned opponent; it's a deterministic ball-feeder that
-  produces realistic incoming arcs. A true opponent agent would replace
-  this provider with one that queries an external policy.
+  这**不是**学习型对手；它是一个确定性发球器，产生逼真的来球弧线。
+  真正的对手智能体需要用查询外部策略的提供器替换本类。
   """
 
   launch_pos: tuple[float, float, float] = (-3.0, 0.0, 1.5)
@@ -338,7 +328,7 @@ class BallisticOpponent(BallProvider):
   def bump_difficulty(self, key: str, delta: float = 0.05) -> None:
     super().bump_difficulty(key, delta)
     if key == "opponent_level":
-      # Tighter flight time → faster, harder-to-reach shots.
+      # 压缩飞行时间 → 更快、更难接到的来球。
       lo, hi = self.cfg.flight_time_range
       self.cfg.flight_time_range = (max(0.3, lo - delta * 0.1), hi)
     elif key == "ball_lateral":
@@ -347,7 +337,7 @@ class BallisticOpponent(BallProvider):
 
 
 # ---------------------------------------------------------------------------
-# Aliases for re-export convenience.
+# 重导出别名（方便使用）。
 # ---------------------------------------------------------------------------
 
 __all__ = [
@@ -361,5 +351,5 @@ __all__ = [
   "BallisticOpponentCfg",
 ]
 
-# Silence unused-import warning when TYPE_CHECKING is off.
+# 消除 TYPE_CHECKING 关闭时的未使用导入警告。
 _ = math

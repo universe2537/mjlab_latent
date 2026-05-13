@@ -1,19 +1,18 @@
-"""Scene helpers for the G1 tennis task.
+"""G1 网球任务的场景辅助函数。
 
-Court layout
+球场布局
 ------------
-The G1 robot is roughly 1.0 m tall (about 0.57x a 1.75 m human player), so the
-court is scaled down from the singles regulation (23.77 m x 8.23 m, net center
-0.914 m) by the same factor:
+G1 机器人约 1.0 m 高（约为 1.75 m 人类球员的 0.57 倍），因此球场按相同比例
+从单打标准（23.77 m × 8.23 m，网中央高 0.914 m）缩小：
 
-  * Total court length : 14.0 m   (each side: 7.0 m from net to baseline)
-  * Singles court width: 4.8 m    (sidelines at y = +/-2.4 m)
-  * Net center height  : 0.52 m
-  * Net post height    : 0.61 m
-  * Service line       : 3.65 m from the net (each side)
+  * 球场总长   : 14.0 m  （每侧：网到底线 7.0 m）
+  * 单打宽度   : 4.8 m   （边线位于 y = ±2.4 m）
+  * 网中央高   : 0.52 m
+  * 网立柱高   : 0.61 m
+  * 发球线距网 : 3.65 m  （每侧）
 
-Robot side ("self") is x in (0, 7),   opponent side ("opp") is x in (-7, 0).
-The net plane sits at x = 0; positive y is the deuce side.
+机器人侧（"self"）x ∈ (0, 7)，对手侧（"opp"）x ∈ (-7, 0)。
+球网平面位于 x = 0；y 正方向为右手侧（deuce side）。
 """
 
 from __future__ import annotations
@@ -25,37 +24,37 @@ from mjlab.terrains import TerrainEntityCfg
 from mjlab.utils import spec_config as spec_cfg
 
 # ---------------------------------------------------------------------------
-# Court geometry constants (re-exported for use by env config / curriculum).
+# 球场几何常量（供环境配置/课程使用，对外重新导出）。
 # ---------------------------------------------------------------------------
 
-# Per-side dimensions.
-COURT_HALF_LENGTH = 7.0  # x extent of one side (net -> baseline)
-COURT_HALF_WIDTH = 2.4  # y extent (singles half-width)
-SERVICE_LINE_FROM_NET = 3.65  # x distance from net to service line
+# 单侧尺寸。
+COURT_HALF_LENGTH = 7.0  # x 方向单侧范围（网到底线）
+COURT_HALF_WIDTH = 2.4  # y 方向范围（单打半宽）
+SERVICE_LINE_FROM_NET = 3.65  # 发球线距网距离
 
-# Net.
+# 球网。
 NET_CENTER_HEIGHT = 0.52
 NET_POST_HEIGHT = 0.61
 NET_HALF_WIDTH = 2.55  # extends slightly beyond singles sidelines
 NET_THICKNESS_HALF = 0.012
 
-# Ball.
+# 网球。
 BALL_RADIUS = 0.0335
 BALL_MASS = 0.057
 BALL_INIT_POS = (0.0, 0.0, 0.0)
 BALL_INIT_LIN_VEL = (0.0, 0.0, 0.0)
 
-# Court line visual half-thickness.
-_LINE_HALF_W = 0.025  # along-court direction (visual)
-_LINE_HALF_H = 0.003  # vertical
+# 球场线视觉半宽（视觉用）。
+_LINE_HALF_W = 0.025  # 沿球场方向（视觉用）
+_LINE_HALF_H = 0.003  # 垂直方向
 
-# X positions of the baselines (each side).
+# 底线的 X 坐标（各侧）。
 BASELINE_SELF_X = COURT_HALF_LENGTH  # +7.0
 BASELINE_OPP_X = -COURT_HALF_LENGTH  # -7.0
 
 
 def get_tennis_ball_spec() -> mujoco.MjSpec:
-  """Return a free tennis ball spec."""
+  """返回一个自由飞行的网球规格对象。"""
   spec = mujoco.MjSpec()
   spec.add_material(name="tennis_ball_mat", rgba=(0.85, 1.0, 0.05, 1.0))
 
@@ -92,11 +91,10 @@ def get_tennis_ball_cfg() -> EntityCfg:
 
 
 def get_tennis_court_spec() -> mujoco.MjSpec:
-  """Build the court (surface, painted lines, net) as a fixed-base entity.
+  """构建球场（地面、线条、球网）为固定基底实体。
 
-  The court is centered on the world origin so the net plane is at x = 0.
-  Per-side regions are symmetric: x in (0, 7) on the robot side and
-  x in (-7, 0) on the opponent side.
+  球场以世界原点为中心，网平面位于 x = 0。
+  两侧对称：机器人侧 x ∈ (0, 7)，对手侧 x ∈ (-7, 0)。
   """
   spec = mujoco.MjSpec()
   spec.add_material(name="court_green", rgba=(0.13, 0.42, 0.22, 1.0))
@@ -126,7 +124,7 @@ def get_tennis_court_spec() -> mujoco.MjSpec:
     geom.contype = 1 if collidable else 0
     geom.conaffinity = 1 if collidable else 0
 
-  # --- Court surface (visual only; ground is provided by the terrain plane) -
+  # --- 球场地面（仅视觉；实际地面由地形平面提供）-
   add_box(
     "court_visual",
     pos=(0.0, 0.0, 0.002),
@@ -134,8 +132,8 @@ def get_tennis_court_spec() -> mujoco.MjSpec:
     material="court_green",
   )
 
-  # --- Painted lines ------------------------------------------------------
-  # Baselines (perpendicular to the long axis, x = +/-7).
+  # --- 画线 ------------------------------------------------------
+  # 底线（垂直于长轴，x = ±7）。
   add_box(
     "court_baseline_self",
     pos=(BASELINE_SELF_X, 0.0, 0.006),
@@ -148,7 +146,7 @@ def get_tennis_court_spec() -> mujoco.MjSpec:
     size=(_LINE_HALF_W, COURT_HALF_WIDTH, _LINE_HALF_H),
     material="court_line_mat",
   )
-  # Sidelines (parallel to long axis, y = +/-2.4).
+  # 边线（平行于长轴，y = ±2.4）。
   add_box(
     "court_sideline_left",
     pos=(0.0, COURT_HALF_WIDTH, 0.006),
@@ -161,7 +159,7 @@ def get_tennis_court_spec() -> mujoco.MjSpec:
     size=(COURT_HALF_LENGTH, _LINE_HALF_W, _LINE_HALF_H),
     material="court_line_mat",
   )
-  # Service lines (x = +/-3.65).
+  # 发球线（x = ±3.65）。
   add_box(
     "court_service_self",
     pos=(SERVICE_LINE_FROM_NET, 0.0, 0.006),
@@ -174,7 +172,7 @@ def get_tennis_court_spec() -> mujoco.MjSpec:
     size=(_LINE_HALF_W, COURT_HALF_WIDTH, _LINE_HALF_H),
     material="court_line_mat",
   )
-  # Centre service line (between the two service lines).
+  # 中心发球线（两发球线之间）。
   add_box(
     "court_centre_service",
     pos=(0.0, 0.0, 0.006),
@@ -182,8 +180,8 @@ def get_tennis_court_spec() -> mujoco.MjSpec:
     material="court_line_mat",
   )
 
-  # --- Net ---------------------------------------------------------------
-  # Collidable net mesh (single thin box approximating the cloth volume).
+  # --- 球网 ---------------------------------------------------------------
+  # 可碰撞球网网格（单薄箱体，近似布网体积）。
   add_box(
     "tennis_net_collision",
     pos=(0.0, 0.0, NET_CENTER_HEIGHT * 0.5),
@@ -191,14 +189,14 @@ def get_tennis_court_spec() -> mujoco.MjSpec:
     material="tennis_net_mat",
     collidable=True,
   )
-  # White top band (visual).
+  # 白色顶带（视觉用）。
   add_box(
     "tennis_net_top_band",
     pos=(0.0, 0.0, NET_CENTER_HEIGHT),
     size=(NET_THICKNESS_HALF * 1.5, NET_HALF_WIDTH + 0.02, 0.018),
     material="tennis_net_band_mat",
   )
-  # Net posts (visual cylinders just outside the singles sideline).
+  # 网柱（视觉圆柱，位于单打边线外侧）。
   for tag, y_post in (("left", NET_HALF_WIDTH), ("right", -NET_HALF_WIDTH)):
     post = body.add_geom(
       name=f"tennis_net_post_{tag}",
@@ -210,7 +208,7 @@ def get_tennis_court_spec() -> mujoco.MjSpec:
     post.contype = 0
     post.conaffinity = 0
 
-  # --- Optional landing-target hint (visual only) ------------------------
+  # --- 可选落点提示（仅视觉）------------------------
   target = body.add_geom(
     name="target_landing_region",
     type=mujoco.mjtGeom.mjGEOM_CYLINDER,
@@ -221,7 +219,7 @@ def get_tennis_court_spec() -> mujoco.MjSpec:
   target.contype = 0
   target.conaffinity = 0
 
-  # --- Semantic reference sites (consumed by event detector / curricula) -
+  # --- 语义参考位置（供事件检测器/课程使用）-
   def add_marker(name: str, pos: tuple[float, float, float]) -> None:
     body.add_site(name=name, pos=pos, size=(0.025,), rgba=(1.0, 1.0, 1.0, 0.7))
 
@@ -247,12 +245,12 @@ def get_tennis_court_spec() -> mujoco.MjSpec:
 
 
 def get_tennis_court_cfg() -> EntityCfg:
-  """Return a fixed court entity that can be reset to each env origin."""
+  """返回可重置到每个环境原点的固定球场实体。"""
   return EntityCfg(spec_fn=get_tennis_court_spec)
 
 
 def get_tennis_terrain_cfg() -> TerrainEntityCfg:
-  """Return a green checker plane matching the standalone MJCF scene."""
+  """返回与独立 MJCF 场景匹配的绿色棋盘格地形平面。"""
   return TerrainEntityCfg(
     terrain_type="plane",
     textures=(

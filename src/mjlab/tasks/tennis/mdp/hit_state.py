@@ -1,4 +1,4 @@
-"""Shared hit-phase state for tennis latent-control tasks."""
+"""网球潜变量控制任务的共享击球阶段状态。"""
 
 from __future__ import annotations
 
@@ -20,12 +20,11 @@ _STATE_ATTR = "_tennis_hit_state"
 
 
 class TennisHitState:
-  """Track first contact, valid hits, and one-shot hit progress per env.
+  """按环境追踪首次接触、有效击球和单次击球进度。
 
-  The state is shared across reward and termination terms. It keeps both
-  one-shot fields used by the current task (first valid hit, repeat contact
-  after the first valid hit) and a rally-friendly parity bit that toggles with
-  XOR on every valid hit edge.
+  该状态在奖励项和终止项之间共享。它同时保存当前任务使用的单次字段
+  （首次有效击球、首次有效击球后的重复接触），以及一个与每次有效击球
+  边沿通过 XOR 切换的回合奇偶校验位。
   """
 
   def __init__(
@@ -183,7 +182,7 @@ class TennisHitState:
 
 
 class TennisHitStateTerm:
-  """Mixin for reward/termination terms that depend on ``TennisHitState``."""
+  """依赖 ``TennisHitState`` 的奖励/终止项的混入类。"""
 
   def __init__(self, cfg, env: ManagerBasedRlEnv):
     self._state = get_tennis_hit_state(
@@ -247,30 +246,15 @@ def get_tennis_hit_state(
   return state
 
 
-# ---------------------------------------------------------------------------
-# Lightweight rally tracker (refactored Hit task).
-# ---------------------------------------------------------------------------
-#
-# Tracks just the event signals required by the simplified Hit task:
-#   - racket_hit_edge / racket_hit_count   (rising edge of racket-ball contact)
-#   - bounce_edge / bounce_count           (vz crossing zero with low ball)
-#   - crossed_net_after_hit_edge           (one-shot: x crossed net plane to
-#                                           opp side AFTER the first racket hit)
-#   - has_crossed_net_after_hit            (latched version of the above)
-#
-# The end-of-episode logic is then built from simple combinations:
-#   - "second contact" = (racket_hit_count + bounce_count) >= 2
-#   - "successful return" = has_crossed_net_after_hit
-
 
 _RALLY_TRACKER_ATTR = "_tennis_rally_tracker"
 
 
 class TennisRallyTracker:
-  """Per-env tracker for racket hits, bounces, and net crossings.
+  """为球拍击球、弹跳和越网事件提供按环境追踪。
 
-  Designed for the refactored Hit task that ends the episode on the first
-  significant ball event (out-of-bounds / second contact / over-net).
+  专为重构后的击球任务设计，该任务在首个重大球事件
+  （越界 / 第二次接触 / 越网）发生时结束回合。
   """
 
   def __init__(
@@ -360,18 +344,18 @@ class TennisRallyTracker:
     bz = ball_pos[:, 2]
     vz = ball_vel[:, 2]
 
-    # Racket-hit rising edge.
+    # 球拍击球上升边沿。
     racket_edge = contact_now & ~self._prev_contact
 
-    # Bounce: vz transitions from negative -> nonneg while ball is near floor.
+    # 弹跳：vz 从负变为非负，且球接近地面。
     bounce_edge = (self._prev_vz < 0.0) & (vz >= 0.0) & (bz < self.ground_z + 0.05)
 
-    # Crossed net plane to opponent side, after at least one racket hit.
+    # 越网到对手侧，且至少已有一次球拍击球。
     has_hit_now = self.has_racket_hit | racket_edge
     cross_to_opp = (self._prev_x > self.net_x) & (bx <= self.net_x)
     cross_after_hit_edge = cross_to_opp & has_hit_now & ~self.has_crossed_net_after_hit
 
-    # Commit.
+    # 提交。
     self.racket_hit_edge[:] = racket_edge
     self.bounce_edge[:] = bounce_edge
     self.crossed_net_after_hit_edge[:] = cross_after_hit_edge
@@ -417,7 +401,7 @@ def get_tennis_rally_tracker(
 
 
 class TennisRallyTrackerTerm:
-  """Mixin for reward/termination terms built on TennisRallyTracker."""
+  """依赖 TennisRallyTracker 的奖励/终止项的混入类。"""
 
   def __init__(self, cfg, env: ManagerBasedRlEnv):
     self._tracker = get_tennis_rally_tracker(
