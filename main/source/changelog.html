@@ -552,6 +552,22 @@ through a frozen distillation decoder.</p></li>
 <li><p>Bumped <code class="docutils literal notranslate"><span class="pre">mujoco</span></code> to 3.8 and <code class="docutils literal notranslate"><span class="pre">mujoco-warp</span></code> to 3.8.0. The <code class="docutils literal notranslate"><span class="pre">multiccd</span></code>
 enable flag was removed in mujoco 3.8 (it became default-on), so configs
 that listed <code class="docutils literal notranslate"><span class="pre">&quot;multiccd&quot;</span></code> in <code class="docutils literal notranslate"><span class="pre">MujocoCfg.enableflags</span></code> need to drop it.</p></li>
+<li><p>Updated <code class="docutils literal notranslate"><span class="pre">Mjlab-Tennis-Hit</span></code> to use a regulation singles-court footprint
+and net height, and scaled the default reset / feed regions and viewer
+distance to match the larger court.</p></li>
+<li><p>Added a success-rate-based serve-target curriculum to <code class="docutils literal notranslate"><span class="pre">Mjlab-Tennis-Hit</span></code>:
+feeds now start centered near the robot and expand outward once the recent
+cross-net success rate reaches 80%, eventually covering the full receiver
+half court.</p></li>
+<li><p>Updated <code class="docutils literal notranslate"><span class="pre">Mjlab-Tennis-Hit</span></code> termination semantics for the hit-only task:
+episodes now end on the first ball bounce or on a second racket contact,
+rather than on any generic second contact.</p></li>
+<li><p>Added a small dense <code class="docutils literal notranslate"><span class="pre">Mjlab-Tennis-Hit</span></code> reward that encourages the racket
+to move toward the ball before the first hit, complementing the existing
+distance-to-ball shaping term.</p></li>
+<li><p>Simplified <code class="docutils literal notranslate"><span class="pre">Mjlab-Tennis-Hit</span></code> ball reset logic to keep only the random
+feeder path, removing the unused fixed-spawn and ballistic-opponent ball
+provider variants.</p></li>
 <li><p>Camera segmentation now matches <code class="docutils literal notranslate"><span class="pre">mujoco_warp</span></code>’s typed segmentation
 output. <code class="docutils literal notranslate"><span class="pre">CameraSensorData.segmentation</span></code> stores <code class="docutils literal notranslate"><span class="pre">(object_id,</span>
 <span class="pre">object_type)</span></code> pairs in shape <code class="docutils literal notranslate"><span class="pre">[B,</span> <span class="pre">H,</span> <span class="pre">W,</span> <span class="pre">2]</span></code> instead of the previous
