@@ -9,7 +9,7 @@ import torch
 from mjlab.entity import Entity
 from mjlab.managers.scene_entity_config import SceneEntityCfg
 from mjlab.managers.termination_manager import TerminationTermCfg
-from mjlab.tasks.tennis.mdp.hit_state import TennisHitStateTerm
+from mjlab.tasks.tennis.mdp.hit_state import TennisHitTrackerTerm
 
 if TYPE_CHECKING:
   from mjlab.envs import ManagerBasedRlEnv
@@ -25,7 +25,7 @@ def ball_in_play(
   y_limits: tuple[float, float] = (-2.7, 2.7),
   z_limits: tuple[float, float] = (BALL_MIN_HEIGHT, 2.6),
 ) -> torch.Tensor:
-  """当球离开可玩球场工作区间时终止。"""
+  """当球离开球场工作区间时终止。"""
   ball: Entity = env.scene[ball_cfg.name]
   pos = ball.data.root_link_pos_w - env.scene.env_origins
   out_x = (pos[:, 0] < x_limits[0]) | (pos[:, 0] > x_limits[1])
@@ -34,114 +34,16 @@ def ball_in_play(
   return out_x | out_y | out_z
 
 
-class miss_ball(TennisHitStateTerm):
-  """当球已经穿过球拍平面且无有效击球时终止。"""
-
-  def __init__(self, cfg: TerminationTermCfg, env: ManagerBasedRlEnv):
-    super().__init__(cfg, env)
-
-  def __call__(
-    self,
-    env: ManagerBasedRlEnv,
-    sensor_name: str,
-    force_threshold: float = 1.0,
-    valid_leftward_speed: float = 2.0,
-    valid_ball_speed: float = 2.5,
-    target_line_x: float = -2.2,
-    miss_x_offset: float = 0.2,
-    miss_x_direction: float = 1.0,
-  ) -> torch.Tensor:
-    del env
-    del sensor_name
-    del force_threshold
-    del valid_leftward_speed
-    del valid_ball_speed
-    del target_line_x
-    del miss_x_offset
-    del miss_x_direction
-    return self.state.missed_ball
-
-
-class second_contact_after_valid_hit(TennisHitStateTerm):
-  """终止，以防止策略在有效击球后抡球。"""
-
-  def __init__(self, cfg: TerminationTermCfg, env: ManagerBasedRlEnv):
-    super().__init__(cfg, env)
-
-  def __call__(
-    self,
-    env: ManagerBasedRlEnv,
-    sensor_name: str,
-    force_threshold: float = 1.0,
-    valid_leftward_speed: float = 2.0,
-    valid_ball_speed: float = 2.5,
-    target_line_x: float = -2.2,
-    miss_x_offset: float = 0.2,
-    miss_x_direction: float = 1.0,
-  ) -> torch.Tensor:
-    del env
-    del sensor_name
-    del force_threshold
-    del valid_leftward_speed
-    del valid_ball_speed
-    del target_line_x
-    del miss_x_offset
-    del miss_x_direction
-    return self.state.repeat_contact_after_valid_hit
-
-
-class successful_return(TennisHitStateTerm):
-  """一旦有效击球将球推过目标线，则终止。"""
-
-  def __init__(self, cfg: TerminationTermCfg, env: ManagerBasedRlEnv):
-    super().__init__(cfg, env)
-
-  def __call__(
-    self,
-    env: ManagerBasedRlEnv,
-    sensor_name: str,
-    force_threshold: float = 1.0,
-    valid_leftward_speed: float = 2.0,
-    valid_ball_speed: float = 2.5,
-    target_line_x: float = -2.2,
-    miss_x_offset: float = 0.2,
-    miss_x_direction: float = 1.0,
-  ) -> torch.Tensor:
-    del env
-    del sensor_name
-    del force_threshold
-    del valid_leftward_speed
-    del valid_ball_speed
-    del target_line_x
-    del miss_x_offset
-    del miss_x_direction
-    return self.state.target_line_crossed_edge
-
-
-def point_ended(
-  env: ManagerBasedRlEnv,
-  command_name: str = "rally",
-) -> torch.Tensor:
-  """当回球指令将当前得分标记为已结束时终止。"""
-  from mjlab.tasks.tennis.mdp.commands import RallyCommand
-
-  rally = env.command_manager.get_term(command_name)
-  assert isinstance(rally, RallyCommand)
-  return rally.is_point_end
-
-
 # ---------------------------------------------------------------------------
-# 重构后的击球任务终止项（基于 TennisRallyTracker）。
+# 简化击球任务终止项（基于 TennisHitTracker）。
 # ---------------------------------------------------------------------------
 
-from mjlab.tasks.tennis.mdp.hit_state import TennisRallyTrackerTerm  # noqa: E402
 
+class second_contact(TennisHitTrackerTerm):
+  """当球首次落地或发生第二次球拍接触后结束回合。
 
-class second_contact(TennisRallyTrackerTerm):
-  """当球完成第二次接触后结束回合。
-
-  「接触」指球拍击球或落地弹跳任意一种。第一次击球开始回球；
-  第二次接触（回球弹跳、抡球重击或球在地面弹跳两次）则终止。
+  当前 hit 任务只要求完成一次击球，因此第一次有效击球后，
+  球一旦首次落地，或再次碰到球拍，都视为本回合结束。
   """
 
   def __init__(self, cfg: TerminationTermCfg, env: ManagerBasedRlEnv):
@@ -157,10 +59,11 @@ class second_contact(TennisRallyTrackerTerm):
     net_x: float = 0.0,
   ) -> torch.Tensor:
     del env, sensor_name, ball_cfg, force_threshold, ground_z, net_x
-    return self.tracker.total_contact_count >= 2
+    tracker = self.tracker
+    return (tracker.bounce_count >= 1) | (tracker.racket_hit_count >= 2)
 
 
-class crossed_net_after_hit(TennisRallyTrackerTerm):
+class crossed_net_after_hit(TennisHitTrackerTerm):
   """在击球后球首次过网的步骤结束回合。"""
 
   def __init__(self, cfg: TerminationTermCfg, env: ManagerBasedRlEnv):
@@ -176,4 +79,4 @@ class crossed_net_after_hit(TennisRallyTrackerTerm):
     net_x: float = 0.0,
   ) -> torch.Tensor:
     del env, sensor_name, ball_cfg, force_threshold, ground_z, net_x
-    return self.tracker.crossed_net_after_hit_edge
+    return self.tracker.crossed_net_edge

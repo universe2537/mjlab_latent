@@ -2,16 +2,15 @@
 
 球场布局
 ------------
-G1 机器人约 1.0 m 高（约为 1.75 m 人类球员的 0.57 倍），因此球场按相同比例
-从单打标准（23.77 m × 8.23 m，网中央高 0.914 m）缩小：
+当前使用标准单打网球场尺寸：
 
-  * 球场总长   : 14.0 m  （每侧：网到底线 7.0 m）
-  * 单打宽度   : 4.8 m   （边线位于 y = ±2.4 m）
-  * 网中央高   : 0.52 m
-  * 网立柱高   : 0.61 m
-  * 发球线距网 : 3.65 m  （每侧）
+  * 球场总长   : 23.77 m （每侧：网到底线 11.885 m）
+  * 单打宽度   : 8.23 m  （边线位于 y = ±4.115 m）
+  * 网中央高   : 0.914 m
+  * 网立柱高   : 1.07 m
+  * 发球线距网 : 6.40 m  （每侧）
 
-机器人侧（"self"）x ∈ (0, 7)，对手侧（"opp"）x ∈ (-7, 0)。
+机器人侧（"self"）x ∈ (0, 11.885)，对手侧（"opp"）x ∈ (-11.885, 0)。
 球网平面位于 x = 0；y 正方向为右手侧（deuce side）。
 """
 
@@ -28,14 +27,14 @@ from mjlab.utils import spec_config as spec_cfg
 # ---------------------------------------------------------------------------
 
 # 单侧尺寸。
-COURT_HALF_LENGTH = 7.0  # x 方向单侧范围（网到底线）
-COURT_HALF_WIDTH = 2.4  # y 方向范围（单打半宽）
-SERVICE_LINE_FROM_NET = 3.65  # 发球线距网距离
+COURT_HALF_LENGTH = 11.885  # x 方向单侧范围（网到底线）
+COURT_HALF_WIDTH = 4.115  # y 方向范围（单打半宽）
+SERVICE_LINE_FROM_NET = 6.40  # 发球线距网距离
 
 # 球网。
-NET_CENTER_HEIGHT = 0.52
-NET_POST_HEIGHT = 0.61
-NET_HALF_WIDTH = 2.55  # extends slightly beyond singles sidelines
+NET_CENTER_HEIGHT = 0.914
+NET_POST_HEIGHT = 1.07
+NET_HALF_WIDTH = 5.485  # regulation doubles-post span for the net
 NET_THICKNESS_HALF = 0.012
 
 # 网球。
@@ -49,8 +48,8 @@ _LINE_HALF_W = 0.025  # 沿球场方向（视觉用）
 _LINE_HALF_H = 0.003  # 垂直方向
 
 # 底线的 X 坐标（各侧）。
-BASELINE_SELF_X = COURT_HALF_LENGTH  # +7.0
-BASELINE_OPP_X = -COURT_HALF_LENGTH  # -7.0
+BASELINE_SELF_X = COURT_HALF_LENGTH  # +11.885
+BASELINE_OPP_X = -COURT_HALF_LENGTH  # -11.885
 
 
 def get_tennis_ball_spec() -> mujoco.MjSpec:
@@ -94,7 +93,7 @@ def get_tennis_court_spec() -> mujoco.MjSpec:
   """构建球场（地面、线条、球网）为固定基底实体。
 
   球场以世界原点为中心，网平面位于 x = 0。
-  两侧对称：机器人侧 x ∈ (0, 7)，对手侧 x ∈ (-7, 0)。
+  两侧对称：机器人侧 x ∈ (0, 11.885)，对手侧 x ∈ (-11.885, 0)。
   """
   spec = mujoco.MjSpec()
   spec.add_material(name="court_green", rgba=(0.13, 0.42, 0.22, 1.0))

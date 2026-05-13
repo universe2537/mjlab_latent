@@ -1,81 +1,150 @@
-"""网球回球任务的课程脂手架。
-
-这些函数旨在基础策略达到一定成功率后，接入到
-``ManagerBasedRlEnvCfg.curriculum``。它们读取 ``RallyCommand`` 累积的指标
-（得分数、有效击球次数、越网率），并调用
-``rally.provider.bump_difficulty(key)`` 来拓宽采样范围。
-
-每个课程函数返回 ``None`` 或小型 ``dict`` 标量；课程管理器将记录返回内容。
-"""
+"""网球任务的课程学习项。"""
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from collections import deque
+from typing import TYPE_CHECKING, cast
 
 import torch
 
+from mjlab.tasks.tennis.mdp.ball_providers import RandomFeederCfg
+
 if TYPE_CHECKING:
-  from mjlab.envs.manager_based_rl_env import ManagerBasedRlEnv
+  from mjlab.envs import ManagerBasedRlEnv
+  from mjlab.managers.curriculum_manager import CurriculumTermCfg
 
 
-def _get_rally(env: "ManagerBasedRlEnv", command_name: str):
-  return env.command_manager.get_term(command_name)
+def _coerce_range(value: object, name: str) -> tuple[float, float]:
+  if not isinstance(value, tuple) or len(value) != 2:
+    raise TypeError(f"{name} must be a 2-tuple, got {value!r}.")
+  pair = cast(tuple[float | int, float | int], value)
+  return float(pair[0]), float(pair[1])
 
 
-def ball_speed_curriculum(
-  env: "ManagerBasedRlEnv",
-  env_ids: torch.Tensor,  # noqa: ARG001
-  *,
-  command_name: str = "rally",
-  success_threshold: float = 0.5,
-  bump_size: float = 0.05,
-) -> dict[str, float]:
-  """有效击球率足够高时拓宽入球速度范围。
-
-  读取 ``rally.metrics["valid_hits"]``；若近期均値超过
-  ``success_threshold`` 次/回合，则调用 ``bump_difficulty``。
-  """
-  rally = _get_rally(env, command_name)
-  vh_mean = float(rally.metrics["valid_hits"].mean().item())
-  if vh_mean >= success_threshold:
-    rally.provider.bump_difficulty("ball_speed", bump_size)
-  return {"ball_speed_difficulty": rally.provider.difficulty}
+def _lerp_range(
+  start: tuple[float, float], end: tuple[float, float], alpha: float
+) -> tuple[float, float]:
+  return (
+    start[0] + (end[0] - start[0]) * alpha,
+    start[1] + (end[1] - start[1]) * alpha,
+  )
 
 
-def ball_angle_spread_curriculum(
-  env: "ManagerBasedRlEnv",
-  env_ids: torch.Tensor,  # noqa: ARG001
-  *,
-  command_name: str = "rally",
-  success_threshold: float = 0.5,
-  bump_size: float = 0.05,
-) -> dict[str, float]:
-  """有效击球率足够高时拓宽入球横向分布。"""
-  rally = _get_rally(env, command_name)
-  vh_mean = float(rally.metrics["valid_hits"].mean().item())
-  if vh_mean >= success_threshold:
-    rally.provider.bump_difficulty("ball_lateral", bump_size)
-  return {"ball_lateral_difficulty": rally.provider.difficulty}
+class random_feeder_target_curriculum:
+  """按成功率逐步扩大发球落点范围。"""
+
+  def __init__(self, cfg: CurriculumTermCfg, env: ManagerBasedRlEnv):
+    provider_cfg = cfg.params["provider_cfg"]
+    if not isinstance(provider_cfg, RandomFeederCfg):
+      raise TypeError("provider_cfg must be a RandomFeederCfg instance.")
+
+    self._provider_cfg = provider_cfg
+    self._success_term_name = str(
+      cfg.params.get("success_term_name", "crossed_net_after_hit")
+    )
+    self._success_threshold = float(cfg.params.get("success_threshold", 0.8))
+    self._success_window = max(1, int(cfg.params.get("success_window", 50)))
+    self._num_stages = max(1, int(cfg.params.get("num_stages", 6)))
+    self._initial_target_x_range = _coerce_range(
+      cfg.params["initial_target_x_range"], "initial_target_x_range"
+    )
+    self._initial_target_y_range = _coerce_range(
+      cfg.params["initial_target_y_range"], "initial_target_y_range"
+    )
+    self._final_target_x_range = _coerce_range(
+      cfg.params.get("final_target_x_range", provider_cfg.target_x_range),
+      "final_target_x_range",
+    )
+    self._final_target_y_range = _coerce_range(
+      cfg.params.get("final_target_y_range", provider_cfg.target_y_range),
+      "final_target_y_range",
+    )
+
+    self._stage = 0
+    self._success_history: deque[float] = deque(maxlen=self._success_window)
+    self._apply_stage()
+
+  def _stage_alpha(self) -> float:
+    if self._num_stages <= 1:
+      return 1.0
+    return self._stage / float(self._num_stages - 1)
+
+  def _apply_stage(self) -> None:
+    alpha = self._stage_alpha()
+    self._provider_cfg.target_x_range = _lerp_range(
+      self._initial_target_x_range, self._final_target_x_range, alpha
+    )
+    self._provider_cfg.target_y_range = _lerp_range(
+      self._initial_target_y_range, self._final_target_y_range, alpha
+    )
+
+  def _record_episode_results(
+    self, env: ManagerBasedRlEnv, env_ids: torch.Tensor | slice
+  ) -> None:
+    done = env.termination_manager.dones
+    success = env.termination_manager.get_term(self._success_term_name)
+    done_success = success[env_ids][done[env_ids]]
+    if done_success.numel() > 0:
+      self._success_history.extend(done_success.float().cpu().tolist())
+
+  def __call__(
+    self,
+    env: ManagerBasedRlEnv,
+    env_ids: torch.Tensor | slice,
+    provider_cfg: RandomFeederCfg,
+    initial_target_x_range: tuple[float, float],
+    initial_target_y_range: tuple[float, float],
+    final_target_x_range: tuple[float, float] | None = None,
+    final_target_y_range: tuple[float, float] | None = None,
+    success_term_name: str = "crossed_net_after_hit",
+    success_threshold: float = 0.8,
+    success_window: int = 50,
+    num_stages: int = 6,
+  ) -> dict[str, torch.Tensor]:
+    del (
+      provider_cfg,
+      initial_target_x_range,
+      initial_target_y_range,
+      final_target_x_range,
+      final_target_y_range,
+      success_term_name,
+      success_threshold,
+      success_window,
+      num_stages,
+    )
+
+    self._record_episode_results(env, env_ids)
+
+    success_rate = 0.0
+    if len(self._success_history) > 0:
+      success_rate = sum(self._success_history) / len(self._success_history)
+
+    if (
+      len(self._success_history) >= self._success_window
+      and success_rate >= self._success_threshold
+      and self._stage + 1 < self._num_stages
+    ):
+      self._stage += 1
+      self._success_history.clear()
+      self._apply_stage()
+      success_rate = 0.0
+
+    return {
+      "stage": torch.tensor(float(self._stage), device=env.device),
+      "success_rate": torch.tensor(success_rate, device=env.device),
+      "target_x_min": torch.tensor(
+        self._provider_cfg.target_x_range[0], device=env.device
+      ),
+      "target_x_max": torch.tensor(
+        self._provider_cfg.target_x_range[1], device=env.device
+      ),
+      "target_y_min": torch.tensor(
+        self._provider_cfg.target_y_range[0], device=env.device
+      ),
+      "target_y_max": torch.tensor(
+        self._provider_cfg.target_y_range[1], device=env.device
+      ),
+    }
 
 
-def opponent_level_curriculum(
-  env: "ManagerBasedRlEnv",
-  env_ids: torch.Tensor,  # noqa: ARG001
-  *,
-  command_name: str = "rally",
-  win_threshold: float = 0.6,
-  bump_size: float = 0.05,
-) -> dict[str, float]:
-  """玩家得分率足够高时压缩对手的飞行时间。"""
-  rally = _get_rally(env, command_name)
-  pw_mean = float(rally.metrics["points_won"].mean().item())
-  if pw_mean >= win_threshold:
-    rally.provider.bump_difficulty("opponent_level", bump_size)
-  return {"opponent_difficulty": rally.provider.difficulty}
-
-
-__all__ = [
-  "ball_speed_curriculum",
-  "ball_angle_spread_curriculum",
-  "opponent_level_curriculum",
-]
+__all__ = ["random_feeder_target_curriculum"]

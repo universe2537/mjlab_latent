@@ -25,7 +25,7 @@ def unitree_g1_tennis_latent_hit_env_cfg(
     "court": get_tennis_court_cfg(),
   }
   cfg.viewer.body_name = "torso_link"
-  cfg.viewer.distance = 5.0
+  cfg.viewer.distance = 10.0
   cfg.viewer.elevation = -18.0
   cfg.viewer.azimuth = 140.0
 

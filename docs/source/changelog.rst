@@ -48,6 +48,22 @@ Changed
 - Bumped ``mujoco`` to 3.8 and ``mujoco-warp`` to 3.8.0. The ``multiccd``
   enable flag was removed in mujoco 3.8 (it became default-on), so configs
   that listed ``"multiccd"`` in ``MujocoCfg.enableflags`` need to drop it.
+- Updated ``Mjlab-Tennis-Hit`` to use a regulation singles-court footprint
+  and net height, and scaled the default reset / feed regions and viewer
+  distance to match the larger court.
+- Added a success-rate-based serve-target curriculum to ``Mjlab-Tennis-Hit``:
+  feeds now start centered near the robot and expand outward once the recent
+  cross-net success rate reaches 80%, eventually covering the full receiver
+  half court.
+- Updated ``Mjlab-Tennis-Hit`` termination semantics for the hit-only task:
+  episodes now end on the first ball bounce or on a second racket contact,
+  rather than on any generic second contact.
+- Added a small dense ``Mjlab-Tennis-Hit`` reward that encourages the racket
+  to move toward the ball before the first hit, complementing the existing
+  distance-to-ball shaping term.
+- Simplified ``Mjlab-Tennis-Hit`` ball reset logic to keep only the random
+  feeder path, removing the unused fixed-spawn and ballistic-opponent ball
+  provider variants.
 - Camera segmentation now matches ``mujoco_warp``'s typed segmentation
   output. ``CameraSensorData.segmentation`` stores ``(object_id,
   object_type)`` pairs in shape ``[B, H, W, 2]`` instead of the previous
