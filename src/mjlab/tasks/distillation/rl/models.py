@@ -30,9 +30,9 @@ from dataclasses import dataclass
 import torch
 from torch import nn
 
-# ---------------------------------------------------------------------------
+#
 # Helpers
-# ---------------------------------------------------------------------------
+#
 
 
 def _activation_cls(name: str) -> type[nn.Module]:
@@ -159,7 +159,7 @@ def diagonal_gaussian_kl(q: DiagGaussian, p: DiagGaussian) -> torch.Tensor:
 class _GaussianHead(nn.Module):
   """PHC 风格的高斯分布头。
 
-  Architecture mirrors ``amp_network_z_builder._build_z_mlp`` for the posterior
+  Architecture mirrors ``amp_network_z_buprior_hidden_dimsilder._build_z_mlp`` for the posterior
   branch (and the prior branch when ``feature_multiplier == 1``):
 
     ``trunk: [Linear, Act] * n``

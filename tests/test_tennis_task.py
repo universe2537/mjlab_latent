@@ -1,4 +1,3 @@
-import math
 from pathlib import Path
 from typing import cast
 
@@ -14,7 +13,18 @@ from mjlab.tasks.tennis.mdp import (
   FrozenDecoderLatentJointPositionAction,
   FrozenDecoderLatentJointPositionActionCfg,
 )
+from mjlab.tasks.tennis.mdp.ball_providers import RandomFeederCfg
 from mjlab.tasks.tennis.rl import TennisLatentOnPolicyRunnerCfg
+from mjlab.tasks.tennis.tennis_env_cfg import (
+  BALL_SPAWN_X_RANGE,
+  BALL_SPAWN_Z_RANGE,
+  COURT_HALF_LENGTH,
+  COURT_HALF_WIDTH,
+  DEFAULT_COURT_SIZE,
+  ROBOT_RESET_YAW,
+  TennisLatentEnvCfg,
+  resolve_court_scale,
+)
 
 
 def test_tennis_task_registered() -> None:
@@ -57,7 +67,7 @@ def test_tennis_env_uses_latent_actions() -> None:
     obs, _ = env.reset()
     actor_obs = obs["actor"]
     assert isinstance(actor_obs, torch.Tensor)
-    assert actor_obs.shape[-1] == 102
+    assert actor_obs.shape[-1] == 127
     latent = torch.zeros(env.num_envs, env.action_manager.total_action_dim)
     env.step(latent)
     assert action.low_level_action.shape == (env.num_envs, 29)
@@ -79,38 +89,62 @@ def test_tennis_decoder_state_terms_align_with_distillation() -> None:
 def test_tennis_hit_rewards_and_terminations_are_phase_based() -> None:
   cfg = load_env_cfg("Mjlab-Tennis-Hit-Unitree-G1")
 
-  assert "first_valid_hit" in cfg.rewards
-  assert "successful_return" in cfg.rewards
-  assert "miss_ball_penalty" in cfg.rewards
-  assert "miss_ball" in cfg.terminations
-  assert "second_contact_after_valid_hit" in cfg.terminations
-  assert "successful_return" in cfg.terminations
+  assert "approach_point" in cfg.rewards
+  assert "racket_towards_ball" in cfg.rewards
+  assert "racket_hit_event" in cfg.rewards
+  assert "crossed_net_event" not in cfg.rewards
+
+  assert "first_racket_hit" in cfg.terminations
+  assert "second_contact" in cfg.terminations
+  assert "crossed_net_after_hit" not in cfg.terminations
+
+  curriculum_params = cfg.curriculum["ball_target_region"].params
+  assert curriculum_params["success_term_name"] == "first_racket_hit"
 
   ball_bounds = cfg.terminations["ball_out_of_bounds"].params["x_limits"]
   assert ball_bounds[0] <= -3.0
 
 
 def test_tennis_reset_ranges_face_opponent_half() -> None:
-  cfg = load_env_cfg("Mjlab-Tennis-Hit-Unitree-G1")
+  cfg = cast(TennisLatentEnvCfg, load_env_cfg("Mjlab-Tennis-Hit-Unitree-G1"))
+  scale = resolve_court_scale(DEFAULT_COURT_SIZE)
+  cl = COURT_HALF_LENGTH * scale
+  cw = COURT_HALF_WIDTH * scale
+  spawn_y_range = (-cw * 0.83, cw * 0.83)
+  robot_reset_x_range = (cl * 0.50, cl * 0.64)
+  robot_reset_y_range = (-cw * 0.17, cw * 0.17)
+  robot_reset_x_center = 0.5 * (robot_reset_x_range[0] + robot_reset_x_range[1])
+  target_initial_x_range = (
+    robot_reset_x_center - 0.15 * scale,
+    robot_reset_x_center + 0.15 * scale,
+  )
+  target_initial_y_range = (-0.15 * scale, 0.15 * scale)
+  target_x_range = (max(0.3, 0.8 * scale), max(0.5, cl - 0.8 * scale))
+  target_y_range = (-cw, cw)
 
   robot_reset = cfg.events["reset_robot_base"].params
   robot_pose = robot_reset["pose_range"]
-  assert robot_pose["x"] == (1.55, 1.95)
-  assert robot_pose["y"] == (-0.35, 0.35)
-  assert robot_pose["yaw"] == (math.pi, math.pi)
+  assert cfg.court_size == DEFAULT_COURT_SIZE
+  assert robot_pose["x"] == robot_reset_x_range
+  assert robot_pose["y"] == robot_reset_y_range
+  assert robot_pose["yaw"] == (ROBOT_RESET_YAW, ROBOT_RESET_YAW)
 
   ball_reset = cfg.events["reset_ball"].params
-  ball_pose = ball_reset["pose_range"]
-  ball_velocity = ball_reset["velocity_range"]
-  assert ball_pose["x"] == (0.35, 3.15)
-  assert ball_pose["y"] == (-2.1, 2.1)
-  assert ball_pose["z"] == (0.65, 1.45)
-  assert ball_velocity["x"] == (0.6, 2.2)
-  assert ball_velocity["y"] == (-1.2, 1.2)
-  assert ball_velocity["z"] == (-0.8, 0.8)
+  provider_cfg = ball_reset["provider_cfg"]
+  assert isinstance(provider_cfg, RandomFeederCfg)
+  assert provider_cfg.spawn_x_range == BALL_SPAWN_X_RANGE
+  assert provider_cfg.spawn_y_range == spawn_y_range
+  assert provider_cfg.spawn_z_range == BALL_SPAWN_Z_RANGE
+  # Curriculum starts with initial ranges
+  assert provider_cfg.target_x_range == target_initial_x_range
+  assert provider_cfg.target_y_range == target_initial_y_range
 
-  miss_params = cfg.terminations["miss_ball"].params
-  assert miss_params["miss_x_direction"] == 1.0
+  # Curriculum expands from initial to final ranges
+  curriculum_params = cfg.curriculum["ball_target_region"].params
+  assert curriculum_params["initial_target_x_range"] == target_initial_x_range
+  assert curriculum_params["initial_target_y_range"] == target_initial_y_range
+  assert curriculum_params["final_target_x_range"] == target_x_range
+  assert curriculum_params["final_target_y_range"] == target_y_range
 
 
 def test_standalone_tennis_scene_compiles() -> None:

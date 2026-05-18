@@ -16,6 +16,7 @@ if TYPE_CHECKING:
 _ROBOT_CFG = SceneEntityCfg("robot")
 _RACKET_CFG = SceneEntityCfg("robot", site_names=("tennis_racket_center",))
 _BALL_CFG = SceneEntityCfg("ball")
+_DEFAULT_HIT_HEIGHT_OFFSET = 0.05
 
 
 def neutral_motion_anchor_pos_b(env: ManagerBasedRlEnv) -> torch.Tensor:
@@ -72,6 +73,79 @@ def racket_velocity_b(
   robot: Entity = env.scene[robot_cfg.name]
   racket_vel_w = robot.data.site_lin_vel_w[:, racket_cfg.site_ids].squeeze(1)
   return quat_apply_inverse(robot.data.root_link_quat_w, racket_vel_w)
+
+
+def _predict_hit_intersection_w(
+  env: ManagerBasedRlEnv,
+  ball_cfg: SceneEntityCfg = _BALL_CFG,
+  robot_cfg: SceneEntityCfg = _ROBOT_CFG,
+  *,
+  hit_height_offset: float = _DEFAULT_HIT_HEIGHT_OFFSET,
+  gravity: float = 9.81,
+  max_horizon: float = 1.5,
+  min_time: float = 1.0e-3,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+  """预测球与腰部高度击球平面的未来交点。
+
+  击球平面高度采用 ``robot.root_link_pos_w[:, 2] + hit_height_offset``，
+  默认比 G1 pelvis 高约 5 cm，接近腰部 / 下胸位置。
+
+  返回:
+    hit_w: 世界系击球点，shape ``(B, 3)``
+    t_hit: 到达该点的时间，shape ``(B,)``
+    valid: 是否存在未来正时间交点且在 ``max_horizon`` 内，shape ``(B,)``
+  """
+  robot: Entity = env.scene[robot_cfg.name]
+  ball: Entity = env.scene[ball_cfg.name]
+  pos = ball.data.root_link_pos_w
+  vel = ball.data.root_link_lin_vel_w
+
+  hit_height = robot.data.root_link_pos_w[:, 2] + hit_height_offset
+  a = -0.5 * gravity
+  b = vel[:, 2]
+  c = pos[:, 2] - hit_height
+
+  disc = b * b - 4.0 * a * c
+  has_real_root = disc >= 0.0
+  sqrt_disc = torch.sqrt(torch.clamp(disc, min=0.0))
+  denom = 2.0 * a
+  t0 = (-b - sqrt_disc) / denom
+  t1 = (-b + sqrt_disc) / denom
+  candidates = torch.stack([t0, t1], dim=-1)
+  inf = torch.full_like(candidates, float("inf"))
+  candidates = torch.where(candidates > min_time, candidates, inf)
+  t_hit = candidates.amin(dim=-1)
+
+  valid = has_real_root & torch.isfinite(t_hit) & (t_hit <= max_horizon)
+  t_hit = torch.where(valid, t_hit, torch.zeros_like(t_hit))
+
+  hit_w = pos + vel * t_hit.unsqueeze(-1)
+  hit_w[:, 2] = hit_height
+  return hit_w, t_hit, valid
+
+
+def ball_predicted_hit_point_b(
+  env: ManagerBasedRlEnv,
+  ball_cfg: SceneEntityCfg = _BALL_CFG,
+  robot_cfg: SceneEntityCfg = _ROBOT_CFG,
+  hit_height_offset: float = _DEFAULT_HIT_HEIGHT_OFFSET,
+  gravity: float = 9.81,
+  max_horizon: float = 1.5,
+) -> torch.Tensor:
+  """预测腰部高度的击球点，返回 ``(x, y, z, time_to_hit)``，以机器人基座坐标系表示。"""
+  robot: Entity = env.scene[robot_cfg.name]
+  hit_w, t_hit, valid = _predict_hit_intersection_w(
+    env,
+    ball_cfg,
+    robot_cfg,
+    hit_height_offset=hit_height_offset,
+    gravity=gravity,
+    max_horizon=max_horizon,
+  )
+  delta_w = hit_w - robot.data.root_link_pos_w
+  hit_b = quat_apply_inverse(robot.data.root_link_quat_w, delta_w)
+  hit_b = torch.where(valid.unsqueeze(-1), hit_b, torch.zeros_like(hit_b))
+  return torch.cat([hit_b, t_hit.unsqueeze(-1)], dim=-1)
 
 
 def ball_predicted_landing_b(

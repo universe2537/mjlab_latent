@@ -16,11 +16,43 @@
 
 from __future__ import annotations
 
+import functools
+
 import mujoco
 
 from mjlab.entity import EntityCfg
 from mjlab.terrains import TerrainEntityCfg
 from mjlab.utils import spec_config as spec_cfg
+
+# ---------------------------------------------------------------------------
+# 球场尺寸预设（scale 相对于标准球场的比例）。
+# ---------------------------------------------------------------------------
+COURT_SIZE_PRESETS: dict[str, float] = {
+  "standard": 1.00,  # 23.77 × 8.23 m  — 标准单打球场
+  "half": 0.50,  # 11.9 × 4.1 m   — 半场
+  "quarter": 0.25,  # 5.9 × 2.1 m    — 四分之一场
+  "mini": 0.15,  # 3.6 × 1.2 m    — 迷你场（约 3-5 步）
+  "tiny": 0.08,  # 1.9 × 0.66 m   — 极小场（约 2-3 步）
+}
+
+
+def resolve_court_scale(size: str | float) -> float:
+  """将字符串预设名称或浮点 scale 解析为标量。
+
+  参数:
+    size: 预设名称（如 ``"mini"``）或直接传入的浮点缩放比例。
+
+  返回:
+    float 类型的缩放比例，范围 (0, 1]。
+  """
+  if isinstance(size, str):
+    if size not in COURT_SIZE_PRESETS:
+      raise ValueError(
+        f"Unknown court size {size!r}. Valid options: {list(COURT_SIZE_PRESETS)}"
+      )
+    return COURT_SIZE_PRESETS[size]
+  return float(size)
+
 
 # ---------------------------------------------------------------------------
 # 球场几何常量（供环境配置/课程使用，对外重新导出）。
@@ -89,12 +121,23 @@ def get_tennis_ball_cfg() -> EntityCfg:
   )
 
 
-def get_tennis_court_spec() -> mujoco.MjSpec:
+def get_tennis_court_spec(scale: float = 1.0) -> mujoco.MjSpec:
   """构建球场（地面、线条、球网）为固定基底实体。
 
   球场以世界原点为中心，网平面位于 x = 0。
-  两侧对称：机器人侧 x ∈ (0, 11.885)，对手侧 x ∈ (-11.885, 0)。
+  两侧对称：机器人侧 x ∈ (0, L)，对手侧 x ∈ (-L, 0)，
+  其中 L = COURT_HALF_LENGTH * scale。
+
+  参数:
+    scale: 球场缩放比例，1.0 为标准尺寸。使用 :func:`resolve_court_scale`
+           将预设名称（如 ``"mini"``）转换为此值。
   """
+  cl = COURT_HALF_LENGTH * scale
+  cw = COURT_HALF_WIDTH * scale
+  sln = SERVICE_LINE_FROM_NET * scale
+  baseline_self_x = cl
+  baseline_opp_x = -cl
+  net_hw = NET_HALF_WIDTH * scale
   spec = mujoco.MjSpec()
   spec.add_material(name="court_green", rgba=(0.13, 0.42, 0.22, 1.0))
   spec.add_material(name="court_line_mat", rgba=(0.95, 0.95, 0.95, 1.0))
@@ -127,55 +170,55 @@ def get_tennis_court_spec() -> mujoco.MjSpec:
   add_box(
     "court_visual",
     pos=(0.0, 0.0, 0.002),
-    size=(COURT_HALF_LENGTH, COURT_HALF_WIDTH, 0.002),
+    size=(cl, cw, 0.002),
     material="court_green",
   )
 
   # --- 画线 ------------------------------------------------------
-  # 底线（垂直于长轴，x = ±7）。
+  # 底线（垂直于长轴）。
   add_box(
     "court_baseline_self",
-    pos=(BASELINE_SELF_X, 0.0, 0.006),
-    size=(_LINE_HALF_W, COURT_HALF_WIDTH, _LINE_HALF_H),
+    pos=(baseline_self_x, 0.0, 0.006),
+    size=(_LINE_HALF_W, cw, _LINE_HALF_H),
     material="court_line_mat",
   )
   add_box(
     "court_baseline_opp",
-    pos=(BASELINE_OPP_X, 0.0, 0.006),
-    size=(_LINE_HALF_W, COURT_HALF_WIDTH, _LINE_HALF_H),
+    pos=(baseline_opp_x, 0.0, 0.006),
+    size=(_LINE_HALF_W, cw, _LINE_HALF_H),
     material="court_line_mat",
   )
-  # 边线（平行于长轴，y = ±2.4）。
+  # 边线（平行于长轴）。
   add_box(
     "court_sideline_left",
-    pos=(0.0, COURT_HALF_WIDTH, 0.006),
-    size=(COURT_HALF_LENGTH, _LINE_HALF_W, _LINE_HALF_H),
+    pos=(0.0, cw, 0.006),
+    size=(cl, _LINE_HALF_W, _LINE_HALF_H),
     material="court_line_mat",
   )
   add_box(
     "court_sideline_right",
-    pos=(0.0, -COURT_HALF_WIDTH, 0.006),
-    size=(COURT_HALF_LENGTH, _LINE_HALF_W, _LINE_HALF_H),
+    pos=(0.0, -cw, 0.006),
+    size=(cl, _LINE_HALF_W, _LINE_HALF_H),
     material="court_line_mat",
   )
-  # 发球线（x = ±3.65）。
+  # 发球线。
   add_box(
     "court_service_self",
-    pos=(SERVICE_LINE_FROM_NET, 0.0, 0.006),
-    size=(_LINE_HALF_W, COURT_HALF_WIDTH, _LINE_HALF_H),
+    pos=(sln, 0.0, 0.006),
+    size=(_LINE_HALF_W, cw, _LINE_HALF_H),
     material="court_line_mat",
   )
   add_box(
     "court_service_opp",
-    pos=(-SERVICE_LINE_FROM_NET, 0.0, 0.006),
-    size=(_LINE_HALF_W, COURT_HALF_WIDTH, _LINE_HALF_H),
+    pos=(-sln, 0.0, 0.006),
+    size=(_LINE_HALF_W, cw, _LINE_HALF_H),
     material="court_line_mat",
   )
   # 中心发球线（两发球线之间）。
   add_box(
     "court_centre_service",
     pos=(0.0, 0.0, 0.006),
-    size=(SERVICE_LINE_FROM_NET, _LINE_HALF_W, _LINE_HALF_H),
+    size=(sln, _LINE_HALF_W, _LINE_HALF_H),
     material="court_line_mat",
   )
 
@@ -184,7 +227,7 @@ def get_tennis_court_spec() -> mujoco.MjSpec:
   add_box(
     "tennis_net_collision",
     pos=(0.0, 0.0, NET_CENTER_HEIGHT * 0.5),
-    size=(NET_THICKNESS_HALF, NET_HALF_WIDTH, NET_CENTER_HEIGHT * 0.5),
+    size=(NET_THICKNESS_HALF, net_hw, NET_CENTER_HEIGHT * 0.5),
     material="tennis_net_mat",
     collidable=True,
   )
@@ -192,11 +235,11 @@ def get_tennis_court_spec() -> mujoco.MjSpec:
   add_box(
     "tennis_net_top_band",
     pos=(0.0, 0.0, NET_CENTER_HEIGHT),
-    size=(NET_THICKNESS_HALF * 1.5, NET_HALF_WIDTH + 0.02, 0.018),
+    size=(NET_THICKNESS_HALF * 1.5, net_hw + 0.02, 0.018),
     material="tennis_net_band_mat",
   )
-  # 网柱（视觉圆柱，位于单打边线外侧）。
-  for tag, y_post in (("left", NET_HALF_WIDTH), ("right", -NET_HALF_WIDTH)):
+  # 网柱（视觉圆柱）。
+  for tag, y_post in (("left", net_hw), ("right", -net_hw)):
     post = body.add_geom(
       name=f"tennis_net_post_{tag}",
       type=mujoco.mjtGeom.mjGEOM_CYLINDER,
@@ -211,8 +254,8 @@ def get_tennis_court_spec() -> mujoco.MjSpec:
   target = body.add_geom(
     name="target_landing_region",
     type=mujoco.mjtGeom.mjGEOM_CYLINDER,
-    pos=(-SERVICE_LINE_FROM_NET, 0.0, 0.012),
-    size=(1.2, 0.004, 0.0),
+    pos=(-sln, 0.0, 0.012),
+    size=(max(0.3, 1.2 * scale), 0.004, 0.0),
   )
   target.material = "tennis_target_mat"
   target.contype = 0
@@ -223,29 +266,25 @@ def get_tennis_court_spec() -> mujoco.MjSpec:
     body.add_site(name=name, pos=pos, size=(0.025,), rgba=(1.0, 1.0, 1.0, 0.7))
 
   add_marker("net_top_center", (0.0, 0.0, NET_CENTER_HEIGHT))
-  add_marker("baseline_self", (BASELINE_SELF_X, 0.0, 0.02))
-  add_marker("baseline_opp", (BASELINE_OPP_X, 0.0, 0.02))
-  add_marker("sideline_left", (0.0, COURT_HALF_WIDTH, 0.02))
-  add_marker("sideline_right", (0.0, -COURT_HALF_WIDTH, 0.02))
-  add_marker(
-    "service_self_deuce", (SERVICE_LINE_FROM_NET * 0.5, COURT_HALF_WIDTH * 0.5, 0.02)
-  )
-  add_marker(
-    "service_self_ad", (SERVICE_LINE_FROM_NET * 0.5, -COURT_HALF_WIDTH * 0.5, 0.02)
-  )
-  add_marker(
-    "service_opp_deuce",
-    (-SERVICE_LINE_FROM_NET * 0.5, -COURT_HALF_WIDTH * 0.5, 0.02),
-  )
-  add_marker(
-    "service_opp_ad", (-SERVICE_LINE_FROM_NET * 0.5, COURT_HALF_WIDTH * 0.5, 0.02)
-  )
+  add_marker("baseline_self", (baseline_self_x, 0.0, 0.02))
+  add_marker("baseline_opp", (baseline_opp_x, 0.0, 0.02))
+  add_marker("sideline_left", (0.0, cw, 0.02))
+  add_marker("sideline_right", (0.0, -cw, 0.02))
+  add_marker("service_self_deuce", (sln * 0.5, cw * 0.5, 0.02))
+  add_marker("service_self_ad", (sln * 0.5, -cw * 0.5, 0.02))
+  add_marker("service_opp_deuce", (-sln * 0.5, -cw * 0.5, 0.02))
+  add_marker("service_opp_ad", (-sln * 0.5, cw * 0.5, 0.02))
   return spec
 
 
-def get_tennis_court_cfg() -> EntityCfg:
-  """返回可重置到每个环境原点的固定球场实体。"""
-  return EntityCfg(spec_fn=get_tennis_court_spec)
+def get_tennis_court_cfg(scale: float = 1.0) -> EntityCfg:
+  """返回可重置到每个环境原点的固定球场实体。
+
+  参数:
+    scale: 球场缩放比例。可通过 :func:`resolve_court_scale` 将
+           预设名称（如 ``"mini"``）转换为此值。
+  """
+  return EntityCfg(spec_fn=functools.partial(get_tennis_court_spec, scale=scale))
 
 
 def get_tennis_terrain_cfg() -> TerrainEntityCfg:

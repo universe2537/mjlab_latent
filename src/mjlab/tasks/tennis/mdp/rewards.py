@@ -9,9 +9,14 @@ import torch
 from mjlab.managers.reward_manager import RewardTermCfg
 from mjlab.managers.scene_entity_config import SceneEntityCfg
 from mjlab.tasks.tennis.mdp.hit_state import TennisHitTrackerTerm
-from mjlab.tasks.tennis.mdp.observations import racket_to_ball_b, racket_velocity_b
+from mjlab.tasks.tennis.mdp.observations import (
+  _predict_hit_intersection_w,
+  racket_to_ball_b,
+  racket_velocity_b,
+)
 
 if TYPE_CHECKING:
+  from mjlab.entity import Entity
   from mjlab.envs import ManagerBasedRlEnv
 
 _ROBOT_CFG = SceneEntityCfg("robot")
@@ -60,7 +65,7 @@ def low_level_action_rate_l2(
 
 
 # ---------------------------------------------------------------------------
-# 简化击球任务奖励（基于 TennisHitTracker）。
+# 击球任务奖励
 # ---------------------------------------------------------------------------
 
 
@@ -77,6 +82,32 @@ def racket_to_ball_distance_dense(
   「接近 -> 击球 -> 越网 / 首次落地或再次碰拍」的简化击球任务。
   """
   return racket_ball_distance_exp(env, std, racket_cfg, ball_cfg, robot_cfg)
+
+
+def racket_to_predicted_hit_point_dense(
+  env: ManagerBasedRlEnv,
+  std: float,
+  racket_cfg: SceneEntityCfg = _RACKET_CFG,
+  ball_cfg: SceneEntityCfg = _BALL_CFG,
+  robot_cfg: SceneEntityCfg = _ROBOT_CFG,
+  hit_height_offset: float = 0.05,
+  gravity: float = 9.81,
+  max_horizon: float = 1.5,
+) -> torch.Tensor:
+  """鼓励球拍接近预计击球点，而不是追逐球的当前位置。"""
+  robot: Entity = env.scene[robot_cfg.name]
+  racket_pos_w = robot.data.site_pos_w[:, racket_cfg.site_ids].squeeze(1)
+  hit_w, _, valid = _predict_hit_intersection_w(
+    env,
+    ball_cfg,
+    robot_cfg,
+    hit_height_offset=hit_height_offset,
+    gravity=gravity,
+    max_horizon=max_horizon,
+  )
+  error = torch.sum(torch.square(hit_w - racket_pos_w), dim=-1)
+  reward = torch.exp(-error / std**2)
+  return reward * valid.float()
 
 
 class racket_towards_ball_velocity(TennisHitTrackerTerm):

@@ -39,7 +39,7 @@ def unitree_g1_tennis_latent_ppo_runner_cfg() -> TennisLatentOnPolicyRunnerCfg:
     experiment_name="g1_tennis_latent_hit",
     save_interval=200,
     num_steps_per_env=24,
-    max_iterations=10_000,
+    max_iterations=30000,
     clip_actions=4.0,
     require_decoder_checkpoint=True,
   )

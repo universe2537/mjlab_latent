@@ -41,6 +41,11 @@ Added
   racket-equipped G1 that composes the robot, a free tennis ball, and court
   props as separate mjlab entities while training a high-level latent policy
   through a frozen distillation decoder.
+- Added ``scripts/tools/check_tennis_decoder_coverage.py`` to smoke-test
+  the frozen tennis decoder before high-level PPO training by rolling out
+  random latent trajectories and reporting first-hit success rate, minimum
+  racket-to-ball distance, decoded-action statistics, and current curriculum
+  state.
 
 Changed
 ^^^^^^^
@@ -53,14 +58,19 @@ Changed
   distance to match the larger court.
 - Added a success-rate-based serve-target curriculum to ``Mjlab-Tennis-Hit``:
   feeds now start centered near the robot and expand outward once the recent
-  cross-net success rate reaches 80%, eventually covering the full receiver
+  first-hit success rate reaches 80%, eventually covering the full receiver
   half court.
 - Updated ``Mjlab-Tennis-Hit`` termination semantics for the hit-only task:
-  episodes now end on the first ball bounce or on a second racket contact,
-  rather than on any generic second contact.
+  episodes now end immediately on the first valid racket hit, while misses
+  still terminate on the first ball bounce or on a later extra contact.
 - Added a small dense ``Mjlab-Tennis-Hit`` reward that encourages the racket
   to move toward the ball before the first hit, complementing the existing
   distance-to-ball shaping term.
+- Updated ``Mjlab-Tennis-Hit`` high-level observations to expose a predicted
+  waist-height hit point with ``time_to_hit``, replaced the dense
+  ``approach_ball`` shaping term with ``approach_point`` toward that future
+  contact location, and raised the default registered court size from
+  ``mini`` to ``quarter`` so G1 has room to reposition before contact.
 - Simplified ``Mjlab-Tennis-Hit`` ball reset logic to keep only the random
   feeder path, removing the unused fixed-spawn and ballistic-opponent ball
   provider variants.

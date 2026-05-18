@@ -34,16 +34,37 @@ def ball_in_play(
   return out_x | out_y | out_z
 
 
-# ---------------------------------------------------------------------------
+# 
 # 简化击球任务终止项（基于 TennisHitTracker）。
-# ---------------------------------------------------------------------------
+# 
+
+
+class first_racket_hit(TennisHitTrackerTerm):
+  """在首次有效球拍接触的步骤结束回合。"""
+
+  def __init__(self, cfg: TerminationTermCfg, env: ManagerBasedRlEnv):
+    super().__init__(cfg, env)
+
+  def __call__(
+    self,
+    env: ManagerBasedRlEnv,
+    sensor_name: str,
+    ball_cfg: SceneEntityCfg = _BALL_CFG,
+    force_threshold: float = 1.0,
+    ground_z: float = 0.06,
+    net_x: float = 0.0,
+  ) -> torch.Tensor:
+    del env, sensor_name, ball_cfg, force_threshold, ground_z, net_x
+    tracker = self.tracker
+    return tracker.racket_hit_edge & (tracker.racket_hit_count == 1)
 
 
 class second_contact(TennisHitTrackerTerm):
-  """当球首次落地或发生第二次球拍接触后结束回合。
+  """当球首次落地或发生额外接触后结束回合。
 
-  当前 hit 任务只要求完成一次击球，因此第一次有效击球后，
-  球一旦首次落地，或再次碰到球拍，都视为本回合结束。
+  对于当前 contact 任务，该项主要作为失败兜底：
+  若机器人未能在空中截击，球首次落地即结束；若出现额外接触，
+  也视为当前回合结束。
   """
 
   def __init__(self, cfg: TerminationTermCfg, env: ManagerBasedRlEnv):

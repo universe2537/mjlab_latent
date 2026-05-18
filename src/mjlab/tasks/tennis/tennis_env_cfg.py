@@ -12,21 +12,24 @@
               使球以弧线落入目标区域。
 * **终止条件** :
               - 球超出球场边界
+              - 首次有效击球成功
               - 球首次落地，或再次碰到球拍
-              - 击球后球成功越过球网
               - 机器人姿态异常 / 倒地
 * **奖励** : 接近奖励（5×），球拍朝球运动小奖励（1×），
-              球拍击球事件（50×），越网事件（200×），
+              球拍击球事件（50×），
               以及标准惩罚（关节限位、扭矩、动作变化率等）。
 * **观测** :
-              - **actor**: 带噪声本体感知 + 10 步球位置窗口
+              - **actor**: 带噪声本体感知 + 10 步球位置窗口 +
+                腰部高度预计击球点与 ``time_to_hit``
               - **critic**: 完整干净状态（本体感知 + 球/球拍速度 +
-                相对向量 + 预测落点）
+                相对向量 + 预测落点/击球点）
 """
 
 from __future__ import annotations
 
 import math
+from dataclasses import dataclass
+from typing import Literal
 
 from mjlab.envs import ManagerBasedRlEnvCfg
 from mjlab.managers.action_manager import ActionTermCfg
@@ -50,6 +53,7 @@ from mjlab.tasks.tennis.scene import (
   get_tennis_ball_cfg,
   get_tennis_court_cfg,
   get_tennis_terrain_cfg,
+  resolve_court_scale,
 )
 from mjlab.utils.noise import UniformNoiseCfg as Unoise
 from mjlab.viewer import ViewerConfig
@@ -78,10 +82,10 @@ BALL_SPAWN_Y_RANGE = (-COURT_HALF_WIDTH * 0.83, COURT_HALF_WIDTH * 0.83)
 BALL_SPAWN_Z_RANGE = (1.0, 1.6)
 ROBOT_RESET_X_CENTER = 0.5 * (ROBOT_RESET_X_RANGE[0] + ROBOT_RESET_X_RANGE[1])
 BALL_TARGET_INITIAL_X_RANGE = (
-  ROBOT_RESET_X_CENTER - 0.35,
-  ROBOT_RESET_X_CENTER + 0.35,
+  ROBOT_RESET_X_CENTER - 0.15,
+  ROBOT_RESET_X_CENTER + 0.15,
 )
-BALL_TARGET_INITIAL_Y_RANGE = (-0.35, 0.35)
+BALL_TARGET_INITIAL_Y_RANGE = (-0.15, 0.15)
 BALL_TARGET_X_RANGE = (0.8, BASELINE_SELF_X - 0.8)
 BALL_TARGET_Y_RANGE = (-COURT_HALF_WIDTH, COURT_HALF_WIDTH)
 BALL_TARGET_CURRICULUM_SUCCESS_THRESHOLD = 0.8
@@ -120,14 +124,152 @@ DECODER_STATE_TERMS = (
   "actions",
 )
 
+# ---------------------------------------------------------------------------
+# 球场尺寸类型（供 tyro CLI 自动提示）。
+# ---------------------------------------------------------------------------
+CourtSizeType = Literal["standard", "half", "quarter", "mini", "tiny"]
+DEFAULT_COURT_SIZE: CourtSizeType = "quarter"
 
-def make_tennis_latent_env_cfg() -> ManagerBasedRlEnvCfg:
+# ---------------------------------------------------------------------------
+# 预计击球点参数。
+# ---------------------------------------------------------------------------
+HIT_POINT_HEIGHT_OFFSET = 0.05
+HIT_POINT_MAX_HORIZON = 1.5
+
+
+def _apply_court_geometry(cfg: "TennisLatentEnvCfg") -> None:
+  """根据 cfg.court_size 重新计算所有几何相关字段，原地修改 cfg。
+
+  由 ``TennisLatentEnvCfg.__post_init__`` 调用，因此在 tyro 通过 CLI
+  覆盖 ``--env.court-size`` 时也会自动触发。
+  """
+  scale = resolve_court_scale(cfg.court_size)
+  cl = COURT_HALF_LENGTH * scale
+  cw = COURT_HALF_WIDTH * scale
+
+  robot_reset_x_range = (cl * 0.50, cl * 0.64)
+  robot_reset_y_range = (-cw * 0.17, cw * 0.17)
+  robot_reset_x_center = 0.5 * (robot_reset_x_range[0] + robot_reset_x_range[1])
+
+  ball_spawn_y_range = (-cw * 0.83, cw * 0.83)
+  ball_target_initial_x_range = (
+    robot_reset_x_center - 0.15 * scale,
+    robot_reset_x_center + 0.15 * scale,
+  )
+  ball_target_initial_y_range = (-0.15 * scale, 0.15 * scale)
+  ball_target_x_range = (
+    max(0.3, 0.8 * scale),
+    max(0.5, cl - 0.8 * scale),
+  )
+  ball_target_y_range = (-cw, cw)
+  court_out_x_limits = (-cl - 1.0, cl + 1.0)
+  court_out_y_limits = (-cw - 0.5, cw + 0.5)
+
+  # -- 场景 --
+  cfg.scene.entities["court"] = get_tennis_court_cfg(scale=scale)
+  cfg.scene.env_spacing = 2.0 * (cl + 2.0)
+  cfg.scene.extent = cl + 2.0
+
+  # -- 视角 --
+  cfg.viewer.distance = max(3.0, cl * 0.9)
+
+  # -- 机器人复位 --
+  cfg.events["reset_robot_base"].params["pose_range"]["x"] = robot_reset_x_range
+  cfg.events["reset_robot_base"].params["pose_range"]["y"] = robot_reset_y_range
+
+  # -- 出界判定 --
+  cfg.terminations["ball_out_of_bounds"].params["x_limits"] = court_out_x_limits
+  cfg.terminations["ball_out_of_bounds"].params["y_limits"] = court_out_y_limits
+
+  # -- 球发球器（reset_ball 与课程共享同一对象）--
+  ball_provider_cfg = RandomFeederCfg(
+    ball_cfg=_BALL_CFG,
+    spawn_x_range=BALL_SPAWN_X_RANGE,
+    spawn_y_range=ball_spawn_y_range,
+    spawn_z_range=BALL_SPAWN_Z_RANGE,
+    target_x_range=ball_target_initial_x_range,
+    target_y_range=ball_target_initial_y_range,
+    lin_vel_z_range=(1.5, 3.5),
+  )
+  cfg.events["reset_ball"].params["provider_cfg"] = ball_provider_cfg
+
+  # -- 课程 --
+  cp = cfg.curriculum["ball_target_region"].params
+  cp["provider_cfg"] = ball_provider_cfg
+  cp["initial_target_x_range"] = ball_target_initial_x_range
+  cp["initial_target_y_range"] = ball_target_initial_y_range
+  cp["final_target_x_range"] = ball_target_x_range
+  cp["final_target_y_range"] = ball_target_y_range
+
+
+@dataclass(kw_only=True)
+class TennisLatentEnvCfg(ManagerBasedRlEnvCfg):
+  """带运行时球场尺寸参数的网球潜变量环境配置。
+
+  在训练或推演启动时通过 ``--env.court-size <size>`` 传入球场大小，
+  无需使用不同的任务名称。
+
+  示例::
+
+    uv run train Mjlab-Tennis-Hit-Unitree-G1                   # 默认 quarter
+    uv run train Mjlab-Tennis-Hit-Unitree-G1 --env.court-size standard
+  """
+
+  court_size: CourtSizeType = DEFAULT_COURT_SIZE
+  """球场尺寸预设，默认 ``"quarter"``（仍可移动，但不至于退化成站桩）。
+
+  可选值：``"standard"`` / ``"half"`` / ``"quarter"`` / ``"mini"`` / ``"tiny"``。
+  """
+
+  def __post_init__(self) -> None:
+    _apply_court_geometry(self)
+
+
+def make_tennis_latent_env_cfg(
+  court_size: CourtSizeType = DEFAULT_COURT_SIZE,
+) -> TennisLatentEnvCfg:
   """创建重构后的击球任务，使用冻结低层潜变量解码器。
 
   机器人专属模块负责填充机器人资产、动作缩放和视角主体。
   actor 接收解码器兼容的本体感知（带噪声）以及 10 步球位置窗口；
   critic 接收相同的本体感知（无噪声），并追加球/球拍速度和预测落点。
+
+  参数:
+    court_size: 球场尺寸预设，默认 ``"quarter"``。可选值见 :data:`CourtSizeType`。
   """
+  #
+  # 根据 court_size 计算当前尺寸下的几何参数。
+  #
+  scale = resolve_court_scale(court_size)
+  cl = COURT_HALF_LENGTH * scale  # 半场长度
+  cw = COURT_HALF_WIDTH * scale  # 半场宽度
+  baseline_self_x = cl  # 己方底线 x
+
+  # 机器人复位区（己方半场中后部）。
+  robot_reset_x_range = (cl * 0.50, cl * 0.64)
+  robot_reset_y_range = (-cw * 0.17, cw * 0.17)
+  robot_reset_x_center = 0.5 * (robot_reset_x_range[0] + robot_reset_x_range[1])
+
+  # 球发球生成区。
+  ball_spawn_y_range = (-cw * 0.83, cw * 0.83)
+
+  # 落点课程范围（从机器人附近逐步扩展到全半场）。
+  ball_target_initial_x_range = (
+    robot_reset_x_center - 0.15 * scale,
+    robot_reset_x_center + 0.15 * scale,
+  )
+  ball_target_initial_y_range = (-0.15 * scale, 0.15 * scale)
+  ball_target_x_range = (max(0.3, 0.8 * scale), max(0.5, baseline_self_x - 0.8 * scale))
+  ball_target_y_range = (-cw, cw)
+
+  # 球场出界判定边界（比实际线条略宽松）。
+  court_out_x_limits = (-cl - 1.0, baseline_self_x + 1.0)
+  court_out_y_limits = (-cw - 0.5, cw + 0.5)
+
+  # 场景间距。
+  scene_extent = cl + 2.0
+  scene_env_spacing = 2.0 * scene_extent
+  viewer_distance = max(3.0, cl * 0.9)
   # -------------------------------------------------------------------------
   # 解码器兼容的本体感知（actor 与 critic 共用）。
   # 动作项将从 actor 观测中精确切出 DECODER_STATE_TERMS。
@@ -159,9 +301,9 @@ def make_tennis_latent_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
   }
 
-  # ---- Actor：带噪声本体感知 + 10 步球位置窗口 ---
+  # ---- Actor：带噪声本体感知 + 10 步球位置窗口 + 预计击球点 ---
   actor_terms = dict(proprio_actor)
-  # 球相对于机器人底部的位置，最近 10 帧（展平后 => 30 维）。
+  # 球相对于球拍中心的位置，最近 10 帧（展平后 => 30 维）。
   actor_terms["ball_pos_window"] = ObservationTermCfg(
     func=mdp.racket_to_ball_b,
     params={
@@ -172,6 +314,16 @@ def make_tennis_latent_env_cfg() -> ManagerBasedRlEnvCfg:
     noise=Unoise(n_min=-0.01, n_max=0.01),
     history_length=10,
     flatten_history_dim=True,
+  )
+  actor_terms["predicted_hit_point"] = ObservationTermCfg(
+    func=mdp.ball_predicted_hit_point_b,
+    params={
+      "ball_cfg": _BALL_CFG,
+      "robot_cfg": _ROBOT_CFG,
+      "hit_height_offset": HIT_POINT_HEIGHT_OFFSET,
+      "max_horizon": HIT_POINT_MAX_HORIZON,
+    },
+    noise=Unoise(n_min=-0.01, n_max=0.01),
   )
 
   # ---- Critic：干净本体感知 + 尽可能完整的状态信息 ----------
@@ -201,6 +353,15 @@ def make_tennis_latent_env_cfg() -> ManagerBasedRlEnvCfg:
         func=mdp.ball_predicted_landing_b,
         params={"ball_cfg": _BALL_CFG, "robot_cfg": _ROBOT_CFG},
       ),
+      "ball_predicted_hit_point": ObservationTermCfg(
+        func=mdp.ball_predicted_hit_point_b,
+        params={
+          "ball_cfg": _BALL_CFG,
+          "robot_cfg": _ROBOT_CFG,
+          "hit_height_offset": HIT_POINT_HEIGHT_OFFSET,
+          "max_horizon": HIT_POINT_MAX_HORIZON,
+        },
+      ),
     }
   )
 
@@ -217,9 +378,9 @@ def make_tennis_latent_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
   }
 
-  # -------------------------------------------------------------------------
+  #
   # 动作：潜变量 -> 冻结解码器 -> 关节位置指令。
-  # -------------------------------------------------------------------------
+  #
   actions: dict[str, ActionTermCfg] = {
     "latent_joint_pos": FrozenDecoderLatentJointPositionActionCfg(
       entity_name="robot",
@@ -234,24 +395,24 @@ def make_tennis_latent_env_cfg() -> ManagerBasedRlEnvCfg:
   ball_provider_cfg = RandomFeederCfg(
     ball_cfg=_BALL_CFG,
     spawn_x_range=BALL_SPAWN_X_RANGE,
-    spawn_y_range=BALL_SPAWN_Y_RANGE,
+    spawn_y_range=ball_spawn_y_range,
     spawn_z_range=BALL_SPAWN_Z_RANGE,
-    target_x_range=BALL_TARGET_X_RANGE,
-    target_y_range=BALL_TARGET_Y_RANGE,
+    target_x_range=ball_target_initial_x_range,
+    target_y_range=ball_target_initial_y_range,
     lin_vel_z_range=(1.5, 3.5),
   )
 
-  # -------------------------------------------------------------------------
+  #
   # 重置事件。
-  # -------------------------------------------------------------------------
+  #
   events = {
     "reset_robot_base": EventTermCfg(
       func=mdp.reset_root_state_uniform,
       mode="reset",
       params={
         "pose_range": {
-          "x": ROBOT_RESET_X_RANGE,
-          "y": ROBOT_RESET_Y_RANGE,
+          "x": robot_reset_x_range,
+          "y": robot_reset_y_range,
           "yaw": (ROBOT_RESET_YAW, ROBOT_RESET_YAW),
         },
         "velocity_range": {},
@@ -287,9 +448,9 @@ def make_tennis_latent_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
   }
 
-  # -------------------------------------------------------------------------
+  #
   # 球拍-球接触传感器（驱动奖励与终止条件）。
-  # -------------------------------------------------------------------------
+  #
   hit_sensor = ContactSensorCfg(
     name=_RACKET_BALL_SENSOR,
     primary=ContactMatch(mode="geom", pattern="tennis_ball", entity="ball"),
@@ -305,7 +466,7 @@ def make_tennis_latent_env_cfg() -> ManagerBasedRlEnvCfg:
   )
 
   # -------------------------------------------------------------------------
-  # 奖励：分层里程碑（接近 -> 击球 -> 越网）
+  # 奖励：分层里程碑（接近 -> 击球）
   # 加上标准正则化惩罚。
   # -------------------------------------------------------------------------
   tracker_params = {
@@ -318,19 +479,21 @@ def make_tennis_latent_env_cfg() -> ManagerBasedRlEnvCfg:
 
   rewards = {
     # --- 目标驱动（分层）----------------------------------------------
-    "approach_ball": RewardTermCfg(
-      func=mdp.racket_to_ball_distance_dense,
-      weight=5.0,
+    "approach_point": RewardTermCfg(
+      func=mdp.racket_to_predicted_hit_point_dense,
+      weight=10,
       params={
         "std": 0.4,
         "racket_cfg": _RACKET_CFG,
         "ball_cfg": _BALL_CFG,
         "robot_cfg": _ROBOT_CFG,
+        "hit_height_offset": HIT_POINT_HEIGHT_OFFSET,
+        "max_horizon": HIT_POINT_MAX_HORIZON,
       },
     ),
     "racket_towards_ball": RewardTermCfg(
       func=mdp.racket_towards_ball_velocity,
-      weight=1,
+      weight=5,
       params={
         **dict(tracker_params),
         "racket_cfg": _RACKET_CFG,
@@ -342,12 +505,7 @@ def make_tennis_latent_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
     "racket_hit_event": RewardTermCfg(
       func=mdp.racket_hit_event,
-      weight=50.0,
-      params=dict(tracker_params),
-    ),
-    "crossed_net_event": RewardTermCfg(
-      func=mdp.crossed_net_event,
-      weight=200.0,
+      weight=100.0,
       params=dict(tracker_params),
     ),
     # --- 存活奖励 ----------------------------------------------------------
@@ -401,16 +559,16 @@ def make_tennis_latent_env_cfg() -> ManagerBasedRlEnvCfg:
     "ball_out_of_bounds": TerminationTermCfg(
       func=mdp.ball_in_play,
       params={
-        "x_limits": COURT_OUT_X_LIMITS,
-        "y_limits": COURT_OUT_Y_LIMITS,
+        "x_limits": court_out_x_limits,
+        "y_limits": court_out_y_limits,
         "z_limits": COURT_OUT_Z_LIMITS,
       },
     ),
+    "first_racket_hit": TerminationTermCfg(
+      func=mdp.first_racket_hit, params=dict(tracker_params)
+    ),
     "second_contact": TerminationTermCfg(
       func=mdp.second_contact, params=dict(tracker_params)
-    ),
-    "crossed_net_after_hit": TerminationTermCfg(
-      func=mdp.crossed_net_after_hit, params=dict(tracker_params)
     ),
   }
 
@@ -419,11 +577,11 @@ def make_tennis_latent_env_cfg() -> ManagerBasedRlEnvCfg:
       func=mdp.random_feeder_target_curriculum,
       params={
         "provider_cfg": ball_provider_cfg,
-        "initial_target_x_range": BALL_TARGET_INITIAL_X_RANGE,
-        "initial_target_y_range": BALL_TARGET_INITIAL_Y_RANGE,
-        "final_target_x_range": BALL_TARGET_X_RANGE,
-        "final_target_y_range": BALL_TARGET_Y_RANGE,
-        "success_term_name": "crossed_net_after_hit",
+        "initial_target_x_range": ball_target_initial_x_range,
+        "initial_target_y_range": ball_target_initial_y_range,
+        "final_target_x_range": ball_target_x_range,
+        "final_target_y_range": ball_target_y_range,
+        "success_term_name": "first_racket_hit",
         "success_threshold": BALL_TARGET_CURRICULUM_SUCCESS_THRESHOLD,
         "success_window": BALL_TARGET_CURRICULUM_WINDOW,
         "num_stages": BALL_TARGET_CURRICULUM_STAGES,
@@ -431,17 +589,18 @@ def make_tennis_latent_env_cfg() -> ManagerBasedRlEnvCfg:
     )
   }
 
-  cfg = ManagerBasedRlEnvCfg(
+  cfg = TennisLatentEnvCfg(
+    court_size=court_size,
     scene=SceneCfg(
       terrain=get_tennis_terrain_cfg(),
       entities={
         "ball": get_tennis_ball_cfg(),
-        "court": get_tennis_court_cfg(),
+        "court": get_tennis_court_cfg(scale=scale),
       },
       sensors=(hit_sensor,),
       num_envs=1,
-      env_spacing=SCENE_ENV_SPACING,
-      extent=SCENE_EXTENT,
+      env_spacing=scene_env_spacing,
+      extent=scene_extent,
     ),
     observations=observations,
     actions=actions,
@@ -453,7 +612,7 @@ def make_tennis_latent_env_cfg() -> ManagerBasedRlEnvCfg:
       origin_type=ViewerConfig.OriginType.ASSET_BODY,
       entity_name="robot",
       body_name="torso_link",
-      distance=VIEWER_DISTANCE,
+      distance=viewer_distance,
       elevation=-18.0,
       azimuth=140.0,
       fovy=55.0,
