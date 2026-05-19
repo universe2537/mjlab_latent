@@ -58,7 +58,7 @@
     <link rel="prev" title="Research" href="research.html" />
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="docsearch:language" content="en"/>
-    <meta name="docbuild:last-update" content="May 13, 2026"/>
+    <meta name="docbuild:last-update" content="May 19, 2026"/>
   </head>
   
   
@@ -544,6 +544,11 @@ action reconstruction plus KL regularization.</p></li>
 racket-equipped G1 that composes the robot, a free tennis ball, and court
 props as separate mjlab entities while training a high-level latent policy
 through a frozen distillation decoder.</p></li>
+<li><p>Added <code class="docutils literal notranslate"><span class="pre">scripts/tools/check_tennis_decoder_coverage.py</span></code> to smoke-test
+the frozen tennis decoder before high-level PPO training by rolling out
+random latent trajectories and reporting first-hit success rate, minimum
+racket-to-ball distance, decoded-action statistics, and current curriculum
+state.</p></li>
 </ul>
 </section>
 <section id="changed">
@@ -557,14 +562,19 @@ and net height, and scaled the default reset / feed regions and viewer
 distance to match the larger court.</p></li>
 <li><p>Added a success-rate-based serve-target curriculum to <code class="docutils literal notranslate"><span class="pre">Mjlab-Tennis-Hit</span></code>:
 feeds now start centered near the robot and expand outward once the recent
-cross-net success rate reaches 80%, eventually covering the full receiver
+first-hit success rate reaches 80%, eventually covering the full receiver
 half court.</p></li>
 <li><p>Updated <code class="docutils literal notranslate"><span class="pre">Mjlab-Tennis-Hit</span></code> termination semantics for the hit-only task:
-episodes now end on the first ball bounce or on a second racket contact,
-rather than on any generic second contact.</p></li>
+episodes now end immediately on the first valid racket hit, while misses
+still terminate on the first ball bounce or on a later extra contact.</p></li>
 <li><p>Added a small dense <code class="docutils literal notranslate"><span class="pre">Mjlab-Tennis-Hit</span></code> reward that encourages the racket
 to move toward the ball before the first hit, complementing the existing
 distance-to-ball shaping term.</p></li>
+<li><p>Updated <code class="docutils literal notranslate"><span class="pre">Mjlab-Tennis-Hit</span></code> high-level observations to expose a predicted
+waist-height hit point with <code class="docutils literal notranslate"><span class="pre">time_to_hit</span></code>, replaced the dense
+<code class="docutils literal notranslate"><span class="pre">approach_ball</span></code> shaping term with <code class="docutils literal notranslate"><span class="pre">approach_point</span></code> toward that future
+contact location, and raised the default registered court size from
+<code class="docutils literal notranslate"><span class="pre">mini</span></code> to <code class="docutils literal notranslate"><span class="pre">quarter</span></code> so G1 has room to reposition before contact.</p></li>
 <li><p>Simplified <code class="docutils literal notranslate"><span class="pre">Mjlab-Tennis-Hit</span></code> ball reset logic to keep only the random
 feeder path, removing the unused fixed-spawn and ballistic-opponent ball
 provider variants.</p></li>
@@ -1242,7 +1252,7 @@ By The mjlab Developers
   
   <div class="footer-item">
     <p class="last-updated">
-  Last updated on May 13, 2026.
+  Last updated on May 19, 2026.
   <br/>
 </p>
   </div>
