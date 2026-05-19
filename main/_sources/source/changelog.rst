@@ -8,6 +8,10 @@ Upcoming version (not yet released)
 Added
 ^^^^^
 
+- Added ``Mjlab-Velocity-Stairs-Unitree-Go1``, a Go1 velocity task with a
+  mixed ascending/descending pyramid-stair curriculum whose peak height grows
+  to the robot's nominal body height, along with stair-specific reward shaping
+  and narrower forward-only velocity commands for focused stair locomotion.
 - Added ``--log-root`` CLI option to ``train``, ``play``, and ``evaluate``
   scripts for choosing where training logs are stored. Defaults to
   ``logs/rsl_rl`` (unchanged behavior). Useful for directing outputs to a
