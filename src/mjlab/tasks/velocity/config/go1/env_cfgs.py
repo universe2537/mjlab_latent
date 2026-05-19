@@ -25,8 +25,24 @@ from mjlab.sensor import (
 from mjlab.tasks.velocity import mdp
 from mjlab.tasks.velocity.mdp import UniformVelocityCommandCfg
 from mjlab.tasks.velocity.velocity_env_cfg import make_velocity_env_cfg
+from mjlab.terrains.config import pyramid_stairs, pyramid_stairs_inv
+from mjlab.terrains.terrain_generator import TerrainGeneratorCfg
 
 TerrainType = Literal["rough", "obstacles"]
+
+
+def _step_height_for_peak_height(
+  terrain_size: tuple[float, float],
+  border_width: float,
+  platform_width: float,
+  step_width: float,
+  peak_height: float,
+) -> float:
+  """Convert a target pyramid peak height into the per-step height parameter."""
+  usable_x = terrain_size[0] - 2.0 * border_width - platform_width
+  usable_y = terrain_size[1] - 2.0 * border_width - platform_width
+  num_steps = max(1, int(min(usable_x, usable_y) / (2.0 * step_width)))
+  return peak_height / (num_steps + 1)
 
 
 def unitree_go1_rough_env_cfg(
@@ -307,5 +323,136 @@ def unitree_go1_flat_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
     assert isinstance(twist_cmd, UniformVelocityCommandCfg)
     twist_cmd.ranges.lin_vel_x = (-1.5, 2.0)
     twist_cmd.ranges.ang_vel_z = (-0.7, 0.7)
+
+  return cfg
+
+
+def unitree_go1_stairs_env_cfg(
+  play: bool = False,
+) -> ManagerBasedRlEnvCfg:
+  """Create Unitree Go1 stairs velocity configuration."""
+  cfg = unitree_go1_rough_env_cfg(play=play)
+  site_names = ("FR", "FL", "RR", "RL")
+
+  terrain_size = (8.0, 8.0)
+  stair_border_width = 0.5
+  stair_platform_width = 2.0
+  stair_step_width = 0.4
+  min_peak_height = 0.06
+  max_peak_height = 0.278
+  step_height_range = (
+    _step_height_for_peak_height(
+      terrain_size,
+      stair_border_width,
+      stair_platform_width,
+      stair_step_width,
+      min_peak_height,
+    ),
+    _step_height_for_peak_height(
+      terrain_size,
+      stair_border_width,
+      stair_platform_width,
+      stair_step_width,
+      max_peak_height,
+    ),
+  )
+
+  assert cfg.scene.terrain is not None
+  cfg.scene.terrain.terrain_generator = TerrainGeneratorCfg(
+    size=terrain_size,
+    border_width=20.0,
+    num_rows=10,
+    num_cols=2,
+    curriculum=True,
+    difficulty_range=(0.0, 1.0),
+    sub_terrains={
+      "up_stairs": pyramid_stairs_inv(
+        proportion=0.5,
+        step_height_range=step_height_range,
+        step_width=stair_step_width,
+        platform_width=stair_platform_width,
+        border_width=stair_border_width,
+      ),
+      "down_stairs": pyramid_stairs(
+        proportion=0.5,
+        step_height_range=step_height_range,
+        step_width=stair_step_width,
+        platform_width=stair_platform_width,
+        border_width=stair_border_width,
+      ),
+    },
+    add_lights=True,
+  )
+  cfg.scene.terrain.max_init_terrain_level = 0
+
+  twist_cmd = cfg.commands["twist"]
+  assert isinstance(twist_cmd, UniformVelocityCommandCfg)
+  twist_cmd.heading_command = False
+  twist_cmd.rel_standing_envs = 0.0
+  twist_cmd.rel_heading_envs = 0.0
+  twist_cmd.rel_forward_envs = 1.0
+  twist_cmd.resampling_time_range = (8.0, 8.0)
+  twist_cmd.ranges.lin_vel_x = (0.4, 0.6)
+  twist_cmd.ranges.lin_vel_y = (0.0, 0.0)
+  twist_cmd.ranges.ang_vel_z = (0.0, 0.0)
+  twist_cmd.ranges.heading = None
+
+  cfg.curriculum.pop("command_vel", None)
+
+  cfg.rewards["track_linear_velocity"] = RewardTermCfg(
+    func=mdp.track_linear_velocity_dynamic,
+    weight=2.0,
+    params={
+      "command_name": "twist",
+      "std": math.sqrt(0.25),
+      "max_std": math.sqrt(0.5),
+      "min_command": 0.2,
+      "max_command": 0.6,
+    },
+  )
+  cfg.rewards["track_angular_velocity"] = RewardTermCfg(
+    func=mdp.track_angular_velocity_dynamic,
+    weight=2.0,
+    params={
+      "command_name": "twist",
+      "std": math.sqrt(0.5),
+      "max_std": math.sqrt(0.8),
+      "min_command": 0.05,
+      "max_command": 0.4,
+    },
+  )
+  cfg.rewards["correct_base_height"] = RewardTermCfg(
+    func=mdp.correct_base_height,
+    weight=-2.0,
+    params={
+      "sensor_name": "terrain_scan",
+      "target_height": 0.28,
+    },
+  )
+  cfg.rewards["action_smoothness"] = RewardTermCfg(
+    func=envs_mdp.action_acc_l2,
+    weight=-0.05,
+  )
+  cfg.rewards["pose"].weight = 0.2
+  cfg.rewards["hip_to_default"] = RewardTermCfg(
+    func=mdp.hip_to_default_cost,
+    weight=-0.05,
+    params={
+      "asset_cfg": SceneEntityCfg(
+        "robot",
+        joint_names=(r".*(FR|FL|RR|RL)_hip_joint.*",),
+      ),
+    },
+  )
+  cfg.rewards.pop("foot_clearance", None)
+  cfg.rewards["feet_regulation"] = RewardTermCfg(
+    func=mdp.feet_regulation,
+    weight=-0.05,
+    params={
+      "height_sensor_name": "foot_height_scan",
+      "target_height": 0.12,
+      "asset_cfg": SceneEntityCfg("robot", site_names=site_names),
+    },
+  )
 
   return cfg

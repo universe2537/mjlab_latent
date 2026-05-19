@@ -197,3 +197,53 @@ def test_go1_velocity_has_correct_action_scale(
     assert joint_pos_action.scale == GO1_ACTION_SCALE, (
       f"Task {task_id} action scale mismatch, expected GO1_ACTION_SCALE"
     )
+
+
+def test_stairs_velocity_uses_stair_only_terrain() -> None:
+  """Stairs task should use a mixed up/down pyramid stair curriculum."""
+  cfg = load_env_cfg("Mjlab-Velocity-Stairs-Unitree-Go1")
+
+  assert cfg.scene.terrain is not None
+  assert cfg.scene.terrain.terrain_generator is not None
+
+  terrain_generator = cfg.scene.terrain.terrain_generator
+  assert terrain_generator.curriculum is True
+  assert terrain_generator.difficulty_range == (0.0, 1.0)
+  assert tuple(terrain_generator.sub_terrains.keys()) == (
+    "up_stairs",
+    "down_stairs",
+  )
+  assert cfg.scene.terrain.max_init_terrain_level == 0
+
+
+def test_stairs_velocity_uses_consistent_forward_commands() -> None:
+  """Stairs task should bias commands toward straight, steady motion."""
+  cfg = load_env_cfg("Mjlab-Velocity-Stairs-Unitree-Go1")
+
+  twist_cmd = cfg.commands["twist"]
+  assert isinstance(twist_cmd, UniformVelocityCommandCfg)
+  assert twist_cmd.heading_command is False
+  assert twist_cmd.rel_standing_envs == 0.0
+  assert twist_cmd.rel_heading_envs == 0.0
+  assert twist_cmd.rel_forward_envs == 1.0
+  assert twist_cmd.resampling_time_range == (8.0, 8.0)
+  assert twist_cmd.ranges.lin_vel_x == (0.4, 0.6)
+  assert twist_cmd.ranges.lin_vel_y == (0.0, 0.0)
+  assert twist_cmd.ranges.ang_vel_z == (0.0, 0.0)
+  assert twist_cmd.ranges.heading is None
+  assert "command_vel" not in cfg.curriculum
+  assert "correct_base_height" in cfg.rewards
+  assert "action_smoothness" in cfg.rewards
+  assert "hip_to_default" in cfg.rewards
+  assert "feet_regulation" in cfg.rewards
+  assert "foot_clearance" not in cfg.rewards
+
+
+def test_stairs_velocity_play_keeps_random_stair_sampling() -> None:
+  """Stairs play mode should sample different stair levels on reset."""
+  cfg = load_env_cfg("Mjlab-Velocity-Stairs-Unitree-Go1", play=True)
+
+  assert cfg.scene.terrain is not None
+  assert cfg.scene.terrain.terrain_generator is not None
+  assert cfg.scene.terrain.terrain_generator.curriculum is True
+  assert "randomize_terrain" in cfg.events

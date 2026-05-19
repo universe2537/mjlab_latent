@@ -182,3 +182,5 @@ design and abstractions mjlab builds upon.
 Thanks to the MuJoCo Warp team — especially Erik Frey and Taylor Howell — for
 answering our questions, giving helpful feedback, and implementing features
 based on our requests countless times.
+
+现在帮我更正bug,我想要ball_providers的逻辑在于，ball_provider会在给定的区域内随机刷新球（默认是球网上空，后期可能会是敌方半场），球的目标落点也是可编程的，默认状态下在己方合法半场内随机赋值（落点是二维的，或者说z一定是0），然后根据初始点和结束点，以及z方向速度（默认随机，也可控）计算x,y的速度，然后生成球。

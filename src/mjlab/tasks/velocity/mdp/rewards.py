@@ -8,7 +8,7 @@ import torch
 from mjlab.entity import Entity
 from mjlab.managers.reward_manager import RewardTermCfg
 from mjlab.managers.scene_entity_config import SceneEntityCfg
-from mjlab.sensor import BuiltinSensor, ContactSensor
+from mjlab.sensor import BuiltinSensor, ContactSensor, RayCastSensor
 from mjlab.sensor.terrain_height_sensor import TerrainHeightSensor
 from mjlab.tasks.velocity.mdp.terrain_utils import terrain_normal_from_sensors
 from mjlab.utils.lab_api.math import quat_apply, quat_apply_inverse
@@ -44,6 +44,65 @@ def track_linear_velocity(
   return torch.exp(-lin_vel_error / std**2)
 
 
+def _terrain_aware_tracking_std(
+  env: ManagerBasedRlEnv,
+  command_abs: torch.Tensor,
+  std: float,
+  max_std: float,
+  min_command: float,
+  max_command: float,
+) -> torch.Tensor:
+  """Scale tracking std by both command magnitude and terrain curriculum level."""
+  base_std = torch.full_like(command_abs, std)
+
+  if max_command <= min_command:
+    return base_std
+
+  terrain = env.scene.terrain
+  if terrain is None or not hasattr(terrain, "terrain_levels"):
+    return base_std
+
+  max_level = max(int(getattr(terrain, "max_terrain_level", 1)) - 1, 1)
+  level_ratio = terrain.terrain_levels.float() / float(max_level)
+  terrain_std = base_std + level_ratio * (max_std - std)
+
+  command_ratio = ((command_abs - min_command) / (max_command - min_command)).clamp(
+    0.0, 1.0
+  )
+  return base_std + command_ratio * (terrain_std - base_std)
+
+
+def track_linear_velocity_dynamic(
+  env: ManagerBasedRlEnv,
+  std: float,
+  max_std: float,
+  min_command: float,
+  max_command: float,
+  command_name: str,
+  asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+) -> torch.Tensor:
+  """Track linear velocity with terrain-aware dynamic tolerance."""
+  asset: Entity = env.scene[asset_cfg.name]
+  command = env.command_manager.get_command(command_name)
+  assert command is not None, f"Command '{command_name}' not found."
+
+  actual = asset.data.root_link_lin_vel_b
+  xy_error = torch.sum(torch.square(command[:, :2] - actual[:, :2]), dim=1)
+  z_error = torch.square(actual[:, 2])
+  lin_vel_error = xy_error + z_error
+
+  command_abs = torch.norm(command[:, :2], dim=1)
+  effective_std = _terrain_aware_tracking_std(
+    env,
+    command_abs,
+    std,
+    max_std,
+    min_command,
+    max_command,
+  )
+  return torch.exp(-lin_vel_error / effective_std**2)
+
+
 def track_angular_velocity(
   env: ManagerBasedRlEnv,
   std: float,
@@ -62,6 +121,37 @@ def track_angular_velocity(
   xy_error = torch.sum(torch.square(actual[:, :2]), dim=1)
   ang_vel_error = z_error + xy_error
   return torch.exp(-ang_vel_error / std**2)
+
+
+def track_angular_velocity_dynamic(
+  env: ManagerBasedRlEnv,
+  std: float,
+  max_std: float,
+  min_command: float,
+  max_command: float,
+  command_name: str,
+  asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+) -> torch.Tensor:
+  """Track angular velocity with terrain-aware dynamic tolerance."""
+  asset: Entity = env.scene[asset_cfg.name]
+  command = env.command_manager.get_command(command_name)
+  assert command is not None, f"Command '{command_name}' not found."
+
+  actual = asset.data.root_link_ang_vel_b
+  z_error = torch.square(command[:, 2] - actual[:, 2])
+  xy_error = torch.sum(torch.square(actual[:, :2]), dim=1)
+  ang_vel_error = z_error + xy_error
+
+  command_abs = torch.abs(command[:, 2])
+  effective_std = _terrain_aware_tracking_std(
+    env,
+    command_abs,
+    std,
+    max_std,
+    min_command,
+    max_command,
+  )
+  return torch.exp(-ang_vel_error / effective_std**2)
 
 
 class upright:
@@ -268,6 +358,26 @@ def feet_clearance(
   return cost
 
 
+def feet_regulation(
+  env: ManagerBasedRlEnv,
+  height_sensor_name: str,
+  target_height: float,
+  asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+) -> torch.Tensor:
+  """Encourage higher swing feet when horizontal foot speed increases."""
+  asset: Entity = env.scene[asset_cfg.name]
+  height_sensor = env.scene[height_sensor_name]
+  assert isinstance(height_sensor, TerrainHeightSensor), (
+    f"feet_regulation requires a TerrainHeightSensor, got {type(height_sensor).__name__}"
+  )
+
+  foot_height = height_sensor.data.heights.clamp(min=0.0)
+  foot_vel_xy = asset.data.site_lin_vel_w[:, asset_cfg.site_ids, :2]
+  vel_sq = torch.sum(torch.square(foot_vel_xy), dim=-1)
+  height_scale = max(target_height, 1e-3)
+  return torch.sum(vel_sq * torch.exp(-foot_height / height_scale), dim=1)
+
+
 class feet_swing_height:
   """Penalize deviation from target swing height, evaluated at landing."""
 
@@ -380,6 +490,41 @@ def soft_landing(
       active = (total_command > command_threshold).float()
       cost = cost * active
   return cost
+
+
+def correct_base_height(
+  env: ManagerBasedRlEnv,
+  sensor_name: str,
+  target_height: float,
+  asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+) -> torch.Tensor:
+  """Penalize deviation from a terrain-relative target base height."""
+  asset: Entity = env.scene[asset_cfg.name]
+  sensor = env.scene[sensor_name]
+  assert isinstance(sensor, RayCastSensor), (
+    f"correct_base_height requires a RayCastSensor, got {type(sensor).__name__}"
+  )
+
+  valid = sensor.data.distances >= 0
+  hit_z = sensor.data.hit_pos_w[..., 2]
+  valid_count = valid.sum(dim=1).clamp(min=1)
+  mean_ground_z = (hit_z * valid.float()).sum(dim=1) / valid_count.float()
+  base_height = asset.data.root_link_pos_w[:, 2] - mean_ground_z
+  return torch.square(base_height - target_height)
+
+
+def hip_to_default_cost(
+  env: ManagerBasedRlEnv,
+  asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+) -> torch.Tensor:
+  """Penalize hip joints deviating too far from their default pose."""
+  asset: Entity = env.scene[asset_cfg.name]
+  default_joint_pos = asset.data.default_joint_pos
+  assert default_joint_pos is not None
+  joint_pos = asset.data.joint_pos[:, asset_cfg.joint_ids]
+  return torch.sum(
+    torch.abs(joint_pos - default_joint_pos[:, asset_cfg.joint_ids]), dim=1
+  )
 
 
 class variable_posture:

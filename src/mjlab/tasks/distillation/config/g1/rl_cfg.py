@@ -49,10 +49,11 @@ def unitree_g1_distillation_runner_cfg() -> DistillationRunnerCfg:
       "command",
     ),
     action_loss_weight=1.0,
-    kl_loss_weight=1.0e-3,
-    kl_loss_weight_end=5.0e-3,
-    kl_loss_anneal_start=2500,
-    kl_loss_anneal_end=10000,
+
+    # kl_loss_weight=1.0e-3,
+    # kl_loss_weight_end=5.0e-3,
+    # kl_loss_anneal_start=2500,
+    # kl_loss_anneal_end=10000,
     learning_rate=8.0e-4,
     # 扩大 buffer，让每批 DAgger 数据在被覆盖前能被 SGD 重复利用约 2 次。
     buffer_capacity=1048576,

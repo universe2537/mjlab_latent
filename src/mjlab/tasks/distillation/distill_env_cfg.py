@@ -5,8 +5,6 @@ structural difference required by LATENT §3.2.2 is a stronger encoder bias
 event applied to the right wrist joints, so the student becomes robust to
 wrist perturbations and leaves headroom for §3.3.2 hybrid wrist control.
 
-这里故意不复制 tracking 的整套环境定义，而是做一层薄封装：
-
 1. teacher 与 student 在尽可能一致的环境中交互。
 2. tracking 侧任何修复都能自动同步到 distillation。
 3. distillation 只保留 LATENT 论文要求的最小差异。
