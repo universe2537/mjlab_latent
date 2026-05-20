@@ -91,7 +91,10 @@ class TennisHitTracker:
 
     sensor: ContactSensor = self._env.scene[self.sensor_name]
     sensor_data = sensor.data
-    if sensor_data.force is not None:
+    if sensor_data.force_history is not None:
+      force_mag = torch.linalg.vector_norm(sensor_data.force_history, dim=-1)
+      contact_now = (force_mag > self.force_threshold).any(dim=(1, 2))
+    elif sensor_data.force is not None:
       force_mag = torch.linalg.vector_norm(sensor_data.force, dim=-1)
       contact_now = (force_mag > self.force_threshold).any(dim=1)
     elif sensor_data.found is not None:
