@@ -30,9 +30,7 @@ from mjlab.utils import spec_config as spec_cfg
 COURT_SIZE_PRESETS: dict[str, float] = {
   "standard": 1.00,  # 23.77 × 8.23 m  — 标准单打球场
   "half": 0.50,  # 11.9 × 4.1 m   — 半场
-  "quarter": 0.25,  # 5.9 × 2.1 m    — 四分之一场
-  "mini": 0.15,  # 3.6 × 1.2 m    — 迷你场（约 3-5 步）
-  "tiny": 0.08,  # 1.9 × 0.66 m   — 极小场（约 2-3 步）
+  "mini": 0.25,  # 5.9 × 2.1 m    — 迷你场
 }
 
 

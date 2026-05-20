@@ -30,9 +30,9 @@ def unitree_g1_tennis_latent_hit_env_cfg(
 
   参数:
     play: 若为 True，则关闭观测噪声并设置超长 episode。
-    court_size: 球场尺寸预设，默认 ``"quarter"``（保留移动空间）。
+    court_size: 球场尺寸预设，默认 ``"mini"``。
       可通过 ``--env.court-size <size>`` 在运行时覆盖，无需修改任务名称。
-      可选值：``"standard"`` / ``"half"`` / ``"quarter"`` / ``"mini"`` / ``"tiny"``。
+      可选值：``"standard"`` / ``"half"`` / ``"mini"``。
   """
   cfg = make_tennis_latent_env_cfg(court_size=court_size)
   scale = resolve_court_scale(court_size)

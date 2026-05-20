@@ -92,14 +92,14 @@ def test_tennis_hit_rewards_and_terminations_are_phase_based() -> None:
   assert "approach_point" in cfg.rewards
   assert "racket_towards_ball" in cfg.rewards
   assert "racket_hit_event" in cfg.rewards
-  assert "crossed_net_event" not in cfg.rewards
+  assert "crossed_net_event" in cfg.rewards
 
-  assert "first_racket_hit" in cfg.terminations
+  assert "first_racket_hit" not in cfg.terminations
   assert "second_contact" in cfg.terminations
-  assert "crossed_net_after_hit" not in cfg.terminations
+  assert "crossed_net_after_hit" in cfg.terminations
 
   curriculum_params = cfg.curriculum["ball_target_region"].params
-  assert curriculum_params["success_term_name"] == "first_racket_hit"
+  assert curriculum_params["success_term_name"] == "crossed_net_after_hit"
 
   ball_bounds = cfg.terminations["ball_out_of_bounds"].params["x_limits"]
   assert ball_bounds[0] <= -3.0

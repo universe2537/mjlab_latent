@@ -127,8 +127,8 @@ DECODER_STATE_TERMS = (
 # ---------------------------------------------------------------------------
 # 球场尺寸类型（供 tyro CLI 自动提示）。
 # ---------------------------------------------------------------------------
-CourtSizeType = Literal["standard", "half", "quarter", "mini", "tiny"]
-DEFAULT_COURT_SIZE: CourtSizeType = "quarter"
+CourtSizeType = Literal["standard", "half", "mini"]
+DEFAULT_COURT_SIZE: CourtSizeType = "half"
 
 # ---------------------------------------------------------------------------
 # 预计击球点参数。
@@ -211,14 +211,14 @@ class TennisLatentEnvCfg(ManagerBasedRlEnvCfg):
 
   示例::
 
-    uv run train Mjlab-Tennis-Hit-Unitree-G1                   # 默认 quarter
+    uv run train Mjlab-Tennis-Hit-Unitree-G1                   # 默认 mini
     uv run train Mjlab-Tennis-Hit-Unitree-G1 --env.court-size standard
   """
 
   court_size: CourtSizeType = DEFAULT_COURT_SIZE
-  """球场尺寸预设，默认 ``"quarter"``（仍可移动，但不至于退化成站桩）。
+  """球场尺寸预设，默认 ``"mini"``。
 
-  可选值：``"standard"`` / ``"half"`` / ``"quarter"`` / ``"mini"`` / ``"tiny"``。
+  可选值：``"standard"`` / ``"half"`` / ``"mini"``。
   """
 
   def __post_init__(self) -> None:
@@ -235,7 +235,7 @@ def make_tennis_latent_env_cfg(
   critic 接收相同的本体感知（无噪声），并追加球/球拍速度和预测落点。
 
   参数:
-    court_size: 球场尺寸预设，默认 ``"quarter"``。可选值见 :data:`CourtSizeType`。
+    court_size: 球场尺寸预设，默认 ``"mini"``。可选值见 :data:`CourtSizeType`。
   """
   #
   # 根据 court_size 计算当前尺寸下的几何参数。
@@ -259,7 +259,10 @@ def make_tennis_latent_env_cfg(
     robot_reset_x_center + 0.15 * scale,
   )
   ball_target_initial_y_range = (-0.15 * scale, 0.15 * scale)
-  ball_target_x_range = (max(0.3, 0.8 * scale), max(0.5, baseline_self_x - 0.8 * scale))
+  ball_target_x_range = (
+    max(0.3, 0.8 * scale),
+    max(0.5, baseline_self_x - 0.8 * scale),
+  )
   ball_target_y_range = (-cw, cw)
 
   # 球场出界判定边界（比实际线条略宽松）。
@@ -508,6 +511,7 @@ def make_tennis_latent_env_cfg(
       weight=100.0,
       params=dict(tracker_params),
     ),
+
     # --- 存活奖励 ----------------------------------------------------------
     "alive": RewardTermCfg(func=mdp.is_alive, weight=0.01),
     # --- 正则化惩罚 ----------------------------------------------------
