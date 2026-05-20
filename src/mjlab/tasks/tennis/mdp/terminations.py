@@ -34,9 +34,9 @@ def ball_in_play(
   return out_x | out_y | out_z
 
 
-# 
+#
 # 简化击球任务终止项（基于 TennisHitTracker）。
-# 
+#
 
 
 class first_racket_hit(TennisHitTrackerTerm):
@@ -53,8 +53,11 @@ class first_racket_hit(TennisHitTrackerTerm):
     force_threshold: float = 1.0,
     ground_z: float = 0.06,
     net_x: float = 0.0,
+    landing_x_limits: tuple[float, float] | None = None,
+    landing_y_limits: tuple[float, float] | None = None,
   ) -> torch.Tensor:
     del env, sensor_name, ball_cfg, force_threshold, ground_z, net_x
+    del landing_x_limits, landing_y_limits
     tracker = self.tracker
     return tracker.racket_hit_edge & (tracker.racket_hit_count == 1)
 
@@ -78,8 +81,11 @@ class second_contact(TennisHitTrackerTerm):
     force_threshold: float = 1.0,
     ground_z: float = 0.06,
     net_x: float = 0.0,
+    landing_x_limits: tuple[float, float] | None = None,
+    landing_y_limits: tuple[float, float] | None = None,
   ) -> torch.Tensor:
     del env, sensor_name, ball_cfg, force_threshold, ground_z, net_x
+    del landing_x_limits, landing_y_limits
     tracker = self.tracker
     return (tracker.bounce_count >= 1) | (tracker.racket_hit_count >= 2)
 
@@ -98,6 +104,39 @@ class crossed_net_after_hit(TennisHitTrackerTerm):
     force_threshold: float = 1.0,
     ground_z: float = 0.06,
     net_x: float = 0.0,
+    landing_x_limits: tuple[float, float] | None = None,
+    landing_y_limits: tuple[float, float] | None = None,
   ) -> torch.Tensor:
     del env, sensor_name, ball_cfg, force_threshold, ground_z, net_x
+    del landing_x_limits, landing_y_limits
     return self.tracker.crossed_net_edge
+
+
+class landing_in_bounds_after_hit(TennisHitTrackerTerm):
+  """击球过网后首次落在对方界内时标记成功。"""
+
+  def __init__(self, cfg: TerminationTermCfg, env: ManagerBasedRlEnv):
+    super().__init__(cfg, env)
+
+  def __call__(
+    self,
+    env: ManagerBasedRlEnv,
+    sensor_name: str,
+    ball_cfg: SceneEntityCfg = _BALL_CFG,
+    force_threshold: float = 1.0,
+    ground_z: float = 0.06,
+    net_x: float = 0.0,
+    landing_x_limits: tuple[float, float] | None = None,
+    landing_y_limits: tuple[float, float] | None = None,
+  ) -> torch.Tensor:
+    del (
+      env,
+      sensor_name,
+      ball_cfg,
+      force_threshold,
+      ground_z,
+      net_x,
+      landing_x_limits,
+      landing_y_limits,
+    )
+    return self.tracker.landing_in_bounds_edge

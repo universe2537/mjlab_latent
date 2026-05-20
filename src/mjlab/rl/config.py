@@ -118,6 +118,12 @@ class RslRlBaseRunnerCfg:
   """The checkpoint file to load. Default is "model_.*.pt" (all). If regex expression,
   the latest (alphabetical order) matching file will be loaded.
   """
+  load_checkpoint_file: str | None = None
+  """Explicit checkpoint file to load when ``resume`` is enabled.
+
+  When set, this path takes precedence over ``load_run`` / ``load_checkpoint``
+  and is resolved independently of ``experiment_name``.
+  """
   clip_actions: float | None = None
   """The clipping range for action values. If None (default), no clipping is applied."""
   upload_model: bool = True

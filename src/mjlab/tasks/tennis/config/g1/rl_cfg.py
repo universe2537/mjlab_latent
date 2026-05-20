@@ -3,8 +3,19 @@
 from mjlab.rl import RslRlModelCfg, RslRlPpoAlgorithmCfg
 from mjlab.tasks.tennis.rl import TennisLatentOnPolicyRunnerCfg
 
+DEFAULT_CROSS_RESUME_CHECKPOINT = (
+  "logs/rsl_rl/g1_tennis_latent_hit/"
+  "tennis_cloud_tennis_B_curr_quarter_2026-05-18_22-02-07/model_29999.pt"
+)
 
-def unitree_g1_tennis_latent_ppo_runner_cfg() -> TennisLatentOnPolicyRunnerCfg:
+
+def unitree_g1_tennis_latent_ppo_runner_cfg(
+  *,
+  experiment_name: str = "g1_tennis_latent_hit",
+  run_name: str = "",
+  resume: bool = False,
+  load_checkpoint_file: str | None = None,
+) -> TennisLatentOnPolicyRunnerCfg:
   """Create PPO config for the G1 tennis high-level latent policy."""
   return TennisLatentOnPolicyRunnerCfg(
     actor=RslRlModelCfg(
@@ -36,10 +47,23 @@ def unitree_g1_tennis_latent_ppo_runner_cfg() -> TennisLatentOnPolicyRunnerCfg:
       desired_kl=0.01,
       max_grad_norm=1.0,
     ),
-    experiment_name="g1_tennis_latent_hit",
-    save_interval=200,
+    experiment_name=experiment_name,
+    run_name=run_name,
+    resume=resume,
+    load_checkpoint_file=load_checkpoint_file,
+    save_interval=500,
     num_steps_per_env=24,
     max_iterations=30000,
     clip_actions=4.0,
     require_decoder_checkpoint=True,
+  )
+
+
+def unitree_g1_tennis_latent_cross_ppo_runner_cfg() -> TennisLatentOnPolicyRunnerCfg:
+  """Create PPO config for the G1 tennis cross-court task."""
+  return unitree_g1_tennis_latent_ppo_runner_cfg(
+    experiment_name="g1_tennis_latent_cross",
+    run_name="tennis_cross_from_hit",
+    resume=True,
+    load_checkpoint_file=DEFAULT_CROSS_RESUME_CHECKPOINT,
   )

@@ -34,6 +34,8 @@ class TennisHitTracker:
     force_threshold: float = 1.0,
     ground_z: float = 0.06,
     net_x: float = 0.0,
+    landing_x_limits: tuple[float, float] | None = None,
+    landing_y_limits: tuple[float, float] | None = None,
   ) -> None:
     self._env = env
     self.sensor_name = sensor_name
@@ -41,6 +43,8 @@ class TennisHitTracker:
     self.force_threshold = force_threshold
     self.ground_z = ground_z
     self.net_x = net_x
+    self.landing_x_limits = landing_x_limits
+    self.landing_y_limits = landing_y_limits
     self._last_step = -1
 
     num_envs = env.num_envs
@@ -61,9 +65,11 @@ class TennisHitTracker:
     self.racket_hit_edge = zeros_bool()
     self.bounce_edge = zeros_bool()
     self.crossed_net_edge = zeros_bool()
+    self.landing_in_bounds_edge = zeros_bool()
 
     self.has_racket_hit = zeros_bool()
     self.has_crossed_net = zeros_bool()
+    self.has_landed_in_bounds = zeros_bool()
 
     self._prev_contact = zeros_bool()
     self._prev_vz = zeros_float()
@@ -77,8 +83,10 @@ class TennisHitTracker:
     self.racket_hit_edge[env_ids] = False
     self.bounce_edge[env_ids] = False
     self.crossed_net_edge[env_ids] = False
+    self.landing_in_bounds_edge[env_ids] = False
     self.has_racket_hit[env_ids] = False
     self.has_crossed_net[env_ids] = False
+    self.has_landed_in_bounds[env_ids] = False
     self._prev_contact[env_ids] = False
     self._prev_vz[env_ids] = 0.0
     self._prev_x[env_ids] = 0.0
@@ -108,27 +116,45 @@ class TennisHitTracker:
     ball_pos = ball.data.root_link_pos_w - self._env.scene.env_origins
     ball_vel = ball.data.root_link_lin_vel_w
     ball_x = ball_pos[:, 0]
+    ball_y = ball_pos[:, 1]
     ball_z = ball_pos[:, 2]
     ball_vz = ball_vel[:, 2]
 
     racket_hit_edge = contact_now & ~self._prev_contact
     bounce_edge = (
-      (self._prev_vz < 0.0)
-      & (ball_vz >= 0.0)
-      & (ball_z < self.ground_z + 0.05)
+      (self._prev_vz < 0.0) & (ball_vz >= 0.0) & (ball_z < self.ground_z + 0.05)
     )
 
     has_hit_now = self.has_racket_hit | racket_hit_edge
     crossed_to_opp = (self._prev_x > self.net_x) & (ball_x <= self.net_x)
     crossed_net_edge = crossed_to_opp & has_hit_now & ~self.has_crossed_net
+    has_crossed_now = self.has_crossed_net | crossed_net_edge
+    landing_in_bounds = torch.ones_like(bounce_edge)
+    if self.landing_x_limits is not None:
+      landing_in_bounds &= (ball_x >= self.landing_x_limits[0]) & (
+        ball_x <= self.landing_x_limits[1]
+      )
+    if self.landing_y_limits is not None:
+      landing_in_bounds &= (ball_y >= self.landing_y_limits[0]) & (
+        ball_y <= self.landing_y_limits[1]
+      )
+    landing_in_bounds_edge = (
+      bounce_edge
+      & has_hit_now
+      & has_crossed_now
+      & landing_in_bounds
+      & ~self.has_landed_in_bounds
+    )
 
     self.racket_hit_edge[:] = racket_hit_edge
     self.bounce_edge[:] = bounce_edge
     self.crossed_net_edge[:] = crossed_net_edge
+    self.landing_in_bounds_edge[:] = landing_in_bounds_edge
     self.racket_hit_count += racket_hit_edge.long()
     self.bounce_count += bounce_edge.long()
     self.has_racket_hit |= racket_hit_edge
     self.has_crossed_net |= crossed_net_edge
+    self.has_landed_in_bounds |= landing_in_bounds_edge
 
     self._prev_contact[:] = contact_now
     self._prev_vz[:] = ball_vz
@@ -149,6 +175,8 @@ def get_tennis_hit_tracker(
   force_threshold: float = 1.0,
   ground_z: float = 0.06,
   net_x: float = 0.0,
+  landing_x_limits: tuple[float, float] | None = None,
+  landing_y_limits: tuple[float, float] | None = None,
 ) -> TennisHitTracker:
   tracker = getattr(env, _HIT_TRACKER_ATTR, None)
   if isinstance(tracker, TennisHitTracker):
@@ -160,6 +188,8 @@ def get_tennis_hit_tracker(
     force_threshold=force_threshold,
     ground_z=ground_z,
     net_x=net_x,
+    landing_x_limits=landing_x_limits,
+    landing_y_limits=landing_y_limits,
   )
   setattr(env, _HIT_TRACKER_ATTR, tracker)
   return tracker
@@ -176,6 +206,8 @@ class TennisHitTrackerTerm:
       force_threshold=float(cfg.params.get("force_threshold", 1.0)),
       ground_z=float(cfg.params.get("ground_z", 0.06)),
       net_x=float(cfg.params.get("net_x", 0.0)),
+      landing_x_limits=cfg.params.get("landing_x_limits"),
+      landing_y_limits=cfg.params.get("landing_y_limits"),
     )
 
   def reset(self, env_ids: torch.Tensor | slice | None = None) -> None:

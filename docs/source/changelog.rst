@@ -45,6 +45,12 @@ Added
   racket-equipped G1 that composes the robot, a free tennis ball, and court
   props as separate mjlab entities while training a high-level latent policy
   through a frozen distillation decoder.
+- Added ``Mjlab-Tennis-Cross-Unitree-G1``, a follow-on G1 tennis task that
+  defaults to resuming from a Hit checkpoint and rewards hitting the ball
+  over the net so its first landing is inside the opponent court.
+- Added ``load_checkpoint_file`` to RSL-RL runner configs so training can
+  resume from an explicit checkpoint path outside the current experiment
+  directory.
 - Added ``scripts/tools/check_tennis_decoder_coverage.py`` to smoke-test
   the frozen tennis decoder before high-level PPO training by rolling out
   random latent trajectories and reporting first-hit success rate, minimum

@@ -9,6 +9,7 @@ from mjlab.envs import ManagerBasedRlEnv
 from mjlab.scene import Scene
 from mjlab.tasks.distillation.rl.config import DistillationRunnerCfg
 from mjlab.tasks.registry import list_tasks, load_env_cfg, load_rl_cfg
+from mjlab.tasks.tennis.config.g1.rl_cfg import DEFAULT_CROSS_RESUME_CHECKPOINT
 from mjlab.tasks.tennis.mdp import (
   FrozenDecoderLatentJointPositionAction,
   FrozenDecoderLatentJointPositionActionCfg,
@@ -29,6 +30,7 @@ from mjlab.tasks.tennis.tennis_env_cfg import (
 
 def test_tennis_task_registered() -> None:
   assert "Mjlab-Tennis-Hit-Unitree-G1" in list_tasks()
+  assert "Mjlab-Tennis-Cross-Unitree-G1" in list_tasks()
 
 
 def test_tennis_task_scene_compiles() -> None:
@@ -52,6 +54,15 @@ def test_tennis_rl_config_loads() -> None:
   )
   assert cfg.experiment_name == "g1_tennis_latent_hit"
   assert cfg.require_decoder_checkpoint is True
+
+  cross_cfg = cast(
+    TennisLatentOnPolicyRunnerCfg,
+    load_rl_cfg("Mjlab-Tennis-Cross-Unitree-G1"),
+  )
+  assert cross_cfg.experiment_name == "g1_tennis_latent_cross"
+  assert cross_cfg.run_name == "tennis_cross_from_hit"
+  assert cross_cfg.resume is True
+  assert cross_cfg.load_checkpoint_file == DEFAULT_CROSS_RESUME_CHECKPOINT
 
 
 def test_tennis_env_uses_latent_actions() -> None:
@@ -86,23 +97,41 @@ def test_tennis_decoder_state_terms_align_with_distillation() -> None:
   assert tuple(action.decoder_state_terms) == tuple(distill_cfg.state_terms)
 
 
-def test_tennis_hit_rewards_and_terminations_are_phase_based() -> None:
+def test_tennis_hit_rewards_and_terminations_end_on_first_hit() -> None:
   cfg = load_env_cfg("Mjlab-Tennis-Hit-Unitree-G1")
 
   assert "approach_point" in cfg.rewards
   assert "racket_towards_ball" in cfg.rewards
   assert "racket_hit_event" in cfg.rewards
-  assert "crossed_net_event" in cfg.rewards
 
-  assert "first_racket_hit" not in cfg.terminations
+  assert "first_racket_hit" in cfg.terminations
   assert "second_contact" in cfg.terminations
-  assert "crossed_net_after_hit" in cfg.terminations
 
   curriculum_params = cfg.curriculum["ball_target_region"].params
-  assert curriculum_params["success_term_name"] == "crossed_net_after_hit"
+  assert curriculum_params["success_term_name"] == "first_racket_hit"
 
   ball_bounds = cfg.terminations["ball_out_of_bounds"].params["x_limits"]
   assert ball_bounds[0] <= -3.0
+
+
+def test_tennis_cross_rewards_and_terminations_target_landing() -> None:
+  cfg = load_env_cfg("Mjlab-Tennis-Cross-Unitree-G1")
+
+  assert "racket_hit_event" in cfg.rewards
+  assert "crossed_net_event" in cfg.rewards
+  assert "landing_in_bounds_event" in cfg.rewards
+
+  assert "first_racket_hit" not in cfg.terminations
+  assert "second_contact" in cfg.terminations
+  assert "landing_in_bounds_after_hit" in cfg.terminations
+
+  curriculum_params = cfg.curriculum["ball_target_region"].params
+  assert curriculum_params["success_term_name"] == "landing_in_bounds_after_hit"
+
+  landing_params = cfg.terminations["landing_in_bounds_after_hit"].params
+  assert landing_params["landing_x_limits"][1] == 0.0
+  assert landing_params["landing_y_limits"][0] < 0.0
+  assert landing_params["landing_y_limits"][1] > 0.0
 
 
 def test_tennis_reset_ranges_face_opponent_half() -> None:

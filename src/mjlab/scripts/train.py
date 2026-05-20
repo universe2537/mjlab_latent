@@ -105,6 +105,38 @@ def _requires_opengl_backend(cfg: TrainConfig) -> bool:
   return any(sensor.__class__.__name__ == "CameraSensorCfg" for sensor in sensors)
 
 
+def _resolve_resume_path(
+  cfg: TrainConfig, log_root_path: Path, rank: int = 0
+) -> Path | None:
+  """Resolve the checkpoint path used when ``cfg.agent.resume`` is enabled."""
+  if not cfg.agent.resume:
+    return None
+
+  if cfg.wandb_run_path is not None:
+    resume_path, was_cached = get_wandb_checkpoint_path(
+      log_root_path, Path(cfg.wandb_run_path), cfg.wandb_checkpoint_name
+    )
+    run_id = resume_path.parent.name
+    checkpoint_name = resume_path.name
+    cached_str = "cached" if was_cached else "downloaded"
+    if rank == 0:
+      print(
+        f"[INFO]: Loading checkpoint from W&B: {checkpoint_name} "
+        f"(run: {run_id}, {cached_str})"
+      )
+    return resume_path
+
+  if cfg.agent.load_checkpoint_file is not None:
+    resume_path = Path(cfg.agent.load_checkpoint_file).expanduser()
+    if not resume_path.exists():
+      raise FileNotFoundError(f"Checkpoint file not found: {resume_path}")
+    return resume_path
+
+  return get_checkpoint_path(
+    log_root_path, cfg.agent.load_run, cfg.agent.load_checkpoint
+  )
+
+
 def _normalize_wandb_motion_ref(ref: str, alias: str | None = None) -> str:
   entity = _first_env("WANDB_ENTITY")
   if "/" not in ref:
@@ -274,26 +306,7 @@ def run_train(task_id: str, cfg: TrainConfig, log_dir: Path) -> None:
 
   log_root_path = log_dir.parent  # Go up from specific run dir to experiment dir.
 
-  resume_path: Path | None = None
-  if cfg.agent.resume:
-    if cfg.wandb_run_path is not None:
-      # Load checkpoint from W&B.
-      resume_path, was_cached = get_wandb_checkpoint_path(
-        log_root_path, Path(cfg.wandb_run_path), cfg.wandb_checkpoint_name
-      )
-      if rank == 0:
-        run_id = resume_path.parent.name
-        checkpoint_name = resume_path.name
-        cached_str = "cached" if was_cached else "downloaded"
-        print(
-          f"[INFO]: Loading checkpoint from W&B: {checkpoint_name} "
-          f"(run: {run_id}, {cached_str})"
-        )
-    else:
-      # Load checkpoint from local filesystem.
-      resume_path = get_checkpoint_path(
-        log_root_path, cfg.agent.load_run, cfg.agent.load_checkpoint
-      )
+  resume_path = _resolve_resume_path(cfg, log_root_path, rank)
 
   # Only record videos on rank 0 to avoid multiple workers writing to the same files.
   if cfg.video and rank == 0:

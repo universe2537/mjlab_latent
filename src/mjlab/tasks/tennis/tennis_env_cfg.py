@@ -112,6 +112,7 @@ NET_X = 0.0
 COURT_OUT_X_LIMITS = (-COURT_HALF_LENGTH - 1.0, BASELINE_SELF_X + 1.0)
 COURT_OUT_Y_LIMITS = (-COURT_HALF_WIDTH - 0.5, COURT_HALF_WIDTH + 0.5)
 COURT_OUT_Z_LIMITS = (0.02, 3.0)
+OPPONENT_LANDING_MARGIN = 0.0
 
 # ---------------------------------------------------------------------------
 # 冻结低层解码器的状态项（必须与蒸馏检查点一致）。
@@ -164,6 +165,8 @@ def _apply_court_geometry(cfg: "TennisLatentEnvCfg") -> None:
   ball_target_y_range = (-cw, cw)
   court_out_x_limits = (-cl - 1.0, cl + 1.0)
   court_out_y_limits = (-cw - 0.5, cw + 0.5)
+  landing_x_limits = (-cl - OPPONENT_LANDING_MARGIN, NET_X)
+  landing_y_limits = (-cw - OPPONENT_LANDING_MARGIN, cw + OPPONENT_LANDING_MARGIN)
 
   # -- 场景 --
   cfg.scene.entities["court"] = get_tennis_court_cfg(scale=scale)
@@ -180,6 +183,17 @@ def _apply_court_geometry(cfg: "TennisLatentEnvCfg") -> None:
   # -- 出界判定 --
   cfg.terminations["ball_out_of_bounds"].params["x_limits"] = court_out_x_limits
   cfg.terminations["ball_out_of_bounds"].params["y_limits"] = court_out_y_limits
+  for term_name in (
+    "crossed_net_event",
+    "landing_in_bounds_event",
+    "landing_in_bounds_after_hit",
+    "second_contact",
+  ):
+    term_cfg = cfg.rewards.get(term_name) or cfg.terminations.get(term_name)
+    if term_cfg is None:
+      continue
+    term_cfg.params["landing_x_limits"] = landing_x_limits
+    term_cfg.params["landing_y_limits"] = landing_y_limits
 
   # -- 球发球器（reset_ball 与课程共享同一对象）--
   ball_provider_cfg = RandomFeederCfg(
@@ -511,7 +525,6 @@ def make_tennis_latent_env_cfg(
       weight=100.0,
       params=dict(tracker_params),
     ),
-
     # --- 存活奖励 ----------------------------------------------------------
     "alive": RewardTermCfg(func=mdp.is_alive, weight=0.01),
     # --- 正则化惩罚 ----------------------------------------------------
@@ -640,4 +653,65 @@ def make_tennis_latent_env_cfg(
   # Silence "unused import" warnings while keeping public re-exports for
   # robot-specific configs.
   _ = NET_CENTER_HEIGHT
+  return cfg
+
+
+def make_tennis_latent_cross_env_cfg(
+  court_size: CourtSizeType = DEFAULT_COURT_SIZE,
+) -> TennisLatentEnvCfg:
+  """创建击球过网并落在对方界内的潜变量网球任务。"""
+  cfg = make_tennis_latent_env_cfg(court_size=court_size)
+  scale = resolve_court_scale(court_size)
+  cl = COURT_HALF_LENGTH * scale
+  cw = COURT_HALF_WIDTH * scale
+  landing_x_limits = (-cl - OPPONENT_LANDING_MARGIN, NET_X)
+  landing_y_limits = (-cw - OPPONENT_LANDING_MARGIN, cw + OPPONENT_LANDING_MARGIN)
+
+  tracker_params = {
+    "sensor_name": _RACKET_BALL_SENSOR,
+    "ball_cfg": _BALL_CFG,
+    "force_threshold": HIT_FORCE_THRESHOLD,
+    "ground_z": GROUND_Z,
+    "net_x": NET_X,
+    "landing_x_limits": landing_x_limits,
+    "landing_y_limits": landing_y_limits,
+  }
+
+  cfg.rewards["racket_towards_ball"].params.update(
+    {
+      "landing_x_limits": landing_x_limits,
+      "landing_y_limits": landing_y_limits,
+    }
+  )
+  cfg.rewards["racket_hit_event"].params.update(
+    {
+      "landing_x_limits": landing_x_limits,
+      "landing_y_limits": landing_y_limits,
+    }
+  )
+  cfg.rewards["crossed_net_event"] = RewardTermCfg(
+    func=mdp.crossed_net_event,
+    weight=150.0,
+    params=dict(tracker_params),
+  )
+  cfg.rewards["landing_in_bounds_event"] = RewardTermCfg(
+    func=mdp.landing_in_bounds_event,
+    weight=300.0,
+    params=dict(tracker_params),
+  )
+
+  cfg.terminations.pop("first_racket_hit", None)
+  cfg.terminations["landing_in_bounds_after_hit"] = TerminationTermCfg(
+    func=mdp.landing_in_bounds_after_hit,
+    params=dict(tracker_params),
+  )
+  cfg.terminations["second_contact"].params.update(
+    {
+      "landing_x_limits": landing_x_limits,
+      "landing_y_limits": landing_y_limits,
+    }
+  )
+  cfg.curriculum["ball_target_region"].params["success_term_name"] = (
+    "landing_in_bounds_after_hit"
+  )
   return cfg

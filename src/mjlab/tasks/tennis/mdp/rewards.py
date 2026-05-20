@@ -128,8 +128,11 @@ class racket_towards_ball_velocity(TennisHitTrackerTerm):
     force_threshold: float = 1.0,
     ground_z: float = 0.06,
     net_x: float = 0.0,
+    landing_x_limits: tuple[float, float] | None = None,
+    landing_y_limits: tuple[float, float] | None = None,
   ) -> torch.Tensor:
     del sensor_name, force_threshold, ground_z, net_x
+    del landing_x_limits, landing_y_limits
     tracker = self.tracker
 
     delta_b = racket_to_ball_b(env, racket_cfg, ball_cfg, robot_cfg)
@@ -159,8 +162,11 @@ class racket_hit_event(TennisHitTrackerTerm):
     force_threshold: float = 1.0,
     ground_z: float = 0.06,
     net_x: float = 0.0,
+    landing_x_limits: tuple[float, float] | None = None,
+    landing_y_limits: tuple[float, float] | None = None,
   ) -> torch.Tensor:
     del env, sensor_name, ball_cfg, force_threshold, ground_z, net_x
+    del landing_x_limits, landing_y_limits
     tracker = self.tracker
     # 仅奖励第一次球拍击球（本步计数递增）。
     return (tracker.racket_hit_edge & (tracker.racket_hit_count == 1)).float()
@@ -180,6 +186,39 @@ class crossed_net_event(TennisHitTrackerTerm):
     force_threshold: float = 1.0,
     ground_z: float = 0.06,
     net_x: float = 0.0,
+    landing_x_limits: tuple[float, float] | None = None,
+    landing_y_limits: tuple[float, float] | None = None,
   ) -> torch.Tensor:
     del env, sensor_name, ball_cfg, force_threshold, ground_z, net_x
+    del landing_x_limits, landing_y_limits
     return self.tracker.crossed_net_edge.float()
+
+
+class landing_in_bounds_event(TennisHitTrackerTerm):
+  """球击过网后首次落在目标界内的一次性奖励。"""
+
+  def __init__(self, cfg: RewardTermCfg, env: ManagerBasedRlEnv):
+    super().__init__(cfg, env)
+
+  def __call__(
+    self,
+    env: ManagerBasedRlEnv,
+    sensor_name: str,
+    ball_cfg: SceneEntityCfg = _BALL_CFG,
+    force_threshold: float = 1.0,
+    ground_z: float = 0.06,
+    net_x: float = 0.0,
+    landing_x_limits: tuple[float, float] | None = None,
+    landing_y_limits: tuple[float, float] | None = None,
+  ) -> torch.Tensor:
+    del (
+      env,
+      sensor_name,
+      ball_cfg,
+      force_threshold,
+      ground_z,
+      net_x,
+      landing_x_limits,
+      landing_y_limits,
+    )
+    return self.tracker.landing_in_bounds_edge.float()
