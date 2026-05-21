@@ -172,6 +172,35 @@ class racket_hit_event(TennisHitTrackerTerm):
     return (tracker.racket_hit_edge & (tracker.racket_hit_count == 1)).float()
 
 
+class post_hit_x_progress(TennisHitTrackerTerm):
+  """击球后奖励球在己方半场内朝 -x 方向推进。"""
+
+  def __init__(self, cfg: RewardTermCfg, env: ManagerBasedRlEnv):
+    super().__init__(cfg, env)
+
+  def __call__(
+    self,
+    env: ManagerBasedRlEnv,
+    sensor_name: str,
+    ball_cfg: SceneEntityCfg = _BALL_CFG,
+    force_threshold: float = 1.0,
+    ground_z: float = 0.06,
+    net_x: float = 0.0,
+    landing_x_limits: tuple[float, float] | None = None,
+    landing_y_limits: tuple[float, float] | None = None,
+    max_progress: float = 0.08,
+  ) -> torch.Tensor:
+    del sensor_name, force_threshold, ground_z
+    del landing_x_limits, landing_y_limits
+    tracker = self.tracker
+    ball: Entity = env.scene[ball_cfg.name]
+    ball_x = ball.data.root_link_pos_w[:, 0] - env.scene.env_origins[:, 0]
+    progress = torch.clamp(tracker.prev_ball_x - ball_x, min=0.0, max=max_progress)
+    reward = progress / max_progress
+    active = tracker.has_racket_hit & (ball_x > net_x)
+    return reward * active.float()
+
+
 class crossed_net_event(TennisHitTrackerTerm):
   """球在击球后首次过网的稀疏一次性奖励。"""
 

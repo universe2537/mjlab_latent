@@ -12,3 +12,5 @@ uv run train Mjlab-Tennis-Hit-Unitree-G1 --agent.run_name tennis_cloud_tennis_B_
 uv run play Mjlab-Tennis-Hit-Unitree-G1 --checkpoint-file logs/rsl_rl/g1_tennis_latent_hit/tennis_cloud_tennis_B_curr_quarter_2026-05-18_22-02-07/model_29999.pt --viewer viser 
 
 uv run play Mjlab-Velocity-Stairs-Unitree-Go1 --checkpoint-file logs/rsl_rl/go1_velocity/stairs_go1_2026-05-19_15-35-35/model_3400.pt --viewer viser 
+
+uv run play Mjlab-Tennis-Cross-Unitree-G1 --checkpoint-file logs/rsl_rl/g1_tennis_latent_cross/tennis_cross_from_hit_2026-05-20_19-18-24/model_59998.pt --viewer viser

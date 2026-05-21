@@ -3,8 +3,10 @@ from typing import Any
 
 import torch
 
+from mjlab.managers.reward_manager import RewardTermCfg
 from mjlab.managers.scene_entity_config import SceneEntityCfg
 from mjlab.tasks.tennis.mdp.hit_state import TennisHitTracker
+from mjlab.tasks.tennis.mdp.rewards import post_hit_x_progress
 
 
 class _Scene(dict):
@@ -53,6 +55,24 @@ def _make_tracker(env: Any) -> TennisHitTracker:
     landing_x_limits=(-2.0, 0.0),
     landing_y_limits=(-0.5, 0.5),
   )
+
+
+def _progress_params() -> dict[str, Any]:
+  return {
+    "sensor_name": "racket_ball_contact",
+    "ball_cfg": SceneEntityCfg("ball"),
+    "force_threshold": 1.0,
+    "ground_z": 0.06,
+    "net_x": 0.0,
+    "landing_x_limits": (-2.0, 0.0),
+    "landing_y_limits": (-0.5, 0.5),
+    "max_progress": 0.08,
+  }
+
+
+def _make_progress_reward(env: Any) -> post_hit_x_progress:
+  cfg = RewardTermCfg(func=post_hit_x_progress, weight=1.0, params=_progress_params())
+  return post_hit_x_progress(cfg, env)
 
 
 def test_tennis_hit_tracker_marks_in_bounds_landing_success() -> None:
@@ -130,3 +150,73 @@ def test_tennis_hit_tracker_requires_crossing_before_landing_success() -> None:
   assert tracker.bounce_edge[0]
   assert not tracker.crossed_net_edge[0]
   assert not tracker.landing_in_bounds_edge[0]
+
+
+def test_post_hit_x_progress_requires_racket_hit() -> None:
+  env, ball, _ = _make_env()
+  reward = _make_progress_reward(env)
+  params = _progress_params()
+
+  ball.data.root_link_pos_w[:] = torch.tensor([[1.0, 0.0, 1.0]])
+  assert reward(env, **params).item() == 0.0
+
+  env.common_step_counter = 1
+  ball.data.root_link_pos_w[:] = torch.tensor([[0.95, 0.0, 1.0]])
+  assert reward(env, **params).item() == 0.0
+
+
+def test_post_hit_x_progress_rewards_negative_x_progress() -> None:
+  env, ball, sensor = _make_env()
+  reward = _make_progress_reward(env)
+  params = _progress_params()
+
+  ball.data.root_link_pos_w[:] = torch.tensor([[1.0, 0.0, 1.0]])
+  reward(env, **params)
+
+  env.common_step_counter = 1
+  sensor.data.force[:] = 5.0
+  reward(env, **params)
+
+  env.common_step_counter = 2
+  sensor.data.force.zero_()
+  ball.data.root_link_pos_w[:] = torch.tensor([[0.95, 0.0, 1.0]])
+  value = reward(env, **params).item()
+
+  assert value > 0.0
+  assert torch.isclose(torch.tensor(value), torch.tensor(0.05 / 0.08))
+
+
+def test_post_hit_x_progress_ignores_non_negative_x_progress() -> None:
+  env, ball, sensor = _make_env()
+  reward = _make_progress_reward(env)
+  params = _progress_params()
+
+  ball.data.root_link_pos_w[:] = torch.tensor([[1.0, 0.0, 1.0]])
+  reward(env, **params)
+
+  env.common_step_counter = 1
+  sensor.data.force[:] = 5.0
+  reward(env, **params)
+
+  env.common_step_counter = 2
+  sensor.data.force.zero_()
+  ball.data.root_link_pos_w[:] = torch.tensor([[1.02, 0.0, 1.0]])
+  assert reward(env, **params).item() == 0.0
+
+
+def test_post_hit_x_progress_stops_after_net_crossing() -> None:
+  env, ball, sensor = _make_env()
+  reward = _make_progress_reward(env)
+  params = _progress_params()
+
+  ball.data.root_link_pos_w[:] = torch.tensor([[1.0, 0.0, 1.0]])
+  reward(env, **params)
+
+  env.common_step_counter = 1
+  sensor.data.force[:] = 5.0
+  reward(env, **params)
+
+  env.common_step_counter = 2
+  sensor.data.force.zero_()
+  ball.data.root_link_pos_w[:] = torch.tensor([[-0.1, 0.0, 1.0]])
+  assert reward(env, **params).item() == 0.0

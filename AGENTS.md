@@ -32,6 +32,17 @@ When making user-facing changes, add an entry to
 `docs/source/changelog.rst` under "Upcoming version (not yet released)"
 using Added/Changed/Fixed categories.
 
+For training resumes, runner configs support `load_checkpoint_file`, an
+explicit checkpoint path that is resolved independently of `experiment_name`.
+`train.py` resolves resume checkpoints in this order:
+
+1. `wandb_run_path`;
+2. `agent.load_checkpoint_file`;
+3. `agent.load_run` / `agent.load_checkpoint` under the current experiment.
+
+Use `load_checkpoint_file` when a new experiment should continue from a
+checkpoint stored under another experiment directory.
+
 # Style
 
 - Line length is 88 columns for code, comments, and docstrings.
@@ -161,12 +172,16 @@ changes to distillation model topology, latent dimension, state terms, or
 action dimension can break tennis unless checkpoint metadata is updated and
 validated.
 
-# Tennis Task
+# Tennis Tasks
 
-Tennis is a high-level latent-control hitting task.
+Tennis is a family of high-level latent-control tasks. The robot policy emits
+a latent vector; a frozen distillation decoder maps that latent and the current
+decoder state terms into low-level G1 joint-position commands.
 
 - Base config: `src/mjlab/tasks/tennis/tennis_env_cfg.py`.
 - G1 config: `src/mjlab/tasks/tennis/config/g1/env_cfgs.py`.
+- G1 registration: `src/mjlab/tasks/tennis/config/g1/__init__.py`.
+- G1 PPO config: `src/mjlab/tasks/tennis/config/g1/rl_cfg.py`.
 - Frozen decoder action: `tennis/mdp/actions.py`.
 - Ball feeder: `tennis/mdp/ball_providers.py`.
 - Hit tracker: `tennis/mdp/hit_state.py`.
@@ -185,6 +200,29 @@ The ball is spawned by `RandomFeeder`: it samples a spawn point and a target
 landing region, then solves a ballistic trajectory analytically. The target
 region is expanded by curriculum.
 
+Registered G1 tennis tasks currently include:
+
+- `Mjlab-Tennis-Hit-Unitree-G1`: first-contact task. Success is the first
+  ball-racket contact edge, and the episode terminates immediately on that
+  first valid hit. It is useful for learning interception and racket timing.
+- `Mjlab-Tennis-Cross-Unitree-G1`: follow-on task. It reuses the same latent
+  action space and frozen decoder, but continues the rollout after contact.
+  Success requires hitting the ball across the net and having its first
+  landing fall inside the opponent singles court.
+
+Cross defaults to continuing from the Hit policy:
+
+```sh
+uv run train Mjlab-Tennis-Cross-Unitree-G1
+```
+
+Its runner config sets `experiment_name="g1_tennis_latent_cross"`,
+`run_name="tennis_cross_from_hit"`, `resume=True`, and
+`load_checkpoint_file=DEFAULT_CROSS_RESUME_CHECKPOINT`. Use
+`--agent.resume False` to train Cross from scratch, or override
+`--agent.load_checkpoint_file /path/to/model.pt` to resume from another
+checkpoint. Cross logs still go to the Cross experiment directory.
+
 Hit detection is driven by a contact sensor matching:
 
 - primary: ball geom `tennis_ball`;
@@ -200,10 +238,25 @@ when the sensor is configured with `history_length=decimation`. A visible
 impact may not trigger `racket_hit_event` if only the final substep force is
 read.
 
-Current tennis success is `first_racket_hit`: the first ball-racket contact
-edge. It does not by itself require the ball to cross the net or land in the
-opponent court. If training learns juggling or tapping behaviors, inspect the
-reward and termination semantics before assuming the policy is wrong.
+`TennisHitTracker` owns the shared contact state used by rewards and
+terminations. It tracks racket-hit edges, bounce edges, crossed-net edges,
+and Cross-specific `landing_in_bounds_edge`. Cross landing success is only
+true when the ball has already hit the racket, crossed from the robot side
+(`x > net_x`) to the opponent side (`x <= net_x`), and then bounced inside
+`landing_x_limits` / `landing_y_limits`.
+
+Cross reward shaping is intentionally staged:
+
+- keep Hit rewards such as `approach_point`, `racket_towards_ball`, and
+  `racket_hit_event`;
+- add `post_hit_x_progress` to reward leftward ball progress after contact
+  while the ball is still on the robot side;
+- add sparse `crossed_net_event`;
+- add sparse `landing_in_bounds_event`;
+- set curriculum success to `landing_in_bounds_after_hit`.
+
+Do not use `first_racket_hit` as a Cross success term; that would collapse
+the task back to Hit and can reward juggling or tapping behaviors.
 
 Play mode for tennis only makes the episode length effectively infinite and
 disables actor observation corruption. It does not remove hit terminations
@@ -233,6 +286,10 @@ simple observations, and smooth dm-control-style rewards.
 - For tennis, distinguish physical collision with the robot from contact with
   `tennis_racket_collision`; ball contact with hand/wrist/body geoms will not
   trigger `racket_hit_event`.
+- For Tennis Cross, distinguish the intermediate milestones from success:
+  `racket_hit_event` and `crossed_net_event` are rewards, while real success
+  is `landing_in_bounds_after_hit` on the first in-bounds opponent-court
+  bounce.
 - Run narrow checks first, for example
   `uv run ty check src/mjlab/tasks/tennis/mdp/hit_state.py`, then broaden to
   `make check` when the change is ready.

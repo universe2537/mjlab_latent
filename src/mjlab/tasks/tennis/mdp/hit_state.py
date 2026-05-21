@@ -74,6 +74,7 @@ class TennisHitTracker:
     self._prev_contact = zeros_bool()
     self._prev_vz = zeros_float()
     self._prev_x = zeros_float()
+    self.prev_ball_x = zeros_float()
 
   def reset(self, env_ids: torch.Tensor | slice | None = None) -> None:
     if env_ids is None:
@@ -90,6 +91,7 @@ class TennisHitTracker:
     self._prev_contact[env_ids] = False
     self._prev_vz[env_ids] = 0.0
     self._prev_x[env_ids] = 0.0
+    self.prev_ball_x[env_ids] = 0.0
     self._last_step = -1
 
   def update(self) -> None:
@@ -119,6 +121,7 @@ class TennisHitTracker:
     ball_y = ball_pos[:, 1]
     ball_z = ball_pos[:, 2]
     ball_vz = ball_vel[:, 2]
+    prev_x = self._prev_x.clone()
 
     racket_hit_edge = contact_now & ~self._prev_contact
     bounce_edge = (
@@ -158,6 +161,7 @@ class TennisHitTracker:
 
     self._prev_contact[:] = contact_now
     self._prev_vz[:] = ball_vz
+    self.prev_ball_x[:] = prev_x
     self._prev_x[:] = ball_x
     self._last_step = step
 
