@@ -689,19 +689,31 @@ def make_tennis_latent_cross_env_cfg(
       "landing_y_limits": landing_y_limits,
     }
   )
+  cfg.rewards["approach_point"].weight = 5.0
+  cfg.rewards["racket_towards_ball"].weight = 2.0
+  cfg.rewards["racket_hit_event"].weight = 25.0
   cfg.rewards["post_hit_x_progress"] = RewardTermCfg(
     func=mdp.post_hit_x_progress,
-    weight=10.0,
-    params={**dict(tracker_params), "max_progress": 0.08},
+    weight=50.0,
+    params={**dict(tracker_params), "max_progress": 0.05},
+  )
+  cfg.rewards["post_hit_ball_velocity_direction"] = RewardTermCfg(
+    func=mdp.post_hit_ball_velocity_direction,
+    weight=20.0,
+    params={
+      **dict(tracker_params),
+      "x_speed_scale": 4.0,
+      "lateral_speed_std": 1.5,
+    },
   )
   cfg.rewards["crossed_net_event"] = RewardTermCfg(
     func=mdp.crossed_net_event,
-    weight=150.0,
+    weight=500.0,
     params=dict(tracker_params),
   )
   cfg.rewards["landing_in_bounds_event"] = RewardTermCfg(
     func=mdp.landing_in_bounds_event,
-    weight=300.0,
+    weight=1000.0,
     params=dict(tracker_params),
   )
 

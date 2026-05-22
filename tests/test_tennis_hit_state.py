@@ -6,7 +6,10 @@ import torch
 from mjlab.managers.reward_manager import RewardTermCfg
 from mjlab.managers.scene_entity_config import SceneEntityCfg
 from mjlab.tasks.tennis.mdp.hit_state import TennisHitTracker
-from mjlab.tasks.tennis.mdp.rewards import post_hit_x_progress
+from mjlab.tasks.tennis.mdp.rewards import (
+  post_hit_ball_velocity_direction,
+  post_hit_x_progress,
+)
 
 
 class _Scene(dict):
@@ -70,9 +73,32 @@ def _progress_params() -> dict[str, Any]:
   }
 
 
+def _velocity_params() -> dict[str, Any]:
+  return {
+    "sensor_name": "racket_ball_contact",
+    "ball_cfg": SceneEntityCfg("ball"),
+    "force_threshold": 1.0,
+    "ground_z": 0.06,
+    "net_x": 0.0,
+    "landing_x_limits": (-2.0, 0.0),
+    "landing_y_limits": (-0.5, 0.5),
+    "x_speed_scale": 4.0,
+    "lateral_speed_std": 1.5,
+  }
+
+
 def _make_progress_reward(env: Any) -> post_hit_x_progress:
   cfg = RewardTermCfg(func=post_hit_x_progress, weight=1.0, params=_progress_params())
   return post_hit_x_progress(cfg, env)
+
+
+def _make_velocity_reward(env: Any) -> post_hit_ball_velocity_direction:
+  cfg = RewardTermCfg(
+    func=post_hit_ball_velocity_direction,
+    weight=1.0,
+    params=_velocity_params(),
+  )
+  return post_hit_ball_velocity_direction(cfg, env)
 
 
 def test_tennis_hit_tracker_marks_in_bounds_landing_success() -> None:
@@ -220,3 +246,57 @@ def test_post_hit_x_progress_stops_after_net_crossing() -> None:
   sensor.data.force.zero_()
   ball.data.root_link_pos_w[:] = torch.tensor([[-0.1, 0.0, 1.0]])
   assert reward(env, **params).item() == 0.0
+
+
+def test_post_hit_velocity_direction_requires_racket_hit() -> None:
+  env, ball, _ = _make_env()
+  reward = _make_velocity_reward(env)
+  params = _velocity_params()
+
+  ball.data.root_link_lin_vel_w[:] = torch.tensor([[-3.0, 0.0, 1.0]])
+  assert reward(env, **params).item() == 0.0
+
+
+def test_post_hit_velocity_direction_rewards_opponent_direction() -> None:
+  env, ball, sensor = _make_env()
+  reward = _make_velocity_reward(env)
+  params = _velocity_params()
+
+  reward(env, **params)
+
+  env.common_step_counter = 1
+  sensor.data.force[:] = 5.0
+  reward(env, **params)
+
+  env.common_step_counter = 2
+  sensor.data.force.zero_()
+  ball.data.root_link_pos_w[:] = torch.tensor([[0.8, 0.0, 1.0]])
+  ball.data.root_link_lin_vel_w[:] = torch.tensor([[-2.0, 0.0, 1.0]])
+  value = reward(env, **params).item()
+
+  assert torch.isclose(torch.tensor(value), torch.tensor(0.5))
+
+
+def test_post_hit_velocity_direction_penalizes_lateral_speed() -> None:
+  env, ball, sensor = _make_env()
+  reward = _make_velocity_reward(env)
+  params = _velocity_params()
+
+  reward(env, **params)
+
+  env.common_step_counter = 1
+  sensor.data.force[:] = 5.0
+  reward(env, **params)
+
+  env.common_step_counter = 2
+  sensor.data.force.zero_()
+  ball.data.root_link_pos_w[:] = torch.tensor([[0.8, 0.0, 1.0]])
+  ball.data.root_link_lin_vel_w[:] = torch.tensor([[-2.0, 2.0, 1.0]])
+  lateral_value = reward(env, **params).item()
+
+  env.common_step_counter = 3
+  ball.data.root_link_pos_w[:] = torch.tensor([[0.7, 0.0, 1.0]])
+  ball.data.root_link_lin_vel_w[:] = torch.tensor([[-2.0, 0.0, 1.0]])
+  straight_value = reward(env, **params).item()
+
+  assert 0.0 < lateral_value < straight_value

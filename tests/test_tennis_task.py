@@ -119,10 +119,18 @@ def test_tennis_cross_rewards_and_terminations_target_landing() -> None:
   cfg = load_env_cfg("Mjlab-Tennis-Cross-Unitree-G1")
 
   assert "racket_hit_event" in cfg.rewards
+  assert cfg.rewards["approach_point"].weight == 5.0
+  assert cfg.rewards["racket_towards_ball"].weight == 2.0
+  assert cfg.rewards["racket_hit_event"].weight == 25.0
   assert "post_hit_x_progress" in cfg.rewards
-  assert cfg.rewards["post_hit_x_progress"].weight == 10.0
+  assert cfg.rewards["post_hit_x_progress"].weight == 50.0
+  assert cfg.rewards["post_hit_x_progress"].params["max_progress"] == 0.05
+  assert "post_hit_ball_velocity_direction" in cfg.rewards
+  assert cfg.rewards["post_hit_ball_velocity_direction"].weight == 20.0
   assert "crossed_net_event" in cfg.rewards
+  assert cfg.rewards["crossed_net_event"].weight == 500.0
   assert "landing_in_bounds_event" in cfg.rewards
+  assert cfg.rewards["landing_in_bounds_event"].weight == 1000.0
 
   assert "first_racket_hit" not in cfg.terminations
   assert "second_contact" in cfg.terminations

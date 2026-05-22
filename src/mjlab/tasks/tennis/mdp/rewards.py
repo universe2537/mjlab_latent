@@ -201,6 +201,38 @@ class post_hit_x_progress(TennisHitTrackerTerm):
     return reward * active.float()
 
 
+class post_hit_ball_velocity_direction(TennisHitTrackerTerm):
+  """击球后奖励球朝对方半场飞行，并抑制过大的横向速度。"""
+
+  def __init__(self, cfg: RewardTermCfg, env: ManagerBasedRlEnv):
+    super().__init__(cfg, env)
+
+  def __call__(
+    self,
+    env: ManagerBasedRlEnv,
+    sensor_name: str,
+    ball_cfg: SceneEntityCfg = _BALL_CFG,
+    force_threshold: float = 1.0,
+    ground_z: float = 0.06,
+    net_x: float = 0.0,
+    landing_x_limits: tuple[float, float] | None = None,
+    landing_y_limits: tuple[float, float] | None = None,
+    x_speed_scale: float = 4.0,
+    lateral_speed_std: float = 1.5,
+  ) -> torch.Tensor:
+    del sensor_name, force_threshold, ground_z
+    del landing_x_limits, landing_y_limits
+    tracker = self.tracker
+    ball: Entity = env.scene[ball_cfg.name]
+    ball_pos = ball.data.root_link_pos_w - env.scene.env_origins
+    ball_vel = ball.data.root_link_lin_vel_w
+    ball_x = ball_pos[:, 0]
+    x_reward = torch.clamp(-ball_vel[:, 0] / x_speed_scale, min=0.0, max=1.0)
+    lateral_weight = torch.exp(-(ball_vel[:, 1] ** 2) / lateral_speed_std**2)
+    active = tracker.has_racket_hit & (ball_x > net_x)
+    return x_reward * lateral_weight * active.float()
+
+
 class crossed_net_event(TennisHitTrackerTerm):
   """球在击球后首次过网的稀疏一次性奖励。"""
 

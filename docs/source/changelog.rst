@@ -79,6 +79,9 @@ Changed
 - Added dense post-hit x-progress shaping to ``Mjlab-Tennis-Cross`` so the
   policy is rewarded for moving the ball toward the opponent half before the
   existing over-net and in-bounds landing events.
+- Retuned ``Mjlab-Tennis-Cross`` rewards to emphasize post-hit play, adding
+  dense ball-velocity-direction shaping after racket contact and increasing
+  the over-net and in-bounds landing event rewards.
 - Updated ``Mjlab-Tennis-Hit`` high-level observations to expose a predicted
   waist-height hit point with ``time_to_hit``, replaced the dense
   ``approach_ball`` shaping term with ``approach_point`` toward that future
