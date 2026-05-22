@@ -16,4 +16,6 @@ uv run play Mjlab-Tennis-Hit-Unitree-G1 --checkpoint-file logs/rsl_rl/g1_tennis_
 
 uv run play Mjlab-Velocity-Stairs-Unitree-Go1 --checkpoint-file logs/rsl_rl/go1_velocity/stairs_go1_2026-05-19_15-35-35/model_3400.pt --viewer viser 
 
-uv run play Mjlab-Tennis-Cross-Unitree-G1 --checkpoint-file logs/rsl_rl/g1_tennis_latent_cross/tennis_cross_from_hit_2026-05-21_15-21-12/model_40500.pt --viewer viser
+uv run play Mjlab-Tennis-Cross-Unitree-G1 --checkpoint-file logs/rsl_rl/g1_tennis_latent_cross/tennis_cross_from_hit_2026-05-21_15-21-12/model_59998.pt --viewer viser
+
+uv run play-distill.py --checkpoint-file logs/rsl_rl/g1_distillation/distill_cloud_unitree_racket_tennis_2026-05-12_09-35-14/model_30000.pt --viewer viser
