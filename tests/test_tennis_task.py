@@ -63,6 +63,9 @@ def test_tennis_rl_config_loads() -> None:
   assert cross_cfg.run_name == "tennis_cross_from_hit"
   assert cross_cfg.resume is True
   assert cross_cfg.load_checkpoint_file == DEFAULT_CROSS_RESUME_CHECKPOINT
+  assert cross_cfg.actor.distribution_cfg is not None
+  assert cross_cfg.actor.distribution_cfg["std_range"] == (0.05, 2.0)
+  assert cross_cfg.algorithm.entropy_coef == 0.003
 
 
 def test_tennis_env_uses_latent_actions() -> None:

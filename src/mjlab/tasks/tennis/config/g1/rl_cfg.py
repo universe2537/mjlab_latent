@@ -61,9 +61,13 @@ def unitree_g1_tennis_latent_ppo_runner_cfg(
 
 def unitree_g1_tennis_latent_cross_ppo_runner_cfg() -> TennisLatentOnPolicyRunnerCfg:
   """Create PPO config for the G1 tennis cross-court task."""
-  return unitree_g1_tennis_latent_ppo_runner_cfg(
+  cfg = unitree_g1_tennis_latent_ppo_runner_cfg(
     experiment_name="g1_tennis_latent_cross",
     run_name="tennis_cross_from_hit",
     resume=True,
     load_checkpoint_file=DEFAULT_CROSS_RESUME_CHECKPOINT,
   )
+  assert cfg.actor.distribution_cfg is not None
+  cfg.actor.distribution_cfg["std_range"] = (0.05, 2.0)
+  cfg.algorithm.entropy_coef = 0.003
+  return cfg

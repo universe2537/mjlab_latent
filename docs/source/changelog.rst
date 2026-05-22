@@ -82,6 +82,8 @@ Changed
 - Retuned ``Mjlab-Tennis-Cross`` rewards to emphasize post-hit play, adding
   dense ball-velocity-direction shaping after racket contact and increasing
   the over-net and in-bounds landing event rewards.
+- Stabilized ``Mjlab-Tennis-Cross`` PPO exploration by clamping the high-level
+  Gaussian latent-action standard deviation and lowering entropy pressure.
 - Updated ``Mjlab-Tennis-Hit`` high-level observations to expose a predicted
   waist-height hit point with ``time_to_hit``, replaced the dense
   ``approach_ball`` shaping term with ``approach_point`` toward that future
