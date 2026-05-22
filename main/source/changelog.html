@@ -583,6 +583,9 @@ distance-to-ball shaping term.</p></li>
 <li><p>Added dense post-hit x-progress shaping to <code class="docutils literal notranslate"><span class="pre">Mjlab-Tennis-Cross</span></code> so the
 policy is rewarded for moving the ball toward the opponent half before the
 existing over-net and in-bounds landing events.</p></li>
+<li><p>Retuned <code class="docutils literal notranslate"><span class="pre">Mjlab-Tennis-Cross</span></code> rewards to emphasize post-hit play, adding
+dense ball-velocity-direction shaping after racket contact and increasing
+the over-net and in-bounds landing event rewards.</p></li>
 <li><p>Updated <code class="docutils literal notranslate"><span class="pre">Mjlab-Tennis-Hit</span></code> high-level observations to expose a predicted
 waist-height hit point with <code class="docutils literal notranslate"><span class="pre">time_to_hit</span></code>, replaced the dense
 <code class="docutils literal notranslate"><span class="pre">approach_ball</span></code> shaping term with <code class="docutils literal notranslate"><span class="pre">approach_point</span></code> toward that future
