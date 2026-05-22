@@ -58,7 +58,7 @@
     <link rel="prev" title="Research" href="research.html" />
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="docsearch:language" content="en"/>
-    <meta name="docbuild:last-update" content="May 20, 2026"/>
+    <meta name="docbuild:last-update" content="May 22, 2026"/>
   </head>
   
   
@@ -548,6 +548,12 @@ action reconstruction plus KL regularization.</p></li>
 racket-equipped G1 that composes the robot, a free tennis ball, and court
 props as separate mjlab entities while training a high-level latent policy
 through a frozen distillation decoder.</p></li>
+<li><p>Added <code class="docutils literal notranslate"><span class="pre">Mjlab-Tennis-Cross-Unitree-G1</span></code>, a follow-on G1 tennis task that
+defaults to resuming from a Hit checkpoint and rewards hitting the ball
+over the net so its first landing is inside the opponent court.</p></li>
+<li><p>Added <code class="docutils literal notranslate"><span class="pre">load_checkpoint_file</span></code> to RSL-RL runner configs so training can
+resume from an explicit checkpoint path outside the current experiment
+directory.</p></li>
 <li><p>Added <code class="docutils literal notranslate"><span class="pre">scripts/tools/check_tennis_decoder_coverage.py</span></code> to smoke-test
 the frozen tennis decoder before high-level PPO training by rolling out
 random latent trajectories and reporting first-hit success rate, minimum
@@ -574,6 +580,9 @@ still terminate on the first ball bounce or on a later extra contact.</p></li>
 <li><p>Added a small dense <code class="docutils literal notranslate"><span class="pre">Mjlab-Tennis-Hit</span></code> reward that encourages the racket
 to move toward the ball before the first hit, complementing the existing
 distance-to-ball shaping term.</p></li>
+<li><p>Added dense post-hit x-progress shaping to <code class="docutils literal notranslate"><span class="pre">Mjlab-Tennis-Cross</span></code> so the
+policy is rewarded for moving the ball toward the opponent half before the
+existing over-net and in-bounds landing events.</p></li>
 <li><p>Updated <code class="docutils literal notranslate"><span class="pre">Mjlab-Tennis-Hit</span></code> high-level observations to expose a predicted
 waist-height hit point with <code class="docutils literal notranslate"><span class="pre">time_to_hit</span></code>, replaced the dense
 <code class="docutils literal notranslate"><span class="pre">approach_ball</span></code> shaping term with <code class="docutils literal notranslate"><span class="pre">approach_point</span></code> toward that future
@@ -1256,7 +1265,7 @@ By The mjlab Developers
   
   <div class="footer-item">
     <p class="last-updated">
-  Last updated on May 20, 2026.
+  Last updated on May 22, 2026.
   <br/>
 </p>
   </div>
