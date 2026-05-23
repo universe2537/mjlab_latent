@@ -61,6 +61,7 @@ class TennisHitTracker:
 
     self.racket_hit_count = zeros_long()
     self.bounce_count = zeros_long()
+    self.successful_return_count = zeros_long()
 
     self.racket_hit_edge = zeros_bool()
     self.bounce_edge = zeros_bool()
@@ -79,6 +80,14 @@ class TennisHitTracker:
   def reset(self, env_ids: torch.Tensor | slice | None = None) -> None:
     if env_ids is None:
       env_ids = slice(None)
+    self.successful_return_count[env_ids] = 0
+    self.reset_rally(env_ids)
+    self._last_step = -1
+
+  def reset_rally(self, env_ids: torch.Tensor | slice | None = None) -> None:
+    """Reset per-ball contact state while keeping episode-level rally counts."""
+    if env_ids is None:
+      env_ids = slice(None)
     self.racket_hit_count[env_ids] = 0
     self.bounce_count[env_ids] = 0
     self.racket_hit_edge[env_ids] = False
@@ -92,7 +101,6 @@ class TennisHitTracker:
     self._prev_vz[env_ids] = 0.0
     self._prev_x[env_ids] = 0.0
     self.prev_ball_x[env_ids] = 0.0
-    self._last_step = -1
 
   def update(self) -> None:
     step = int(self._env.common_step_counter)
@@ -155,6 +163,7 @@ class TennisHitTracker:
     self.landing_in_bounds_edge[:] = landing_in_bounds_edge
     self.racket_hit_count += racket_hit_edge.long()
     self.bounce_count += bounce_edge.long()
+    self.successful_return_count += landing_in_bounds_edge.long()
     self.has_racket_hit |= racket_hit_edge
     self.has_crossed_net |= crossed_net_edge
     self.has_landed_in_bounds |= landing_in_bounds_edge

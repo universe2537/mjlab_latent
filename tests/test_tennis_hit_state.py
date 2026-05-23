@@ -131,6 +131,16 @@ def test_tennis_hit_tracker_marks_in_bounds_landing_success() -> None:
   assert tracker.bounce_edge[0]
   assert tracker.landing_in_bounds_edge[0]
   assert tracker.has_landed_in_bounds[0]
+  assert tracker.successful_return_count[0] == 1
+
+  tracker.reset_rally(torch.tensor([0]))
+  assert tracker.successful_return_count[0] == 1
+  assert not tracker.has_racket_hit[0]
+  assert not tracker.has_crossed_net[0]
+  assert not tracker.has_landed_in_bounds[0]
+
+  tracker.reset(torch.tensor([0]))
+  assert tracker.successful_return_count[0] == 0
 
 
 def test_tennis_hit_tracker_rejects_out_of_bounds_landing() -> None:

@@ -84,6 +84,20 @@ Changed
   the over-net and in-bounds landing event rewards.
 - Stabilized ``Mjlab-Tennis-Cross`` PPO exploration by clamping the high-level
   Gaussian latent-action standard deviation and lowering entropy pressure.
+- Added ``Mjlab-Tennis-Cross-LAB-Unitree-G1``, a Cross variant that enables an
+  optional LATENT-style latent action barrier while keeping
+  ``Mjlab-Tennis-Cross-Unitree-G1`` compatible with existing non-LAB
+  checkpoints.
+- Added ``Mjlab-Tennis-Hit-LAB-Unitree-G1`` so the high-level policy can learn
+  the LAB residual action semantics from scratch before training Cross-LAB.
+- Removed the ``Mjlab-Tennis-Cross`` PPO ``std_range`` clamp again so the LAB
+  constraint, rather than a hard Gaussian standard-deviation cap, controls the
+  frozen decoder latent.
+- Updated ``Mjlab-Tennis-Cross-LAB`` to fine-tune from the latest LAB
+  checkpoint with lower entropy pressure for a shorter stability-focused run.
+- Added ``Mjlab-Tennis-Continuous-Unitree-G1``, a non-LAB multi-ball rally task
+  that respawns a new feed after each successful in-bounds return and ends after
+  eight consecutive successful returns.
 - Updated ``Mjlab-Tennis-Hit`` high-level observations to expose a predicted
   waist-height hit point with ``time_to_hit``, replaced the dense
   ``approach_ball`` shaping term with ``approach_point`` toward that future

@@ -140,3 +140,71 @@ class landing_in_bounds_after_hit(TennisHitTrackerTerm):
       landing_y_limits,
     )
     return self.tracker.landing_in_bounds_edge
+
+
+class continuous_rally_failure(TennisHitTrackerTerm):
+  """连续接球任务中的单球失败条件。
+
+  成功落到对方界内不会终止整局；只有首次落地不是成功落点，或同一来球
+  发生第二次球拍接触，才视为当前连续回合失败。
+  """
+
+  def __init__(self, cfg: TerminationTermCfg, env: ManagerBasedRlEnv):
+    super().__init__(cfg, env)
+
+  def __call__(
+    self,
+    env: ManagerBasedRlEnv,
+    sensor_name: str,
+    ball_cfg: SceneEntityCfg = _BALL_CFG,
+    force_threshold: float = 1.0,
+    ground_z: float = 0.06,
+    net_x: float = 0.0,
+    landing_x_limits: tuple[float, float] | None = None,
+    landing_y_limits: tuple[float, float] | None = None,
+  ) -> torch.Tensor:
+    del (
+      env,
+      sensor_name,
+      ball_cfg,
+      force_threshold,
+      ground_z,
+      net_x,
+      landing_x_limits,
+      landing_y_limits,
+    )
+    tracker = self.tracker
+    failed_landing = tracker.bounce_edge & ~tracker.landing_in_bounds_edge
+    extra_racket_contact = tracker.racket_hit_count >= 2
+    return failed_landing | extra_racket_contact
+
+
+class continuous_rally_complete(TennisHitTrackerTerm):
+  """连续接球任务中完成指定次数成功回合后结束整局。"""
+
+  def __init__(self, cfg: TerminationTermCfg, env: ManagerBasedRlEnv):
+    super().__init__(cfg, env)
+
+  def __call__(
+    self,
+    env: ManagerBasedRlEnv,
+    sensor_name: str,
+    ball_cfg: SceneEntityCfg = _BALL_CFG,
+    force_threshold: float = 1.0,
+    ground_z: float = 0.06,
+    net_x: float = 0.0,
+    landing_x_limits: tuple[float, float] | None = None,
+    landing_y_limits: tuple[float, float] | None = None,
+    max_successful_returns: int = 8,
+  ) -> torch.Tensor:
+    del (
+      env,
+      sensor_name,
+      ball_cfg,
+      force_threshold,
+      ground_z,
+      net_x,
+      landing_x_limits,
+      landing_y_limits,
+    )
+    return self.tracker.successful_return_count >= int(max_successful_returns)

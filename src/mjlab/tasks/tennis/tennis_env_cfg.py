@@ -113,6 +113,7 @@ COURT_OUT_X_LIMITS = (-COURT_HALF_LENGTH - 1.0, BASELINE_SELF_X + 1.0)
 COURT_OUT_Y_LIMITS = (-COURT_HALF_WIDTH - 0.5, COURT_HALF_WIDTH + 0.5)
 COURT_OUT_Z_LIMITS = (0.02, 3.0)
 OPPONENT_LANDING_MARGIN = 0.0
+CONTINUOUS_RALLY_SUCCESSFUL_RETURNS = 8
 
 # ---------------------------------------------------------------------------
 # 冻结低层解码器的状态项（必须与蒸馏检查点一致）。
@@ -730,5 +731,56 @@ def make_tennis_latent_cross_env_cfg(
   )
   cfg.curriculum["ball_target_region"].params["success_term_name"] = (
     "landing_in_bounds_after_hit"
+  )
+  return cfg
+
+
+def make_tennis_continuous_env_cfg(
+  court_size: CourtSizeType = DEFAULT_COURT_SIZE,
+  max_successful_returns: int = CONTINUOUS_RALLY_SUCCESSFUL_RETURNS,
+) -> TennisLatentEnvCfg:
+  """创建连续接多球任务。
+
+  与 Cross 不同，成功把球打过网并落在对方界内不会立即结束 episode；
+  环境会重新随机发球并进入下一小回合。连续成功 ``max_successful_returns``
+  次后才作为整局成功终止。
+  """
+  cfg = make_tennis_latent_cross_env_cfg(court_size=court_size)
+  landing_params = cfg.terminations["landing_in_bounds_after_hit"].params
+  tracker_params = dict(landing_params)
+  ball_provider_cfg = cfg.events["reset_ball"].params["provider_cfg"]
+
+  cfg.episode_length_s = 20.0
+  cfg.terminations.pop("landing_in_bounds_after_hit", None)
+  cfg.terminations.pop("second_contact", None)
+  cfg.terminations["continuous_rally_failure"] = TerminationTermCfg(
+    func=mdp.continuous_rally_failure,
+    params=dict(tracker_params),
+  )
+  cfg.terminations["continuous_rally_complete"] = TerminationTermCfg(
+    func=mdp.continuous_rally_complete,
+    params={
+      **dict(tracker_params),
+      "max_successful_returns": max_successful_returns,
+    },
+  )
+
+  cfg.rewards["continuous_rally_complete_bonus"] = RewardTermCfg(
+    func=mdp.termination_terms_any,
+    weight=2000.0,
+    params={"term_names": ("continuous_rally_complete",)},
+  )
+  cfg.rewards["respawn_successful_continuous_rally_ball"] = RewardTermCfg(
+    func=mdp.respawn_successful_continuous_rally_ball,
+    weight=1.0e-9,
+    params={
+      **dict(tracker_params),
+      "provider_cfg": ball_provider_cfg,
+      "max_successful_returns": max_successful_returns,
+    },
+  )
+
+  cfg.curriculum["ball_target_region"].params["success_term_name"] = (
+    "continuous_rally_complete"
   )
   return cfg

@@ -8,6 +8,10 @@ import torch
 
 from mjlab.managers.reward_manager import RewardTermCfg
 from mjlab.managers.scene_entity_config import SceneEntityCfg
+from mjlab.tasks.tennis.mdp.ball_providers import (
+  RandomFeederCfg,
+  spawn_ball_from_provider,
+)
 from mjlab.tasks.tennis.mdp.hit_state import TennisHitTrackerTerm
 from mjlab.tasks.tennis.mdp.observations import (
   _predict_hit_intersection_w,
@@ -283,3 +287,35 @@ class landing_in_bounds_event(TennisHitTrackerTerm):
       landing_y_limits,
     )
     return self.tracker.landing_in_bounds_edge.float()
+
+
+class respawn_successful_continuous_rally_ball(TennisHitTrackerTerm):
+  """连续接球中成功回球后重新发球，并开始下一小回合。"""
+
+  def __init__(self, cfg: RewardTermCfg, env: ManagerBasedRlEnv):
+    super().__init__(cfg, env)
+
+  def __call__(
+    self,
+    env: ManagerBasedRlEnv,
+    sensor_name: str,
+    provider_cfg: RandomFeederCfg,
+    ball_cfg: SceneEntityCfg = _BALL_CFG,
+    force_threshold: float = 1.0,
+    ground_z: float = 0.06,
+    net_x: float = 0.0,
+    landing_x_limits: tuple[float, float] | None = None,
+    landing_y_limits: tuple[float, float] | None = None,
+    max_successful_returns: int = 8,
+  ) -> torch.Tensor:
+    del sensor_name, ball_cfg, force_threshold, ground_z, net_x
+    del landing_x_limits, landing_y_limits
+    tracker = self.tracker
+    should_respawn = tracker.landing_in_bounds_edge & (
+      tracker.successful_return_count < int(max_successful_returns)
+    )
+    env_ids = should_respawn.nonzero(as_tuple=False).flatten()
+    if env_ids.numel() > 0:
+      spawn_ball_from_provider(env, env_ids, provider_cfg=provider_cfg)
+      tracker.reset_rally(env_ids)
+    return torch.zeros(env.num_envs, device=env.device)

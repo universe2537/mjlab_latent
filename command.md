@@ -16,6 +16,15 @@ uv run play Mjlab-Tennis-Hit-Unitree-G1 --checkpoint-file logs/rsl_rl/g1_tennis_
 
 uv run play Mjlab-Velocity-Stairs-Unitree-Go1 --checkpoint-file logs/rsl_rl/go1_velocity/stairs_go1_2026-05-19_15-35-35/model_3400.pt --viewer viser 
 
+# Normal
 uv run play Mjlab-Tennis-Cross-Unitree-G1 --checkpoint-file logs/rsl_rl/g1_tennis_latent_cross/tennis_cross_from_hit_2026-05-21_15-21-12/model_59998.pt --viewer viser
+
+# LAB
+uv run train Mjlab-Tennis-Hit-LAB-Unitree-G1 --env.scene.num_envs 4096 --gpu-ids [0,1]
+uv run train Mjlab-Tennis-Cross-LAB-Unitree-G1 --env.scene.num_envs 4096 --gpu-ids [0,1]
+uv run play Mjlab-Tennis-Cross-LAB-Unitree-G1 --checkpoint-file logs/rsl_rl/g1_tennis_latent_cross_lab/tennis_cross_cloud_lab_2026-05-22_21-26-16/model_89997.pt --viewer viser
+
+# Continuous
+uv run play Mjlab-Tennis-Continuous-Unitree-G1 --checkpoint-file logs/rsl_rl/g1_tennis_latent_continuous/tennis_continuous_from_cross_2026-05-22_21-27-44/model_99997.pt --viewer viser
 
 uv run play-distill.py --checkpoint-file logs/rsl_rl/g1_distillation/distill_cloud_unitree_racket_tennis_2026-05-12_09-35-14/model_30000.pt --viewer viser

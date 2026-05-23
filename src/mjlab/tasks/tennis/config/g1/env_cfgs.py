@@ -16,6 +16,7 @@ from mjlab.tasks.tennis.tennis_env_cfg import (
   DEFAULT_COURT_SIZE,
   CourtSizeType,
   TennisLatentEnvCfg,
+  make_tennis_continuous_env_cfg,
   make_tennis_latent_cross_env_cfg,
   make_tennis_latent_env_cfg,
 )
@@ -58,12 +59,76 @@ def unitree_g1_tennis_latent_hit_env_cfg(
   return cfg
 
 
+def unitree_g1_tennis_hit_lab_env_cfg(
+  play: bool = False,
+  court_size: CourtSizeType = DEFAULT_COURT_SIZE,
+) -> TennisLatentEnvCfg:
+  """创建 G1 潜变量网球 Hit-LAB 任务。"""
+  cfg = unitree_g1_tennis_latent_hit_env_cfg(
+    play=play,
+    court_size=court_size,
+  )
+  action = cfg.actions["latent_joint_pos"]
+  assert isinstance(action, FrozenDecoderLatentJointPositionActionCfg)
+  action.use_latent_action_barrier = True
+  action.latent_barrier_scale = 1.0
+  action.latent_barrier_min_std = 0.05
+  action.latent_barrier_max_std = 2.0
+  return cfg
+
+
 def unitree_g1_tennis_latent_cross_env_cfg(
   play: bool = False,
   court_size: CourtSizeType = DEFAULT_COURT_SIZE,
 ) -> TennisLatentEnvCfg:
   """创建 G1 潜变量网球过网落界内任务。"""
   cfg = make_tennis_latent_cross_env_cfg(court_size=court_size)
+  scale = resolve_court_scale(court_size)
+  cfg.scene.entities = {
+    "robot": get_g1_w_racket_robot_cfg(),
+    "ball": get_tennis_ball_cfg(),
+    "court": get_tennis_court_cfg(scale=scale),
+  }
+  cfg.viewer.body_name = "torso_link"
+  cfg.viewer.elevation = -18.0
+  cfg.viewer.azimuth = 140.0
+
+  action = cfg.actions["latent_joint_pos"]
+  assert isinstance(action, FrozenDecoderLatentJointPositionActionCfg)
+  action.scale = G1_W_RACKET_ACTION_SCALE
+  action.decoder_checkpoint = DEFAULT_DECODER_CHECKPOINT
+
+  if play:
+    cfg.episode_length_s = int(1e9)
+    cfg.observations["actor"].enable_corruption = False
+
+  return cfg
+
+
+def unitree_g1_tennis_cross_lab_env_cfg(
+  play: bool = False,
+  court_size: CourtSizeType = DEFAULT_COURT_SIZE,
+) -> TennisLatentEnvCfg:
+  """创建 G1 潜变量网球 Cross-LAB 任务。"""
+  cfg = unitree_g1_tennis_latent_cross_env_cfg(
+    play=play,
+    court_size=court_size,
+  )
+  action = cfg.actions["latent_joint_pos"]
+  assert isinstance(action, FrozenDecoderLatentJointPositionActionCfg)
+  action.use_latent_action_barrier = True
+  action.latent_barrier_scale = 1.0
+  action.latent_barrier_min_std = 0.05
+  action.latent_barrier_max_std = 2.0
+  return cfg
+
+
+def unitree_g1_tennis_continuous_env_cfg(
+  play: bool = False,
+  court_size: CourtSizeType = DEFAULT_COURT_SIZE,
+) -> TennisLatentEnvCfg:
+  """创建 G1 潜变量网球连续接多球任务。"""
+  cfg = make_tennis_continuous_env_cfg(court_size=court_size)
   scale = resolve_court_scale(court_size)
   cfg.scene.entities = {
     "robot": get_g1_w_racket_robot_cfg(),

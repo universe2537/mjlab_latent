@@ -37,6 +37,14 @@ class FrozenDecoderLatentJointPositionActionCfg(ActionTermCfg):
   """包含 ``decoder_state_terms`` 的观测组名称。"""
   strict_checkpoint_load: bool = True
   """是否严格加载蒸馏模型检查点。"""
+  use_latent_action_barrier: bool = False
+  """是否将高层动作解释为围绕冻结 prior 的有界 latent residual。"""
+  latent_barrier_scale: float = 1.0
+  """LAB residual 半径系数：``z = mu + scale * std * tanh(action)``。"""
+  latent_barrier_min_std: float = 0.05
+  """LAB 使用的 prior 标准差下界。"""
+  latent_barrier_max_std: float = 2.0
+  """LAB 使用的 prior 标准差上界。"""
   target_dim: int = 67
   """无检查点时使用的后验目标维度（回退值）。"""
   encoder_hidden_dims: tuple[int, ...] = (512, 256)
@@ -51,6 +59,20 @@ class FrozenDecoderLatentJointPositionActionCfg(ActionTermCfg):
 
   def build(self, env) -> FrozenDecoderLatentJointPositionAction:
     return FrozenDecoderLatentJointPositionAction(self, env)
+
+
+def apply_latent_action_barrier(
+  action: torch.Tensor,
+  prior_mean: torch.Tensor,
+  prior_std: torch.Tensor,
+  *,
+  scale: float,
+  min_std: float,
+  max_std: float,
+) -> torch.Tensor:
+  """Apply a LATENT-style barrier around the frozen decoder prior."""
+  std = torch.clamp(prior_std, min=min_std, max=max_std)
+  return prior_mean + float(scale) * std * torch.tanh(action)
 
 
 class FrozenDecoderLatentJointPositionAction(ActionTerm):
@@ -74,6 +96,9 @@ class FrozenDecoderLatentJointPositionAction(ActionTerm):
     self._decoded_actions = torch.zeros(
       self.num_envs, low_level_dim, device=self.device
     )
+    self._barrier_latent_actions = torch.zeros_like(self._raw_actions)
+    self._latent_prior_mean = torch.zeros_like(self._raw_actions)
+    self._latent_prior_std = torch.zeros_like(self._raw_actions)
     self._prev_decoded_actions = torch.zeros_like(self._decoded_actions)
     self._slicer: ObservationSlicer | None = None
     self._model: LatentStudentModel | None = None
@@ -86,6 +111,21 @@ class FrozenDecoderLatentJointPositionAction(ActionTerm):
   @property
   def raw_action(self) -> torch.Tensor:
     return self._raw_actions
+
+  @property
+  def latent_action(self) -> torch.Tensor:
+    """Return the latent actually passed into the frozen decoder."""
+    if self.cfg.use_latent_action_barrier:
+      return self._barrier_latent_actions
+    return self._raw_actions
+
+  @property
+  def latent_prior_mean(self) -> torch.Tensor:
+    return self._latent_prior_mean
+
+  @property
+  def latent_prior_std(self) -> torch.Tensor:
+    return self._latent_prior_std
 
   @property
   def low_level_action(self) -> torch.Tensor:
@@ -129,10 +169,29 @@ class FrozenDecoderLatentJointPositionAction(ActionTerm):
     assert self._model is not None
     state, _ = self._slicer.split(actor_obs)
     with torch.no_grad():
-      decoded = self._model.decode(state, self._raw_actions)
+      latent = self._latent_for_decode(state)
+      decoded = self._model.decode(state, latent)
     self._prev_decoded_actions[:] = self._decoded_actions
     self._decoded_actions[:] = decoded
     self._low_level_action.process_actions(self._decoded_actions)
+
+  def _latent_for_decode(self, state: torch.Tensor) -> torch.Tensor:
+    assert self._model is not None
+    if not self.cfg.use_latent_action_barrier:
+      return self._raw_actions
+    prior = self._model.prior_distribution(state)
+    self._latent_prior_mean[:] = prior.mean
+    self._latent_prior_std[:] = prior.std
+    latent = apply_latent_action_barrier(
+      self._raw_actions,
+      prior.mean,
+      prior.std,
+      scale=self.cfg.latent_barrier_scale,
+      min_std=self.cfg.latent_barrier_min_std,
+      max_std=self.cfg.latent_barrier_max_std,
+    )
+    self._barrier_latent_actions[:] = latent
+    return self._barrier_latent_actions
 
   def apply_actions(self) -> None:
     self._low_level_action.apply_actions()
@@ -141,6 +200,9 @@ class FrozenDecoderLatentJointPositionAction(ActionTerm):
     if env_ids is None:
       env_ids = slice(None)
     self._raw_actions[env_ids] = 0.0
+    self._barrier_latent_actions[env_ids] = 0.0
+    self._latent_prior_mean[env_ids] = 0.0
+    self._latent_prior_std[env_ids] = 0.0
     self._decoded_actions[env_ids] = 0.0
     self._prev_decoded_actions[env_ids] = 0.0
     self._low_level_action.reset(env_ids)

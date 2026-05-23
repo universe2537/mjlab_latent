@@ -7,6 +7,14 @@ DEFAULT_CROSS_RESUME_CHECKPOINT = (
   "logs/rsl_rl/g1_tennis_latent_hit/"
   "tennis_cloud_tennis_B_curr_quarter_2026-05-18_22-02-07/model_29999.pt"
 )
+DEFAULT_CROSS_LAB_RESUME_CHECKPOINT = (
+  "logs/rsl_rl/g1_tennis_latent_cross_lab/"
+  "tennis_cross_cloud_lab_2026-05-22_21-26-16/model_89997.pt"
+)
+DEFAULT_CONTINUOUS_RESUME_CHECKPOINT = (
+  "logs/rsl_rl/g1_tennis_latent_cross/"
+  "tennis_cross_from_hit_2026-05-21_15-21-12/model_59998.pt"
+)
 
 
 def unitree_g1_tennis_latent_ppo_runner_cfg(
@@ -67,7 +75,41 @@ def unitree_g1_tennis_latent_cross_ppo_runner_cfg() -> TennisLatentOnPolicyRunne
     resume=True,
     load_checkpoint_file=DEFAULT_CROSS_RESUME_CHECKPOINT,
   )
-  assert cfg.actor.distribution_cfg is not None
-  cfg.actor.distribution_cfg["std_range"] = (0.05, 2.0)
   cfg.algorithm.entropy_coef = 0.003
+  return cfg
+
+
+def unitree_g1_tennis_hit_lab_ppo_runner_cfg() -> TennisLatentOnPolicyRunnerCfg:
+  """Create PPO config for the G1 tennis Hit-LAB task."""
+  cfg = unitree_g1_tennis_latent_ppo_runner_cfg(
+    experiment_name="g1_tennis_latent_hit_lab",
+    run_name="tennis_hit_lab_scratch",
+  )
+  cfg.algorithm.entropy_coef = 0.003
+  return cfg
+
+
+def unitree_g1_tennis_cross_lab_ppo_runner_cfg() -> TennisLatentOnPolicyRunnerCfg:
+  """Create PPO config for the G1 tennis Cross-LAB task."""
+  cfg = unitree_g1_tennis_latent_ppo_runner_cfg(
+    experiment_name="g1_tennis_latent_cross_lab",
+    run_name="tennis_cross_lab_finetune",
+    resume=True,
+    load_checkpoint_file=DEFAULT_CROSS_LAB_RESUME_CHECKPOINT,
+  )
+  cfg.algorithm.entropy_coef = 0.001
+  cfg.max_iterations = 20000
+  return cfg
+
+
+def unitree_g1_tennis_continuous_ppo_runner_cfg() -> TennisLatentOnPolicyRunnerCfg:
+  """Create PPO config for the G1 tennis continuous-rally task."""
+  cfg = unitree_g1_tennis_latent_ppo_runner_cfg(
+    experiment_name="g1_tennis_latent_continuous",
+    run_name="tennis_continuous_from_cross",
+    resume=True,
+    load_checkpoint_file=DEFAULT_CONTINUOUS_RESUME_CHECKPOINT,
+  )
+  cfg.algorithm.entropy_coef = 0.003
+  cfg.max_iterations = 40000
   return cfg

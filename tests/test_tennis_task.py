@@ -9,10 +9,15 @@ from mjlab.envs import ManagerBasedRlEnv
 from mjlab.scene import Scene
 from mjlab.tasks.distillation.rl.config import DistillationRunnerCfg
 from mjlab.tasks.registry import list_tasks, load_env_cfg, load_rl_cfg
-from mjlab.tasks.tennis.config.g1.rl_cfg import DEFAULT_CROSS_RESUME_CHECKPOINT
+from mjlab.tasks.tennis.config.g1.rl_cfg import (
+  DEFAULT_CONTINUOUS_RESUME_CHECKPOINT,
+  DEFAULT_CROSS_LAB_RESUME_CHECKPOINT,
+  DEFAULT_CROSS_RESUME_CHECKPOINT,
+)
 from mjlab.tasks.tennis.mdp import (
   FrozenDecoderLatentJointPositionAction,
   FrozenDecoderLatentJointPositionActionCfg,
+  apply_latent_action_barrier,
 )
 from mjlab.tasks.tennis.mdp.ball_providers import RandomFeederCfg
 from mjlab.tasks.tennis.rl import TennisLatentOnPolicyRunnerCfg
@@ -30,7 +35,10 @@ from mjlab.tasks.tennis.tennis_env_cfg import (
 
 def test_tennis_task_registered() -> None:
   assert "Mjlab-Tennis-Hit-Unitree-G1" in list_tasks()
+  assert "Mjlab-Tennis-Hit-LAB-Unitree-G1" in list_tasks()
   assert "Mjlab-Tennis-Cross-Unitree-G1" in list_tasks()
+  assert "Mjlab-Tennis-Cross-LAB-Unitree-G1" in list_tasks()
+  assert "Mjlab-Tennis-Continuous-Unitree-G1" in list_tasks()
 
 
 def test_tennis_task_scene_compiles() -> None:
@@ -55,6 +63,17 @@ def test_tennis_rl_config_loads() -> None:
   assert cfg.experiment_name == "g1_tennis_latent_hit"
   assert cfg.require_decoder_checkpoint is True
 
+  hit_lab_cfg = cast(
+    TennisLatentOnPolicyRunnerCfg,
+    load_rl_cfg("Mjlab-Tennis-Hit-LAB-Unitree-G1"),
+  )
+  assert hit_lab_cfg.experiment_name == "g1_tennis_latent_hit_lab"
+  assert hit_lab_cfg.run_name == "tennis_hit_lab_scratch"
+  assert hit_lab_cfg.resume is False
+  assert hit_lab_cfg.load_checkpoint_file is None
+  assert hit_lab_cfg.algorithm.entropy_coef == 0.003
+  assert hit_lab_cfg.max_iterations == 30000
+
   cross_cfg = cast(
     TennisLatentOnPolicyRunnerCfg,
     load_rl_cfg("Mjlab-Tennis-Cross-Unitree-G1"),
@@ -64,8 +83,29 @@ def test_tennis_rl_config_loads() -> None:
   assert cross_cfg.resume is True
   assert cross_cfg.load_checkpoint_file == DEFAULT_CROSS_RESUME_CHECKPOINT
   assert cross_cfg.actor.distribution_cfg is not None
-  assert cross_cfg.actor.distribution_cfg["std_range"] == (0.05, 2.0)
+  assert "std_range" not in cross_cfg.actor.distribution_cfg
   assert cross_cfg.algorithm.entropy_coef == 0.003
+
+  cross_lab_cfg = cast(
+    TennisLatentOnPolicyRunnerCfg,
+    load_rl_cfg("Mjlab-Tennis-Cross-LAB-Unitree-G1"),
+  )
+  assert cross_lab_cfg.experiment_name == "g1_tennis_latent_cross_lab"
+  assert cross_lab_cfg.run_name == "tennis_cross_lab_finetune"
+  assert cross_lab_cfg.resume is True
+  assert cross_lab_cfg.load_checkpoint_file == DEFAULT_CROSS_LAB_RESUME_CHECKPOINT
+  assert cross_lab_cfg.algorithm.entropy_coef == 0.001
+  assert cross_lab_cfg.max_iterations == 20000
+
+  continuous_cfg = cast(
+    TennisLatentOnPolicyRunnerCfg,
+    load_rl_cfg("Mjlab-Tennis-Continuous-Unitree-G1"),
+  )
+  assert continuous_cfg.experiment_name == "g1_tennis_latent_continuous"
+  assert continuous_cfg.run_name == "tennis_continuous_from_cross"
+  assert continuous_cfg.resume is True
+  assert continuous_cfg.load_checkpoint_file == DEFAULT_CONTINUOUS_RESUME_CHECKPOINT
+  assert continuous_cfg.algorithm.entropy_coef == 0.003
 
 
 def test_tennis_env_uses_latent_actions() -> None:
@@ -98,6 +138,57 @@ def test_tennis_decoder_state_terms_align_with_distillation() -> None:
   action = tennis_cfg.actions["latent_joint_pos"]
   assert isinstance(action, FrozenDecoderLatentJointPositionActionCfg)
   assert tuple(action.decoder_state_terms) == tuple(distill_cfg.state_terms)
+
+
+def test_tennis_latent_action_barrier_config() -> None:
+  hit_cfg = load_env_cfg("Mjlab-Tennis-Hit-Unitree-G1")
+  hit_action = hit_cfg.actions["latent_joint_pos"]
+  assert isinstance(hit_action, FrozenDecoderLatentJointPositionActionCfg)
+  assert hit_action.use_latent_action_barrier is False
+
+  hit_lab_cfg = load_env_cfg("Mjlab-Tennis-Hit-LAB-Unitree-G1")
+  hit_lab_action = hit_lab_cfg.actions["latent_joint_pos"]
+  assert isinstance(hit_lab_action, FrozenDecoderLatentJointPositionActionCfg)
+  assert hit_lab_action.use_latent_action_barrier is True
+  assert hit_lab_action.latent_barrier_scale == 1.0
+  assert hit_lab_action.latent_barrier_min_std == 0.05
+  assert hit_lab_action.latent_barrier_max_std == 2.0
+
+  cross_cfg = load_env_cfg("Mjlab-Tennis-Cross-Unitree-G1")
+  cross_action = cross_cfg.actions["latent_joint_pos"]
+  assert isinstance(cross_action, FrozenDecoderLatentJointPositionActionCfg)
+  assert cross_action.use_latent_action_barrier is False
+
+  cross_lab_cfg = load_env_cfg("Mjlab-Tennis-Cross-LAB-Unitree-G1")
+  cross_lab_action = cross_lab_cfg.actions["latent_joint_pos"]
+  assert isinstance(cross_lab_action, FrozenDecoderLatentJointPositionActionCfg)
+  assert cross_lab_action.use_latent_action_barrier is True
+  assert cross_lab_action.latent_barrier_scale == 1.0
+  assert cross_lab_action.latent_barrier_min_std == 0.05
+  assert cross_lab_action.latent_barrier_max_std == 2.0
+
+  continuous_cfg = load_env_cfg("Mjlab-Tennis-Continuous-Unitree-G1")
+  continuous_action = continuous_cfg.actions["latent_joint_pos"]
+  assert isinstance(continuous_action, FrozenDecoderLatentJointPositionActionCfg)
+  assert continuous_action.use_latent_action_barrier is False
+
+
+def test_apply_latent_action_barrier_bounds_residual() -> None:
+  action = torch.tensor([[-100.0, 0.0, 100.0]])
+  prior_mean = torch.tensor([[1.0, -2.0, 3.0]])
+  prior_std = torch.tensor([[0.001, 0.5, 10.0]])
+
+  latent = apply_latent_action_barrier(
+    action,
+    prior_mean,
+    prior_std,
+    scale=2.0,
+    min_std=0.05,
+    max_std=2.0,
+  )
+
+  expected = torch.tensor([[0.9, -2.0, 7.0]])
+  assert torch.allclose(latent, expected)
 
 
 def test_tennis_hit_rewards_and_terminations_end_on_first_hit() -> None:
@@ -146,6 +237,31 @@ def test_tennis_cross_rewards_and_terminations_target_landing() -> None:
   assert landing_params["landing_x_limits"][1] == 0.0
   assert landing_params["landing_y_limits"][0] < 0.0
   assert landing_params["landing_y_limits"][1] > 0.0
+
+
+def test_tennis_continuous_respawns_until_eight_successful_returns() -> None:
+  cfg = load_env_cfg("Mjlab-Tennis-Continuous-Unitree-G1")
+
+  assert "landing_in_bounds_event" in cfg.rewards
+  assert "continuous_rally_complete_bonus" in cfg.rewards
+  assert "respawn_successful_continuous_rally_ball" in cfg.rewards
+  assert cfg.rewards["respawn_successful_continuous_rally_ball"].weight == 1.0e-9
+
+  assert "landing_in_bounds_after_hit" not in cfg.terminations
+  assert "second_contact" not in cfg.terminations
+  assert "continuous_rally_failure" in cfg.terminations
+  assert "continuous_rally_complete" in cfg.terminations
+
+  complete_params = cfg.terminations["continuous_rally_complete"].params
+  assert complete_params["max_successful_returns"] == 8
+  respawn_params = cfg.rewards["respawn_successful_continuous_rally_ball"].params
+  assert respawn_params["max_successful_returns"] == 8
+  assert (
+    respawn_params["provider_cfg"] is cfg.events["reset_ball"].params["provider_cfg"]
+  )
+
+  curriculum_params = cfg.curriculum["ball_target_region"].params
+  assert curriculum_params["success_term_name"] == "continuous_rally_complete"
 
 
 def test_tennis_reset_ranges_face_opponent_half() -> None:
