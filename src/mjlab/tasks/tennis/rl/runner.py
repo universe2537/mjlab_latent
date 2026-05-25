@@ -133,3 +133,17 @@ class TennisLatentOnPolicyRunner(MjlabOnPolicyRunner):
         wandb.save(str(onnx_path), base_path=str(policy_dir))
     except Exception as e:
       print(f"[WARN] ONNX export failed (training continues): {e}")
+
+
+class TennisTokenOnPolicyRunner(MjlabOnPolicyRunner):
+  """RSL-RL runner for token policies without frozen PyTorch decoder export."""
+
+  def __init__(
+    self,
+    env: VecEnv,
+    train_cfg: dict[str, Any],
+    log_dir: str | None = None,
+    device: str = "cpu",
+  ) -> None:
+    train_cfg.pop("require_decoder_checkpoint", None)
+    super().__init__(env, train_cfg, log_dir, device)

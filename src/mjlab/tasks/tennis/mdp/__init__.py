@@ -6,4 +6,5 @@ from .curriculums import *  # noqa: F403
 from .hit_state import *  # noqa: F403
 from .observations import *  # noqa: F403
 from .rewards import *  # noqa: F403
+from .sonic_actions import *  # noqa: F403
 from .terminations import *  # noqa: F403

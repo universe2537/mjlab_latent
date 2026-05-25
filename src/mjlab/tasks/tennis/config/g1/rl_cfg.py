@@ -71,7 +71,7 @@ def unitree_g1_tennis_latent_cross_ppo_runner_cfg() -> TennisLatentOnPolicyRunne
   """Create PPO config for the G1 tennis cross-court task."""
   cfg = unitree_g1_tennis_latent_ppo_runner_cfg(
     experiment_name="g1_tennis_latent_cross",
-    run_name="tennis_cross",
+    run_name="tennis_cross_from_hit",
     resume=True,
     load_checkpoint_file=DEFAULT_CROSS_RESUME_CHECKPOINT,
   )
@@ -111,5 +111,40 @@ def unitree_g1_tennis_continuous_ppo_runner_cfg() -> TennisLatentOnPolicyRunnerC
     load_checkpoint_file=DEFAULT_CONTINUOUS_RESUME_CHECKPOINT,
   )
   cfg.algorithm.entropy_coef = 0.003
+  cfg.max_iterations = 40000
+  return cfg
+
+
+def unitree_g1_tennis_sonic_hit_ppo_runner_cfg() -> TennisLatentOnPolicyRunnerCfg:
+  """Create PPO config for the G1 tennis Hit-SONIC task."""
+  cfg = unitree_g1_tennis_latent_ppo_runner_cfg(
+    experiment_name="g1_tennis_sonic_hit",
+    run_name="tennis_hit_sonic",
+  )
+  cfg.algorithm.entropy_coef = 0.003
+  cfg.actor.distribution_cfg = {
+    "class_name": "GaussianDistribution",
+    "init_std": 0.2,
+    "std_type": "scalar",
+  }
+  cfg.clip_actions = 1.0
+  cfg.require_decoder_checkpoint = False
+  return cfg
+
+
+def unitree_g1_tennis_sonic_cross_ppo_runner_cfg() -> TennisLatentOnPolicyRunnerCfg:
+  """Create PPO config for the G1 tennis Cross-SONIC task."""
+  cfg = unitree_g1_tennis_latent_ppo_runner_cfg(
+    experiment_name="g1_tennis_sonic_cross",
+    run_name="tennis_cross_sonic",
+  )
+  cfg.algorithm.entropy_coef = 0.001
+  cfg.actor.distribution_cfg = {
+    "class_name": "GaussianDistribution",
+    "init_std": 0.2,
+    "std_type": "scalar",
+  }
+  cfg.clip_actions = 1.0
+  cfg.require_decoder_checkpoint = False
   cfg.max_iterations = 40000
   return cfg

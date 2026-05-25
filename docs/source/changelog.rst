@@ -56,6 +56,10 @@ Added
   random latent trajectories and reporting first-hit success rate, minimum
   racket-to-ball distance, decoded-action statistics, and current curriculum
   state.
+- Added ``Mjlab-Tennis-Hit-SONIC-Unitree-G1`` and
+  ``Mjlab-Tennis-Cross-SONIC-Unitree-G1`` tasks that drive the G1 tennis
+  robot through SONIC's deployment decoder from a high-level 64-dimensional
+  token action, with a repository-local checkpoint symlink under ``ckpt/``.
 
 Changed
 ^^^^^^^
@@ -95,6 +99,9 @@ Changed
   frozen decoder latent.
 - Updated ``Mjlab-Tennis-Cross-LAB`` to fine-tune from the latest LAB
   checkpoint with lower entropy pressure for a shorter stability-focused run.
+- Retuned ``Mjlab-Tennis-Cross-LAB`` to reduce hit/contact shaping, increase
+  post-hit return rewards, and widen the LAB residual scale for stronger
+  return strokes.
 - Added ``Mjlab-Tennis-Continuous-Unitree-G1``, a non-LAB multi-ball rally task
   that respawns a new feed after each successful in-bounds return and ends after
   eight consecutive successful returns.

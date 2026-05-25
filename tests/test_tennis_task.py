@@ -17,6 +17,8 @@ from mjlab.tasks.tennis.config.g1.rl_cfg import (
 from mjlab.tasks.tennis.mdp import (
   FrozenDecoderLatentJointPositionAction,
   FrozenDecoderLatentJointPositionActionCfg,
+  SonicDecoderTokenJointPositionAction,
+  SonicDecoderTokenJointPositionActionCfg,
   apply_latent_action_barrier,
 )
 from mjlab.tasks.tennis.mdp.ball_providers import RandomFeederCfg
@@ -39,6 +41,8 @@ def test_tennis_task_registered() -> None:
   assert "Mjlab-Tennis-Cross-Unitree-G1" in list_tasks()
   assert "Mjlab-Tennis-Cross-LAB-Unitree-G1" in list_tasks()
   assert "Mjlab-Tennis-Continuous-Unitree-G1" in list_tasks()
+  assert "Mjlab-Tennis-Hit-SONIC-Unitree-G1" in list_tasks()
+  assert "Mjlab-Tennis-Cross-SONIC-Unitree-G1" in list_tasks()
 
 
 def test_tennis_task_scene_compiles() -> None:
@@ -107,6 +111,28 @@ def test_tennis_rl_config_loads() -> None:
   assert continuous_cfg.load_checkpoint_file == DEFAULT_CONTINUOUS_RESUME_CHECKPOINT
   assert continuous_cfg.algorithm.entropy_coef == 0.003
 
+  sonic_hit_cfg = cast(
+    TennisLatentOnPolicyRunnerCfg,
+    load_rl_cfg("Mjlab-Tennis-Hit-SONIC-Unitree-G1"),
+  )
+  assert sonic_hit_cfg.experiment_name == "g1_tennis_sonic_hit"
+  assert sonic_hit_cfg.run_name == "tennis_hit_sonic_token"
+  assert sonic_hit_cfg.resume is False
+  assert sonic_hit_cfg.require_decoder_checkpoint is False
+  assert sonic_hit_cfg.clip_actions == 1.0
+  assert sonic_hit_cfg.actor.distribution_cfg is not None
+  assert sonic_hit_cfg.actor.distribution_cfg["init_std"] == 0.2
+
+  sonic_cross_cfg = cast(
+    TennisLatentOnPolicyRunnerCfg,
+    load_rl_cfg("Mjlab-Tennis-Cross-SONIC-Unitree-G1"),
+  )
+  assert sonic_cross_cfg.experiment_name == "g1_tennis_sonic_cross"
+  assert sonic_cross_cfg.run_name == "tennis_cross_sonic_scratch"
+  assert sonic_cross_cfg.resume is False
+  assert sonic_cross_cfg.require_decoder_checkpoint is False
+  assert sonic_cross_cfg.clip_actions == 1.0
+
 
 def test_tennis_env_uses_latent_actions() -> None:
   cfg = load_env_cfg("Mjlab-Tennis-Hit-Unitree-G1")
@@ -140,6 +166,26 @@ def test_tennis_decoder_state_terms_align_with_distillation() -> None:
   assert tuple(action.decoder_state_terms) == tuple(distill_cfg.state_terms)
 
 
+def test_tennis_sonic_env_uses_token_actions() -> None:
+  cfg = load_env_cfg("Mjlab-Tennis-Hit-SONIC-Unitree-G1")
+  action_cfg = cfg.actions["latent_joint_pos"]
+  assert isinstance(action_cfg, SonicDecoderTokenJointPositionActionCfg)
+  assert action_cfg.token_dim == 64
+  assert action_cfg.history_length == 10
+  assert action_cfg.decoder_onnx_path == "ckpt/GEAR-SONIC/model_decoder.onnx"
+  assert action_cfg.scale == 1.0
+
+  cfg.scene.num_envs = 2
+  env = ManagerBasedRlEnv(cfg=cfg, device="cpu")
+  try:
+    action = env.action_manager.get_term("latent_joint_pos")
+    assert isinstance(action, SonicDecoderTokenJointPositionAction)
+    assert env.action_manager.total_action_dim == 64
+    assert action.low_level_action_dim == 29
+  finally:
+    env.close()
+
+
 def test_tennis_latent_action_barrier_config() -> None:
   hit_cfg = load_env_cfg("Mjlab-Tennis-Hit-Unitree-G1")
   hit_action = hit_cfg.actions["latent_joint_pos"]
@@ -163,7 +209,7 @@ def test_tennis_latent_action_barrier_config() -> None:
   cross_lab_action = cross_lab_cfg.actions["latent_joint_pos"]
   assert isinstance(cross_lab_action, FrozenDecoderLatentJointPositionActionCfg)
   assert cross_lab_action.use_latent_action_barrier is True
-  assert cross_lab_action.latent_barrier_scale == 1.0
+  assert cross_lab_action.latent_barrier_scale == 1.5
   assert cross_lab_action.latent_barrier_min_std == 0.05
   assert cross_lab_action.latent_barrier_max_std == 2.0
 
@@ -237,6 +283,18 @@ def test_tennis_cross_rewards_and_terminations_target_landing() -> None:
   assert landing_params["landing_x_limits"][1] == 0.0
   assert landing_params["landing_y_limits"][0] < 0.0
   assert landing_params["landing_y_limits"][1] > 0.0
+
+
+def test_tennis_cross_lab_rewards_bias_toward_post_hit_return() -> None:
+  cfg = load_env_cfg("Mjlab-Tennis-Cross-LAB-Unitree-G1")
+
+  assert cfg.rewards["approach_point"].weight == 2.0
+  assert cfg.rewards["racket_towards_ball"].weight == 1.0
+  assert cfg.rewards["racket_hit_event"].weight == 5.0
+  assert cfg.rewards["post_hit_x_progress"].weight == 80.0
+  assert cfg.rewards["post_hit_ball_velocity_direction"].weight == 50.0
+  assert cfg.rewards["crossed_net_event"].weight == 700.0
+  assert cfg.rewards["landing_in_bounds_event"].weight == 1500.0
 
 
 def test_tennis_continuous_respawns_until_eight_successful_returns() -> None:

@@ -6,7 +6,10 @@ from mjlab.asset_zoo.robots import (
   G1_W_RACKET_ACTION_SCALE,
   get_g1_w_racket_robot_cfg,
 )
-from mjlab.tasks.tennis.mdp import FrozenDecoderLatentJointPositionActionCfg
+from mjlab.tasks.tennis.mdp import (
+  FrozenDecoderLatentJointPositionActionCfg,
+  SonicDecoderTokenJointPositionActionCfg,
+)
 from mjlab.tasks.tennis.scene import (
   get_tennis_ball_cfg,
   get_tennis_court_cfg,
@@ -22,6 +25,7 @@ from mjlab.tasks.tennis.tennis_env_cfg import (
 )
 
 DEFAULT_DECODER_CHECKPOINT = "logs/rsl_rl/g1_distillation/distill_cloud_unitree_racket_tennis_2026-05-12_09-35-14/model_30000.pt"
+DEFAULT_SONIC_DECODER_ONNX = "ckpt/GEAR-SONIC/model_decoder.onnx"
 
 
 def unitree_g1_tennis_latent_hit_env_cfg(
@@ -117,9 +121,16 @@ def unitree_g1_tennis_cross_lab_env_cfg(
   action = cfg.actions["latent_joint_pos"]
   assert isinstance(action, FrozenDecoderLatentJointPositionActionCfg)
   action.use_latent_action_barrier = True
-  action.latent_barrier_scale = 1.0
+  action.latent_barrier_scale = 1.5
   action.latent_barrier_min_std = 0.05
   action.latent_barrier_max_std = 2.0
+  cfg.rewards["approach_point"].weight = 2.0
+  cfg.rewards["racket_towards_ball"].weight = 1.0
+  cfg.rewards["racket_hit_event"].weight = 5.0
+  cfg.rewards["post_hit_x_progress"].weight = 80.0
+  cfg.rewards["post_hit_ball_velocity_direction"].weight = 50.0
+  cfg.rewards["crossed_net_event"].weight = 700.0
+  cfg.rewards["landing_in_bounds_event"].weight = 1500.0
   return cfg
 
 
@@ -148,4 +159,44 @@ def unitree_g1_tennis_continuous_env_cfg(
     cfg.episode_length_s = int(1e9)
     cfg.observations["actor"].enable_corruption = False
 
+  return cfg
+
+
+def unitree_g1_tennis_sonic_hit_env_cfg(
+  play: bool = False,
+  court_size: CourtSizeType = DEFAULT_COURT_SIZE,
+) -> TennisLatentEnvCfg:
+  """创建使用 SONIC token decoder 的 G1 网球 Hit 任务。"""
+  cfg = unitree_g1_tennis_latent_hit_env_cfg(
+    play=play,
+    court_size=court_size,
+  )
+  cfg.actions["latent_joint_pos"] = SonicDecoderTokenJointPositionActionCfg(
+    entity_name="robot",
+    actuator_names=(".*",),
+    scale=1.0,
+    use_default_offset=True,
+    token_dim=64,
+    decoder_onnx_path=DEFAULT_SONIC_DECODER_ONNX,
+  )
+  return cfg
+
+
+def unitree_g1_tennis_sonic_cross_env_cfg(
+  play: bool = False,
+  court_size: CourtSizeType = DEFAULT_COURT_SIZE,
+) -> TennisLatentEnvCfg:
+  """创建使用 SONIC token decoder 的 G1 网球 Cross 任务。"""
+  cfg = unitree_g1_tennis_latent_cross_env_cfg(
+    play=play,
+    court_size=court_size,
+  )
+  cfg.actions["latent_joint_pos"] = SonicDecoderTokenJointPositionActionCfg(
+    entity_name="robot",
+    actuator_names=(".*",),
+    scale=1.0,
+    use_default_offset=True,
+    token_dim=64,
+    decoder_onnx_path=DEFAULT_SONIC_DECODER_ONNX,
+  )
   return cfg
