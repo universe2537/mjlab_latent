@@ -8,8 +8,8 @@ DEFAULT_CROSS_RESUME_CHECKPOINT = (
   "tennis_cloud_tennis_B_curr_quarter_2026-05-18_22-02-07/model_29999.pt"
 )
 DEFAULT_CROSS_LAB_RESUME_CHECKPOINT = (
-  "logs/rsl_rl/g1_tennis_latent_cross_lab/"
-  "tennis_cross_cloud_lab_2026-05-22_21-26-16/model_89997.pt"
+  "logs/rsl_rl/g1_tennis_latent_hit_lab/"
+  "tennis_hit_lab_2026-05-24_01-49-58/model_29999.pt"
 )
 DEFAULT_CONTINUOUS_RESUME_CHECKPOINT = (
   "logs/rsl_rl/g1_tennis_latent_cross/"
@@ -71,7 +71,7 @@ def unitree_g1_tennis_latent_cross_ppo_runner_cfg() -> TennisLatentOnPolicyRunne
   """Create PPO config for the G1 tennis cross-court task."""
   cfg = unitree_g1_tennis_latent_ppo_runner_cfg(
     experiment_name="g1_tennis_latent_cross",
-    run_name="tennis_cross_from_hit",
+    run_name="tennis_cross",
     resume=True,
     load_checkpoint_file=DEFAULT_CROSS_RESUME_CHECKPOINT,
   )
@@ -83,7 +83,7 @@ def unitree_g1_tennis_hit_lab_ppo_runner_cfg() -> TennisLatentOnPolicyRunnerCfg:
   """Create PPO config for the G1 tennis Hit-LAB task."""
   cfg = unitree_g1_tennis_latent_ppo_runner_cfg(
     experiment_name="g1_tennis_latent_hit_lab",
-    run_name="tennis_hit_lab_scratch",
+    run_name="tennis_hit_lab",
   )
   cfg.algorithm.entropy_coef = 0.003
   return cfg
@@ -93,7 +93,7 @@ def unitree_g1_tennis_cross_lab_ppo_runner_cfg() -> TennisLatentOnPolicyRunnerCf
   """Create PPO config for the G1 tennis Cross-LAB task."""
   cfg = unitree_g1_tennis_latent_ppo_runner_cfg(
     experiment_name="g1_tennis_latent_cross_lab",
-    run_name="tennis_cross_lab_finetune",
+    run_name="tennis_cross_lab",
     resume=True,
     load_checkpoint_file=DEFAULT_CROSS_LAB_RESUME_CHECKPOINT,
   )
