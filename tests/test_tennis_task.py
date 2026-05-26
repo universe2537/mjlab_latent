@@ -13,6 +13,7 @@ from mjlab.tasks.tennis.config.g1.rl_cfg import (
   DEFAULT_CONTINUOUS_RESUME_CHECKPOINT,
   DEFAULT_CROSS_LAB_RESUME_CHECKPOINT,
   DEFAULT_CROSS_RESUME_CHECKPOINT,
+  DEFAULT_CROSS_WRIST_LAB_RESUME_CHECKPOINT,
 )
 from mjlab.tasks.tennis.mdp import (
   FrozenDecoderLatentJointPositionAction,
@@ -23,6 +24,9 @@ from mjlab.tasks.tennis.mdp import (
 )
 from mjlab.tasks.tennis.mdp.ball_providers import RandomFeederCfg
 from mjlab.tasks.tennis.rl import TennisLatentOnPolicyRunnerCfg
+from mjlab.tasks.tennis.rl.runner import (
+  expand_actor_action_head_for_wrist_residual,
+)
 from mjlab.tasks.tennis.tennis_env_cfg import (
   BALL_SPAWN_X_RANGE,
   BALL_SPAWN_Z_RANGE,
@@ -40,6 +44,7 @@ def test_tennis_task_registered() -> None:
   assert "Mjlab-Tennis-Hit-LAB-Unitree-G1" in list_tasks()
   assert "Mjlab-Tennis-Cross-Unitree-G1" in list_tasks()
   assert "Mjlab-Tennis-Cross-LAB-Unitree-G1" in list_tasks()
+  assert "Mjlab-Tennis-Cross-Wrist-LAB-Unitree-G1" in list_tasks()
   assert "Mjlab-Tennis-Continuous-Unitree-G1" in list_tasks()
   assert "Mjlab-Tennis-Hit-SONIC-Unitree-G1" in list_tasks()
   assert "Mjlab-Tennis-Cross-SONIC-Unitree-G1" in list_tasks()
@@ -95,11 +100,25 @@ def test_tennis_rl_config_loads() -> None:
     load_rl_cfg("Mjlab-Tennis-Cross-LAB-Unitree-G1"),
   )
   assert cross_lab_cfg.experiment_name == "g1_tennis_latent_cross_lab"
-  assert cross_lab_cfg.run_name == "tennis_cross_lab_finetune"
+  assert cross_lab_cfg.run_name == "tennis_cross_lab_from_cross"
   assert cross_lab_cfg.resume is True
   assert cross_lab_cfg.load_checkpoint_file == DEFAULT_CROSS_LAB_RESUME_CHECKPOINT
   assert cross_lab_cfg.algorithm.entropy_coef == 0.001
-  assert cross_lab_cfg.max_iterations == 20000
+  assert cross_lab_cfg.max_iterations == 30000
+
+  cross_wrist_lab_cfg = cast(
+    TennisLatentOnPolicyRunnerCfg,
+    load_rl_cfg("Mjlab-Tennis-Cross-Wrist-LAB-Unitree-G1"),
+  )
+  assert cross_wrist_lab_cfg.experiment_name == "g1_tennis_latent_cross_wrist_lab"
+  assert cross_wrist_lab_cfg.run_name == "tennis_cross_wrist_lab_from_cross"
+  assert cross_wrist_lab_cfg.resume is True
+  assert (
+    cross_wrist_lab_cfg.load_checkpoint_file
+    == DEFAULT_CROSS_WRIST_LAB_RESUME_CHECKPOINT
+  )
+  assert cross_wrist_lab_cfg.algorithm.entropy_coef == 0.001
+  assert cross_wrist_lab_cfg.max_iterations == 30000
 
   continuous_cfg = cast(
     TennisLatentOnPolicyRunnerCfg,
@@ -151,6 +170,46 @@ def test_tennis_env_uses_latent_actions() -> None:
     latent = torch.zeros(env.num_envs, env.action_manager.total_action_dim)
     env.step(latent)
     assert action.low_level_action.shape == (env.num_envs, 29)
+  finally:
+    env.close()
+
+
+def test_tennis_cross_wrist_lab_env_adds_wrist_residual_actions() -> None:
+  cfg = load_env_cfg("Mjlab-Tennis-Cross-Wrist-LAB-Unitree-G1")
+  action_cfg = cfg.actions["latent_joint_pos"]
+  assert isinstance(action_cfg, FrozenDecoderLatentJointPositionActionCfg)
+  assert action_cfg.use_latent_action_barrier is True
+  assert action_cfg.latent_barrier_scale == 1.5
+  assert action_cfg.wrist_residual_joint_names == (
+    "right_wrist_roll_joint",
+    "right_wrist_pitch_joint",
+    "right_wrist_yaw_joint",
+  )
+  assert action_cfg.wrist_residual_scale == (0.15, 0.2, 0.2)
+  assert cfg.rewards["wrist_residual_l2"].weight == -0.02
+  assert cfg.rewards["wrist_residual_rate_l2"].weight == -0.03
+
+  cfg.scene.num_envs = 2
+  env = ManagerBasedRlEnv(cfg=cfg, device="cpu")
+  try:
+    action = env.action_manager.get_term("latent_joint_pos")
+    assert isinstance(action, FrozenDecoderLatentJointPositionAction)
+    assert env.action_manager.total_action_dim == 19
+    assert action.low_level_action_dim == 29
+    assert action.wrist_residual_dim == 3
+    assert action.wrist_residual_joint_ids.numel() == 3
+
+    obs, _ = env.reset()
+    assert isinstance(obs["actor"], torch.Tensor)
+    raw_actions = torch.zeros(env.num_envs, env.action_manager.total_action_dim)
+    raw_actions[:, 16:] = 10.0
+    env.step(raw_actions)
+    expected_wrist = torch.tensor((0.15, 0.2, 0.2))
+    assert torch.allclose(
+      action.wrist_residual_action.cpu(),
+      expected_wrist.expand(env.num_envs, -1),
+      atol=1.0e-4,
+    )
   finally:
     env.close()
 
@@ -212,6 +271,14 @@ def test_tennis_latent_action_barrier_config() -> None:
   assert cross_lab_action.latent_barrier_scale == 1.5
   assert cross_lab_action.latent_barrier_min_std == 0.05
   assert cross_lab_action.latent_barrier_max_std == 2.0
+  assert cross_lab_action.wrist_residual_joint_names == ()
+
+  cross_wrist_lab_cfg = load_env_cfg("Mjlab-Tennis-Cross-Wrist-LAB-Unitree-G1")
+  cross_wrist_lab_action = cross_wrist_lab_cfg.actions["latent_joint_pos"]
+  assert isinstance(cross_wrist_lab_action, FrozenDecoderLatentJointPositionActionCfg)
+  assert cross_wrist_lab_action.use_latent_action_barrier is True
+  assert cross_wrist_lab_action.latent_barrier_scale == 1.5
+  assert len(cross_wrist_lab_action.wrist_residual_joint_names) == 3
 
   continuous_cfg = load_env_cfg("Mjlab-Tennis-Continuous-Unitree-G1")
   continuous_action = continuous_cfg.actions["latent_joint_pos"]
@@ -295,6 +362,46 @@ def test_tennis_cross_lab_rewards_bias_toward_post_hit_return() -> None:
   assert cfg.rewards["post_hit_ball_velocity_direction"].weight == 50.0
   assert cfg.rewards["crossed_net_event"].weight == 700.0
   assert cfg.rewards["landing_in_bounds_event"].weight == 1500.0
+
+
+def test_tennis_wrist_lab_checkpoint_action_head_migration() -> None:
+  actor_sd = {
+    "distribution.std_param": torch.arange(16, dtype=torch.float32),
+    "mlp.0.weight": torch.ones(512, 127),
+    "mlp.0.bias": torch.ones(512),
+    "mlp.2.weight": torch.ones(256, 512),
+    "mlp.2.bias": torch.ones(256),
+    "mlp.4.weight": torch.ones(128, 256),
+    "mlp.4.bias": torch.ones(128),
+    "mlp.6.weight": torch.arange(16 * 128, dtype=torch.float32).reshape(16, 128),
+    "mlp.6.bias": torch.arange(16, dtype=torch.float32),
+  }
+
+  migrated = expand_actor_action_head_for_wrist_residual(
+    actor_sd,
+    latent_dim=16,
+    target_dim=19,
+    wrist_init_std=0.2,
+  )
+
+  assert migrated is True
+  assert actor_sd["mlp.6.weight"].shape == (19, 128)
+  assert actor_sd["mlp.6.bias"].shape == (19,)
+  assert actor_sd["distribution.std_param"].shape == (19,)
+  assert torch.allclose(
+    actor_sd["mlp.6.weight"][:16],
+    torch.arange(16 * 128, dtype=torch.float32).reshape(16, 128),
+  )
+  assert torch.all(actor_sd["mlp.6.weight"][16:] == 0.0)
+  assert torch.all(actor_sd["mlp.6.bias"][16:] == 0.0)
+  assert torch.allclose(
+    actor_sd["distribution.std_param"][:16],
+    torch.arange(16, dtype=torch.float32),
+  )
+  assert torch.allclose(
+    actor_sd["distribution.std_param"][16:],
+    torch.full((3,), 0.2),
+  )
 
 
 def test_tennis_continuous_respawns_until_eight_successful_returns() -> None:

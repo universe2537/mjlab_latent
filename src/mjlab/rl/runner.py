@@ -131,6 +131,7 @@ class MjlabOnPolicyRunner(OnPolicyRunner):
     if "log_std" in actor_sd:
       actor_sd["distribution.log_std_param"] = actor_sd.pop("log_std")
 
+    loaded_dict = self._preprocess_loaded_dict(loaded_dict)
     load_iteration = self.alg.load(loaded_dict, load_cfg, strict)
     if load_iteration:
       self.current_learning_iteration = loaded_dict["iter"]
@@ -139,3 +140,7 @@ class MjlabOnPolicyRunner(OnPolicyRunner):
     if infos and "env_state" in infos:
       self.env.unwrapped.common_step_counter = infos["env_state"]["common_step_counter"]
     return infos
+
+  def _preprocess_loaded_dict(self, loaded_dict: dict) -> dict:
+    """Allow task runners to adjust checkpoint state before algorithm loading."""
+    return loaded_dict

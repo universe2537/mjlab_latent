@@ -6,6 +6,8 @@ from mjlab.asset_zoo.robots import (
   G1_W_RACKET_ACTION_SCALE,
   get_g1_w_racket_robot_cfg,
 )
+from mjlab.managers.reward_manager import RewardTermCfg
+from mjlab.tasks.tennis import mdp
 from mjlab.tasks.tennis.mdp import (
   FrozenDecoderLatentJointPositionActionCfg,
   SonicDecoderTokenJointPositionActionCfg,
@@ -26,6 +28,12 @@ from mjlab.tasks.tennis.tennis_env_cfg import (
 
 DEFAULT_DECODER_CHECKPOINT = "logs/rsl_rl/g1_distillation/distill_cloud_unitree_racket_tennis_2026-05-12_09-35-14/model_30000.pt"
 DEFAULT_SONIC_DECODER_ONNX = "ckpt/GEAR-SONIC/model_decoder.onnx"
+RIGHT_WRIST_RESIDUAL_JOINTS = (
+  "right_wrist_roll_joint",
+  "right_wrist_pitch_joint",
+  "right_wrist_yaw_joint",
+)
+RIGHT_WRIST_RESIDUAL_SCALE = (0.15, 0.2, 0.2)
 
 
 def unitree_g1_tennis_latent_hit_env_cfg(
@@ -131,6 +139,33 @@ def unitree_g1_tennis_cross_lab_env_cfg(
   cfg.rewards["post_hit_ball_velocity_direction"].weight = 50.0
   cfg.rewards["crossed_net_event"].weight = 700.0
   cfg.rewards["landing_in_bounds_event"].weight = 1500.0
+  return cfg
+
+
+def unitree_g1_tennis_cross_wrist_lab_env_cfg(
+  play: bool = False,
+  court_size: CourtSizeType = DEFAULT_COURT_SIZE,
+) -> TennisLatentEnvCfg:
+  """创建 Cross-LAB-from-Cross + 高层右腕 residual 的 G1 网球任务。"""
+  cfg = unitree_g1_tennis_cross_lab_env_cfg(
+    play=play,
+    court_size=court_size,
+  )
+  action = cfg.actions["latent_joint_pos"]
+  assert isinstance(action, FrozenDecoderLatentJointPositionActionCfg)
+  action.wrist_residual_joint_names = RIGHT_WRIST_RESIDUAL_JOINTS
+  action.wrist_residual_scale = RIGHT_WRIST_RESIDUAL_SCALE
+  action.wrist_residual_migration_std = 0.2
+  cfg.rewards["wrist_residual_l2"] = RewardTermCfg(
+    func=mdp.wrist_residual_l2,
+    weight=-0.02,
+    params={"action_name": "latent_joint_pos"},
+  )
+  cfg.rewards["wrist_residual_rate_l2"] = RewardTermCfg(
+    func=mdp.wrist_residual_rate_l2,
+    weight=-0.03,
+    params={"action_name": "latent_joint_pos"},
+  )
   return cfg
 
 

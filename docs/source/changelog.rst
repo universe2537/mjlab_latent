@@ -60,6 +60,9 @@ Added
   ``Mjlab-Tennis-Cross-SONIC-Unitree-G1`` tasks that drive the G1 tennis
   robot through SONIC's deployment decoder from a high-level 64-dimensional
   token action, with a repository-local checkpoint symlink under ``ckpt/``.
+- Added ``Mjlab-Tennis-Cross-Wrist-LAB-Unitree-G1``, a Cross-LAB variant
+  that fine-tunes from the non-LAB Cross checkpoint while adding three direct
+  right-wrist residual actions on top of the frozen decoder output.
 
 Changed
 ^^^^^^^
@@ -97,8 +100,12 @@ Changed
 - Removed the ``Mjlab-Tennis-Cross`` PPO ``std_range`` clamp again so the LAB
   constraint, rather than a hard Gaussian standard-deviation cap, controls the
   frozen decoder latent.
-- Updated ``Mjlab-Tennis-Cross-LAB`` to fine-tune from the latest LAB
-  checkpoint with lower entropy pressure for a shorter stability-focused run.
+- Updated ``Mjlab-Tennis-Cross-LAB`` to fine-tune from the latest non-LAB
+  Cross checkpoint with lower entropy pressure, preserving the existing
+  over-net return behavior while adding the LAB residual constraint.
+- Tennis latent runners can now migrate a 16-dimensional Cross actor checkpoint
+  into the 19-dimensional Cross-Wrist-LAB action space by copying the latent
+  head, zero-initializing the wrist outputs, and restarting optimizer state.
 - Retuned ``Mjlab-Tennis-Cross-LAB`` to reduce hit/contact shaping, increase
   post-hit return rewards, and widen the LAB residual scale for stronger
   return strokes.

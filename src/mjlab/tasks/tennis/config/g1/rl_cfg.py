@@ -8,8 +8,12 @@ DEFAULT_CROSS_RESUME_CHECKPOINT = (
   "tennis_cloud_tennis_B_curr_quarter_2026-05-18_22-02-07/model_29999.pt"
 )
 DEFAULT_CROSS_LAB_RESUME_CHECKPOINT = (
-  "logs/rsl_rl/g1_tennis_latent_hit_lab/"
-  "tennis_hit_lab_2026-05-24_01-49-58/model_29999.pt"
+  "logs/rsl_rl/g1_tennis_latent_cross/"
+  "tennis_cross_from_hit_2026-05-21_15-21-12/model_59998.pt"
+)
+DEFAULT_CROSS_WRIST_LAB_RESUME_CHECKPOINT = (
+  "logs/rsl_rl/g1_tennis_latent_cross/"
+  "tennis_cross_from_hit_2026-05-21_15-21-12/model_59998.pt"
 )
 DEFAULT_CONTINUOUS_RESUME_CHECKPOINT = (
   "logs/rsl_rl/g1_tennis_latent_cross/"
@@ -83,7 +87,7 @@ def unitree_g1_tennis_hit_lab_ppo_runner_cfg() -> TennisLatentOnPolicyRunnerCfg:
   """Create PPO config for the G1 tennis Hit-LAB task."""
   cfg = unitree_g1_tennis_latent_ppo_runner_cfg(
     experiment_name="g1_tennis_latent_hit_lab",
-    run_name="tennis_hit_lab",
+    run_name="tennis_hit_lab_scratch",
   )
   cfg.algorithm.entropy_coef = 0.003
   return cfg
@@ -93,12 +97,25 @@ def unitree_g1_tennis_cross_lab_ppo_runner_cfg() -> TennisLatentOnPolicyRunnerCf
   """Create PPO config for the G1 tennis Cross-LAB task."""
   cfg = unitree_g1_tennis_latent_ppo_runner_cfg(
     experiment_name="g1_tennis_latent_cross_lab",
-    run_name="tennis_cross_lab",
+    run_name="tennis_cross_lab_from_cross",
     resume=True,
     load_checkpoint_file=DEFAULT_CROSS_LAB_RESUME_CHECKPOINT,
   )
   cfg.algorithm.entropy_coef = 0.001
-  cfg.max_iterations = 20000
+  cfg.max_iterations = 30000
+  return cfg
+
+
+def unitree_g1_tennis_cross_wrist_lab_ppo_runner_cfg() -> TennisLatentOnPolicyRunnerCfg:
+  """Create PPO config for the G1 tennis Cross-Wrist-LAB task."""
+  cfg = unitree_g1_tennis_latent_ppo_runner_cfg(
+    experiment_name="g1_tennis_latent_cross_wrist_lab",
+    run_name="tennis_cross_wrist_lab_from_cross",
+    resume=True,
+    load_checkpoint_file=DEFAULT_CROSS_WRIST_LAB_RESUME_CHECKPOINT,
+  )
+  cfg.algorithm.entropy_coef = 0.001
+  cfg.max_iterations = 30000
   return cfg
 
 
@@ -119,7 +136,7 @@ def unitree_g1_tennis_sonic_hit_ppo_runner_cfg() -> TennisLatentOnPolicyRunnerCf
   """Create PPO config for the G1 tennis Hit-SONIC task."""
   cfg = unitree_g1_tennis_latent_ppo_runner_cfg(
     experiment_name="g1_tennis_sonic_hit",
-    run_name="tennis_hit_sonic",
+    run_name="tennis_hit_sonic_token",
   )
   cfg.algorithm.entropy_coef = 0.003
   cfg.actor.distribution_cfg = {
@@ -136,7 +153,7 @@ def unitree_g1_tennis_sonic_cross_ppo_runner_cfg() -> TennisLatentOnPolicyRunner
   """Create PPO config for the G1 tennis Cross-SONIC task."""
   cfg = unitree_g1_tennis_latent_ppo_runner_cfg(
     experiment_name="g1_tennis_sonic_cross",
-    run_name="tennis_cross_sonic",
+    run_name="tennis_cross_sonic_scratch",
   )
   cfg.algorithm.entropy_coef = 0.001
   cfg.actor.distribution_cfg = {

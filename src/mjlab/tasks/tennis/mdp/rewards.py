@@ -68,6 +68,33 @@ def low_level_action_rate_l2(
   return torch.sum(torch.square(action - prev_action), dim=1)
 
 
+def wrist_residual_l2(env: ManagerBasedRlEnv, action_name: str) -> torch.Tensor:
+  """惩罚高层直接施加的右腕 residual 幅度。"""
+  term = env.action_manager.get_term(action_name)
+  action = getattr(term, "wrist_residual_action", None)
+  if action is None:
+    raise ValueError(
+      f"Action term {action_name!r} does not expose wrist residual actions."
+    )
+  if action.shape[-1] == 0:
+    return torch.zeros(env.num_envs, dtype=torch.float, device=env.device)
+  return torch.sum(torch.square(action), dim=1)
+
+
+def wrist_residual_rate_l2(env: ManagerBasedRlEnv, action_name: str) -> torch.Tensor:
+  """惩罚高层右腕 residual 的帧间变化。"""
+  term = env.action_manager.get_term(action_name)
+  action = getattr(term, "wrist_residual_action", None)
+  prev_action = getattr(term, "prev_wrist_residual_action", None)
+  if action is None or prev_action is None:
+    raise ValueError(
+      f"Action term {action_name!r} does not expose wrist residual history."
+    )
+  if action.shape[-1] == 0:
+    return torch.zeros(env.num_envs, dtype=torch.float, device=env.device)
+  return torch.sum(torch.square(action - prev_action), dim=1)
+
+
 # ---------------------------------------------------------------------------
 # 击球任务奖励
 # ---------------------------------------------------------------------------

@@ -28,7 +28,13 @@ class FrozenDecoderLatentJointPositionActionCfg(ActionTermCfg):
   use_default_offset: bool = True
   """以机器人默认关节位置作为低层偏置。"""
   latent_dim: int = 16
-  """PPO 传入的高层动作维度。"""
+  """高层动作中送入冻结解码器的 latent 维度。"""
+  wrist_residual_joint_names: tuple[str, ...] = ()
+  """由高层动作直接微调的低层右腕关节名称。为空时禁用 wrist residual。"""
+  wrist_residual_scale: float | tuple[float, ...] = 0.2
+  """右腕 residual 缩放，单位为低层关节动作空间中的弧度偏移。"""
+  wrist_residual_migration_std: float = 0.2
+  """从无 wrist residual 的旧策略迁移时，新 wrist 输出的初始探索标准差。"""
   decoder_checkpoint: str = ""
   """包含解码器的在线蒸馏检查点路径。"""
   decoder_state_terms: tuple[str, ...] = ()
@@ -92,13 +98,29 @@ class FrozenDecoderLatentJointPositionAction(ActionTerm):
     )
     self._low_level_action = JointPositionAction(low_level_cfg, env)
     low_level_dim = self._low_level_action.action_dim
-    self._raw_actions = torch.zeros(self.num_envs, cfg.latent_dim, device=self.device)
+    self._wrist_residual_dim = len(cfg.wrist_residual_joint_names)
+    self._raw_actions = torch.zeros(
+      self.num_envs, self.action_dim, device=self.device
+    )
     self._decoded_actions = torch.zeros(
       self.num_envs, low_level_dim, device=self.device
     )
-    self._barrier_latent_actions = torch.zeros_like(self._raw_actions)
-    self._latent_prior_mean = torch.zeros_like(self._raw_actions)
-    self._latent_prior_std = torch.zeros_like(self._raw_actions)
+    self._barrier_latent_actions = torch.zeros(
+      self.num_envs, cfg.latent_dim, device=self.device
+    )
+    self._latent_prior_mean = torch.zeros_like(self._barrier_latent_actions)
+    self._latent_prior_std = torch.zeros_like(self._barrier_latent_actions)
+    self._wrist_residual_actions = torch.zeros(
+      self.num_envs, self._wrist_residual_dim, device=self.device
+    )
+    self._prev_wrist_residual_actions = torch.zeros_like(
+      self._wrist_residual_actions
+    )
+    self._wrist_residual_joint_ids = self._resolve_wrist_residual_joint_ids()
+    self._wrist_residual_scale = self._resolve_wrist_residual_scale()
+    self._wrist_residual_decoder_scale = (
+      self._resolve_wrist_residual_decoder_scale()
+    )
     self._prev_decoded_actions = torch.zeros_like(self._decoded_actions)
     self._slicer: ObservationSlicer | None = None
     self._model: LatentStudentModel | None = None
@@ -106,7 +128,7 @@ class FrozenDecoderLatentJointPositionAction(ActionTerm):
 
   @property
   def action_dim(self) -> int:
-    return self.cfg.latent_dim
+    return self.cfg.latent_dim + len(self.cfg.wrist_residual_joint_names)
 
   @property
   def raw_action(self) -> torch.Tensor:
@@ -117,7 +139,31 @@ class FrozenDecoderLatentJointPositionAction(ActionTerm):
     """Return the latent actually passed into the frozen decoder."""
     if self.cfg.use_latent_action_barrier:
       return self._barrier_latent_actions
-    return self._raw_actions
+    return self._raw_latent_actions
+
+  @property
+  def wrist_residual_action(self) -> torch.Tensor:
+    return self._wrist_residual_actions
+
+  @property
+  def prev_wrist_residual_action(self) -> torch.Tensor:
+    return self._prev_wrist_residual_actions
+
+  @property
+  def wrist_residual_dim(self) -> int:
+    return self._wrist_residual_dim
+
+  @property
+  def wrist_residual_joint_ids(self) -> torch.Tensor:
+    return self._wrist_residual_joint_ids
+
+  @property
+  def wrist_residual_scale(self) -> torch.Tensor:
+    return self._wrist_residual_scale
+
+  @property
+  def wrist_residual_decoder_scale(self) -> torch.Tensor:
+    return self._wrist_residual_decoder_scale
 
   @property
   def latent_prior_mean(self) -> torch.Tensor:
@@ -171,19 +217,24 @@ class FrozenDecoderLatentJointPositionAction(ActionTerm):
     with torch.no_grad():
       latent = self._latent_for_decode(state)
       decoded = self._model.decode(state, latent)
+      decoded = self._apply_wrist_residual(decoded)
     self._prev_decoded_actions[:] = self._decoded_actions
     self._decoded_actions[:] = decoded
     self._low_level_action.process_actions(self._decoded_actions)
 
+  @property
+  def _raw_latent_actions(self) -> torch.Tensor:
+    return self._raw_actions[:, : self.cfg.latent_dim]
+
   def _latent_for_decode(self, state: torch.Tensor) -> torch.Tensor:
     assert self._model is not None
     if not self.cfg.use_latent_action_barrier:
-      return self._raw_actions
+      return self._raw_latent_actions
     prior = self._model.prior_distribution(state)
     self._latent_prior_mean[:] = prior.mean
     self._latent_prior_std[:] = prior.std
     latent = apply_latent_action_barrier(
-      self._raw_actions,
+      self._raw_latent_actions,
       prior.mean,
       prior.std,
       scale=self.cfg.latent_barrier_scale,
@@ -192,6 +243,21 @@ class FrozenDecoderLatentJointPositionAction(ActionTerm):
     )
     self._barrier_latent_actions[:] = latent
     return self._barrier_latent_actions
+
+  def _apply_wrist_residual(self, decoded: torch.Tensor) -> torch.Tensor:
+    if self._wrist_residual_dim == 0:
+      return decoded
+    self._prev_wrist_residual_actions[:] = self._wrist_residual_actions
+    wrist_raw = self._raw_actions[:, self.cfg.latent_dim :]
+    self._wrist_residual_actions[:] = (
+      torch.tanh(wrist_raw) * self._wrist_residual_scale
+    )
+    wrist_decoder_delta = (
+      self._wrist_residual_actions / self._wrist_residual_decoder_scale
+    )
+    decoded = decoded.clone()
+    decoded[:, self._wrist_residual_joint_ids] += wrist_decoder_delta
+    return decoded
 
   def apply_actions(self) -> None:
     self._low_level_action.apply_actions()
@@ -203,9 +269,50 @@ class FrozenDecoderLatentJointPositionAction(ActionTerm):
     self._barrier_latent_actions[env_ids] = 0.0
     self._latent_prior_mean[env_ids] = 0.0
     self._latent_prior_std[env_ids] = 0.0
+    self._wrist_residual_actions[env_ids] = 0.0
+    self._prev_wrist_residual_actions[env_ids] = 0.0
     self._decoded_actions[env_ids] = 0.0
     self._prev_decoded_actions[env_ids] = 0.0
     self._low_level_action.reset(env_ids)
+
+  def _resolve_wrist_residual_joint_ids(self) -> torch.Tensor:
+    ids: list[int] = []
+    target_names = self._low_level_action.target_names
+    for joint_name in self.cfg.wrist_residual_joint_names:
+      if joint_name not in target_names:
+        raise ValueError(
+          f"Wrist residual joint {joint_name!r} is not controlled by the "
+          f"low-level decoder action. Available targets: {target_names}."
+        )
+      ids.append(target_names.index(joint_name))
+    return torch.tensor(ids, dtype=torch.long, device=self.device)
+
+  def _resolve_wrist_residual_scale(self) -> torch.Tensor:
+    if self._wrist_residual_dim == 0:
+      return torch.zeros(0, device=self.device)
+    scale = self.cfg.wrist_residual_scale
+    if isinstance(scale, (float, int)):
+      return torch.full((self._wrist_residual_dim,), float(scale), device=self.device)
+    if len(scale) != self._wrist_residual_dim:
+      raise ValueError(
+        "wrist_residual_scale must be a scalar or match "
+        f"wrist_residual_joint_names length {self._wrist_residual_dim}."
+      )
+    return torch.tensor(scale, dtype=torch.float, device=self.device)
+
+  def _resolve_wrist_residual_decoder_scale(self) -> torch.Tensor:
+    if self._wrist_residual_dim == 0:
+      return torch.zeros(0, device=self.device)
+    scale = self._low_level_action.scale
+    if isinstance(scale, torch.Tensor):
+      wrist_scale = scale[0, self._wrist_residual_joint_ids].to(self.device)
+    else:
+      wrist_scale = torch.full(
+        (self._wrist_residual_dim,), float(scale), device=self.device
+      )
+    if torch.any(torch.abs(wrist_scale) < 1.0e-8):
+      raise ValueError("Wrist residual cannot target joints with zero action scale.")
+    return wrist_scale
 
   def ensure_decoder_ready(self) -> None:
     if self._slicer is None:
