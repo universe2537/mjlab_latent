@@ -47,7 +47,9 @@ def test_tennis_task_registered() -> None:
   assert "Mjlab-Tennis-Cross-Wrist-LAB-Unitree-G1" in list_tasks()
   assert "Mjlab-Tennis-Continuous-Unitree-G1" in list_tasks()
   assert "Mjlab-Tennis-Hit-SONIC-Unitree-G1" in list_tasks()
+  assert "Mjlab-Tennis-Hit-SONIC-Encoder-Unitree-G1" in list_tasks()
   assert "Mjlab-Tennis-Cross-SONIC-Unitree-G1" in list_tasks()
+  assert "Mjlab-Tennis-Cross-SONIC-Encoder-Unitree-G1" in list_tasks()
 
 
 def test_tennis_task_scene_compiles() -> None:
@@ -135,22 +137,40 @@ def test_tennis_rl_config_loads() -> None:
     load_rl_cfg("Mjlab-Tennis-Hit-SONIC-Unitree-G1"),
   )
   assert sonic_hit_cfg.experiment_name == "g1_tennis_sonic_hit"
-  assert sonic_hit_cfg.run_name == "tennis_hit_sonic_token"
+  assert sonic_hit_cfg.run_name == "tennis_hit_sonic_token_wo_encoder"
   assert sonic_hit_cfg.resume is False
   assert sonic_hit_cfg.require_decoder_checkpoint is False
   assert sonic_hit_cfg.clip_actions == 1.0
   assert sonic_hit_cfg.actor.distribution_cfg is not None
   assert sonic_hit_cfg.actor.distribution_cfg["init_std"] == 0.2
 
+  sonic_encoder_hit_cfg = cast(
+    TennisLatentOnPolicyRunnerCfg,
+    load_rl_cfg("Mjlab-Tennis-Hit-SONIC-Encoder-Unitree-G1"),
+  )
+  assert sonic_encoder_hit_cfg.experiment_name == "g1_tennis_sonic_encoder_hit"
+  assert sonic_encoder_hit_cfg.run_name == "tennis_hit_sonic_encoder_prior"
+  assert sonic_encoder_hit_cfg.require_decoder_checkpoint is False
+  assert sonic_encoder_hit_cfg.clip_actions == 1.0
+
   sonic_cross_cfg = cast(
     TennisLatentOnPolicyRunnerCfg,
     load_rl_cfg("Mjlab-Tennis-Cross-SONIC-Unitree-G1"),
   )
   assert sonic_cross_cfg.experiment_name == "g1_tennis_sonic_cross"
-  assert sonic_cross_cfg.run_name == "tennis_cross_sonic_scratch"
+  assert sonic_cross_cfg.run_name == "tennis_cross_sonic_token_wo_encoder_scratch"
   assert sonic_cross_cfg.resume is False
   assert sonic_cross_cfg.require_decoder_checkpoint is False
   assert sonic_cross_cfg.clip_actions == 1.0
+
+  sonic_encoder_cross_cfg = cast(
+    TennisLatentOnPolicyRunnerCfg,
+    load_rl_cfg("Mjlab-Tennis-Cross-SONIC-Encoder-Unitree-G1"),
+  )
+  assert sonic_encoder_cross_cfg.experiment_name == "g1_tennis_sonic_encoder_cross"
+  assert sonic_encoder_cross_cfg.run_name == "tennis_cross_sonic_encoder_prior_scratch"
+  assert sonic_encoder_cross_cfg.require_decoder_checkpoint is False
+  assert sonic_encoder_cross_cfg.clip_actions == 1.0
 
 
 def test_tennis_env_uses_latent_actions() -> None:
@@ -232,6 +252,7 @@ def test_tennis_sonic_env_uses_token_actions() -> None:
   assert action_cfg.token_dim == 64
   assert action_cfg.history_length == 10
   assert action_cfg.decoder_onnx_path == "ckpt/GEAR-SONIC/model_decoder.onnx"
+  assert action_cfg.use_encoder_token_prior is False
   assert action_cfg.scale == 1.0
 
   cfg.scene.num_envs = 2
@@ -241,6 +262,36 @@ def test_tennis_sonic_env_uses_token_actions() -> None:
     assert isinstance(action, SonicDecoderTokenJointPositionAction)
     assert env.action_manager.total_action_dim == 64
     assert action.low_level_action_dim == 29
+  finally:
+    env.close()
+
+
+def test_tennis_sonic_encoder_env_uses_encoder_prior() -> None:
+  cfg = load_env_cfg("Mjlab-Tennis-Hit-SONIC-Encoder-Unitree-G1")
+  action_cfg = cfg.actions["latent_joint_pos"]
+  assert isinstance(action_cfg, SonicDecoderTokenJointPositionActionCfg)
+  assert action_cfg.token_dim == 64
+  assert action_cfg.decoder_onnx_path == "ckpt/GEAR-SONIC/model_decoder.onnx"
+  assert action_cfg.encoder_onnx_path == "ckpt/GEAR-SONIC/model_encoder.onnx"
+  assert action_cfg.use_encoder_token_prior is True
+  assert action_cfg.token_residual_scale == 0.2
+  assert action_cfg.encoder_history_stride == 5
+
+  cfg.scene.num_envs = 2
+  env = ManagerBasedRlEnv(cfg=cfg, device="cpu")
+  try:
+    action = env.action_manager.get_term("latent_joint_pos")
+    assert isinstance(action, SonicDecoderTokenJointPositionAction)
+    assert env.action_manager.total_action_dim == 64
+    assert action.low_level_action_dim == 29
+
+    obs, _ = env.reset()
+    assert isinstance(obs["actor"], torch.Tensor)
+    raw_actions = torch.zeros(env.num_envs, env.action_manager.total_action_dim)
+    env.step(raw_actions)
+    assert action.encoder_token_action.shape == (env.num_envs, 64)
+    assert action.token_action.shape == (env.num_envs, 64)
+    assert torch.allclose(action.token_action, action.encoder_token_action)
   finally:
     env.close()
 

@@ -136,7 +136,7 @@ def unitree_g1_tennis_sonic_hit_ppo_runner_cfg() -> TennisLatentOnPolicyRunnerCf
   """Create PPO config for the G1 tennis Hit-SONIC task."""
   cfg = unitree_g1_tennis_latent_ppo_runner_cfg(
     experiment_name="g1_tennis_sonic_hit",
-    run_name="tennis_hit_sonic_token",
+    run_name="tennis_hit_sonic_token_wo_encoder",
   )
   cfg.algorithm.entropy_coef = 0.003
   cfg.actor.distribution_cfg = {
@@ -149,11 +149,47 @@ def unitree_g1_tennis_sonic_hit_ppo_runner_cfg() -> TennisLatentOnPolicyRunnerCf
   return cfg
 
 
+def unitree_g1_tennis_sonic_encoder_hit_ppo_runner_cfg() -> TennisLatentOnPolicyRunnerCfg:
+  """Create PPO config for the G1 tennis Hit-SONIC-Encoder task."""
+  cfg = unitree_g1_tennis_latent_ppo_runner_cfg(
+    experiment_name="g1_tennis_sonic_encoder_hit",
+    run_name="tennis_hit_sonic_encoder_prior",
+  )
+  cfg.algorithm.entropy_coef = 0.003
+  cfg.actor.distribution_cfg = {
+    "class_name": "GaussianDistribution",
+    "init_std": 0.2,
+    "std_type": "scalar",
+  }
+  cfg.clip_actions = 1.0
+  cfg.require_decoder_checkpoint = False
+  cfg.max_iterations = 30000
+  return cfg
+
+
 def unitree_g1_tennis_sonic_cross_ppo_runner_cfg() -> TennisLatentOnPolicyRunnerCfg:
   """Create PPO config for the G1 tennis Cross-SONIC task."""
   cfg = unitree_g1_tennis_latent_ppo_runner_cfg(
     experiment_name="g1_tennis_sonic_cross",
-    run_name="tennis_cross_sonic_scratch",
+    run_name="tennis_cross_sonic_token_wo_encoder_scratch",
+  )
+  cfg.algorithm.entropy_coef = 0.001
+  cfg.actor.distribution_cfg = {
+    "class_name": "GaussianDistribution",
+    "init_std": 0.2,
+    "std_type": "scalar",
+  }
+  cfg.clip_actions = 1.0
+  cfg.require_decoder_checkpoint = False
+  cfg.max_iterations = 40000
+  return cfg
+
+
+def unitree_g1_tennis_sonic_encoder_cross_ppo_runner_cfg() -> TennisLatentOnPolicyRunnerCfg:
+  """Create PPO config for the G1 tennis Cross-SONIC-Encoder task."""
+  cfg = unitree_g1_tennis_latent_ppo_runner_cfg(
+    experiment_name="g1_tennis_sonic_encoder_cross",
+    run_name="tennis_cross_sonic_encoder_prior_scratch",
   )
   cfg.algorithm.entropy_coef = 0.001
   cfg.actor.distribution_cfg = {

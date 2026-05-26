@@ -2,6 +2,13 @@
 
 Always use `uv run`, not bare `python`.
 
+Maintain `summary.html` whenever the repository gains useful operational
+knowledge, a new task family, a non-obvious debugging lesson, or a training
+run worth remembering. Keep it concise and practical: record what changed,
+which commands/checkpoints/logs matter, what failed, and the current next
+step. Future AI coding agents in this repository should read and update that
+file as shared working memory.
+
 ```sh
 # Type check.
 uv run ty check

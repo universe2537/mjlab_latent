@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>mjlab_latent Working Summary</title>
+  <style>
+    body {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.5;
+      margin: 32px auto;
+      max-width: 980px;
+      color: #202124;
+    }
+    h1, h2 {
+      line-height: 1.2;
+    }
+    code {
+      background: #f2f4f7;
+      border-radius: 4px;
+      padding: 1px 4px;
+    }
+    .note {
+      border-left: 4px solid #4f7cff;
+      padding-left: 12px;
+      color: #3b4453;
+    }
+    table {
+      border-collapse: collapse;
+      width: 100%;
+    }
+    th, td {
+      border: 1px solid #d9dde5;
+      padding: 8px;
+      text-align: left;
+      vertical-align: top;
+    }
+    th {
+      background: #f7f8fa;
+    }
+  </style>
+</head>
+<body>
+  <h1>mjlab_latent Working Summary</h1>
+  <p class="note">
+    This file is shared working memory for AI coding agents in this repository.
+    Update it when useful implementation knowledge, training status, important
+    commands, failures, or next steps change.
+  </p>
+
+  <h2>2026-05-27 Status</h2>
+  <ul>
+    <li>
+      Current branch: <code>main</code>. The wrist-LAB baseline state was
+      committed as <code>6d8b965 Add tennis cross wrist LAB task</code>.
+    </li>
+    <li>
+      An unrelated empty <code>package-lock.json</code> exists untracked. It has
+      no matching <code>package.json</code> and was intentionally not committed.
+    </li>
+    <li>
+      SONIC direct-token baseline video was recorded without opening a viewer:
+      <code>logs/rsl_rl/g1_tennis_sonic_hit/tennis_sonic_cross_wo_encoder_video_2026-05-27/videos/play/sonic-wo-encoder-step-0.mp4</code>.
+    </li>
+    <li>
+      The stalled <code>tennis_cross_wrist_lab_from_cross</code> tmux training
+      was stopped with <code>Ctrl-C</code> around iteration <code>73923/89998</code>.
+      It had <code>landing_in_bounds_after_hit=0</code>, dominant
+      <code>second_contact</code>/<code>ball_out_of_bounds</code> terminations,
+      and <code>Mean action std ~= 799</code>.
+    </li>
+    <li>
+      New active tmux session: <code>sonic_encoder_hit</code>. It runs
+      <code>Mjlab-Tennis-Hit-SONIC-Encoder-Unitree-G1</code> on GPU 7 with
+      <code>4096</code> envs. Run directory:
+      <code>logs/rsl_rl/g1_tennis_sonic_encoder_hit/tennis_hit_sonic_encoder_prior_2026-05-27_01-51-16</code>.
+    </li>
+  </ul>
+
+  <h2>Tennis Task Notes</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Task</th>
+        <th>Purpose</th>
+        <th>Important Detail</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>Mjlab-Tennis-Cross-LAB-Unitree-G1</code></td>
+        <td>Cross task with LAB around the frozen distillation decoder prior.</td>
+        <td>Best route so far is from the non-LAB Cross checkpoint, not from Hit-LAB.</td>
+      </tr>
+      <tr>
+        <td><code>Mjlab-Tennis-Cross-Wrist-LAB-Unitree-G1</code></td>
+        <td>Adds 3 right-wrist residual dimensions on top of 16 LAB latent dims.</td>
+        <td>Old 16-dim Cross checkpoints are migrated to 19 dims by expanding the actor head and reinitializing optimizer state.</td>
+      </tr>
+      <tr>
+        <td><code>Mjlab-Tennis-Hit/Cross-SONIC-Unitree-G1</code></td>
+        <td>Direct 64-dim SONIC token control.</td>
+        <td>Future run names mark this as <code>wo_encoder</code>; direct token PPO can leave SONIC's valid token manifold and produce strange motion.</td>
+      </tr>
+      <tr>
+        <td><code>Mjlab-Tennis-Hit/Cross-SONIC-Encoder-Unitree-G1</code></td>
+        <td>Uses SONIC encoder as a token prior and trains residual token actions.</td>
+        <td>Encoder input is built from current G1 proprio/history as a pragmatic prior; it is not a perfect motion-reference encoder replacement.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>SONIC Encoder Integration</h2>
+  <ul>
+    <li>
+      Local checkpoint link: <code>ckpt/GEAR-SONIC</code> points to
+      <code>/data0/universe/ckpt/GEAR-SONIC</code>.
+    </li>
+    <li>
+      SONIC decoder ONNX input is <code>994 = 64 token + 10 * (6 + 3 * 29)</code>.
+      The existing action term feeds token, angular velocity history, joint
+      position/velocity history, last action history, and gravity history.
+    </li>
+    <li>
+      SONIC encoder ONNX input is <code>1762</code> and output is <code>64</code>.
+      For the G1 encoder mode, the useful slices are mode one-hot, 10-frame
+      joint position history, 10-frame joint velocity history, and 10-frame
+      anchor orientation history.
+    </li>
+    <li>
+      The exported encoder had fixed-batch Reshape constants such as
+      <code>[1, 1, 10, 6]</code>. The action term now patches Reshape shape
+      constants whose first dimension is fixed to <code>1</code>, replacing it
+      with <code>-1</code> so vectorized env batches work.
+    </li>
+    <li>
+      The encoder-prior token currently uses:
+      <code>token = encoder(current_proprio_history) + 0.2 * tanh(policy_action)</code>,
+      followed by the configured token clip.
+    </li>
+  </ul>
+
+  <h2>Rendering Notes</h2>
+  <ul>
+    <li>
+      In the normal sandbox, headless video failed because CUDA/EGL was not
+      visible. <code>osmesa</code> also failed due missing OpenGL symbols, and
+      <code>Xvfb</code> could not create listening sockets.
+    </li>
+    <li>
+      Rendering succeeded when run outside the sandbox with
+      <code>MUJOCO_GL=egl</code>; the system exposed 8 NVIDIA RTX 4090D GPUs.
+      Use non-interactive <code>VideoRecorder</code> scripts for saved videos
+      rather than a viewer when only an mp4 is needed.
+    </li>
+  </ul>
+
+  <h2>Useful Commands</h2>
+  <ul>
+    <li><code>uv run pytest tests/test_tennis_task.py -q</code></li>
+    <li><code>uv run pytest tests/test_tennis_task.py tests/test_tennis_hit_state.py -q</code></li>
+    <li><code>uv run ty check src/mjlab/tasks/tennis/mdp/sonic_actions.py tests/test_tennis_task.py</code></li>
+    <li><code>uv run train Mjlab-Tennis-Hit-SONIC-Encoder-Unitree-G1 --env.scene.num_envs 4096 --gpu-ids [7]</code></li>
+    <li><code>uv run train Mjlab-Tennis-Cross-SONIC-Encoder-Unitree-G1 --env.scene.num_envs 4096 --gpu-ids [7]</code></li>
+  </ul>
+
+  <h2>Next Steps</h2>
+  <ul>
+    <li>
+      Prefer training Hit-SONIC-Encoder first to verify the encoder-prior action
+      manifold before trying Cross-SONIC-Encoder.
+    </li>
+    <li>
+      Compare direct-token <code>wo_encoder</code> video against encoder-prior
+      rollouts; watch for fall rate, racket movement smoothness, and whether
+      token residuals saturate at the clip boundary.
+    </li>
+    <li>
+      If encoder-prior is too conservative, increase
+      <code>token_residual_scale</code> gradually instead of removing the prior.
+    </li>
+  </ul>
+</body>
+</html>

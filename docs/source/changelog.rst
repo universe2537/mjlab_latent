@@ -63,6 +63,10 @@ Added
 - Added ``Mjlab-Tennis-Cross-Wrist-LAB-Unitree-G1``, a Cross-LAB variant
   that fine-tunes from the non-LAB Cross checkpoint while adding three direct
   right-wrist residual actions on top of the frozen decoder output.
+- Added ``Mjlab-Tennis-Hit-SONIC-Encoder-Unitree-G1`` and
+  ``Mjlab-Tennis-Cross-SONIC-Encoder-Unitree-G1``, which reuse SONIC's
+  deployment encoder as a token prior and train the high-level policy to output
+  bounded token residuals instead of unconstrained 64-dimensional tokens.
 
 Changed
 ^^^^^^^
@@ -106,6 +110,9 @@ Changed
 - Tennis latent runners can now migrate a 16-dimensional Cross actor checkpoint
   into the 19-dimensional Cross-Wrist-LAB action space by copying the latent
   head, zero-initializing the wrist outputs, and restarting optimizer state.
+- SONIC tennis runner names now mark direct-token baselines as
+  ``wo_encoder``, and the SONIC action term can patch fixed-batch ONNX Reshape
+  nodes so encoder-prior inference works with vectorized environments.
 - Retuned ``Mjlab-Tennis-Cross-LAB`` to reduce hit/contact shaping, increase
   post-hit return rewards, and widen the LAB residual scale for stronger
   return strokes.

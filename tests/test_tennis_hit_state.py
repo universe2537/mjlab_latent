@@ -18,7 +18,7 @@ class _Scene(dict):
     self.env_origins = env_origins
 
 
-def _make_env():
+def _make_env() -> tuple[Any, Any, Any]:
   ball = SimpleNamespace(
     data=SimpleNamespace(
       root_link_pos_w=torch.tensor([[1.4, 0.0, 1.0]], dtype=torch.float32),

@@ -37,6 +37,10 @@ MUJOCO_GL=egl uv run play Mjlab-Tennis-Continuous-Unitree-G1 --checkpoint-file l
 # SONIC
 uv run train Mjlab-Tennis-Hit-SONIC-Unitree-G1 --env.scene.num_envs 4096 --gpu-ids [0,1]
 uv run train Mjlab-Tennis-Cross-SONIC-Unitree-G1 --env.scene.num_envs 4096 --gpu-ids [0,1]
-MUJOCO_GL=egl uv run play Mjlab-Tennis-Cross-SONIC-Unitree-G1 --checkpoint-file logs/rsl_rl/g1_tennis_sonic_hit/tennis_hit_sonic_token_2026-05-26_01-50-16/model_6000.pt --viewer viser
+uv run train Mjlab-Tennis-Hit-SONIC-Encoder-Unitree-G1 --env.scene.num_envs 4096 --gpu-ids [0,1]
+uv run train Mjlab-Tennis-Cross-SONIC-Encoder-Unitree-G1 --env.scene.num_envs 4096 --gpu-ids [0,1]
+MUJOCO_GL=egl uv run play Mjlab-Tennis-Cross-SONIC-Unitree-G1 --checkpoint-file logs/rsl_rl/g1_tennis_sonic_hit/tennis_hit_sonic_token_2026-05-26_01-50-16/model_12000.pt --viewer viser
+# Saved wo-encoder baseline video:
+# logs/rsl_rl/g1_tennis_sonic_hit/tennis_sonic_cross_wo_encoder_video_2026-05-27/videos/play/sonic-wo-encoder-step-0.mp4
 
 uv run play-distill.py --checkpoint-file logs/rsl_rl/g1_distillation/distill_cloud_unitree_racket_tennis_2026-05-12_09-35-14/model_30000.pt --viewer viser

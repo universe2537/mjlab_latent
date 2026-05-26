@@ -28,6 +28,7 @@ from mjlab.tasks.tennis.tennis_env_cfg import (
 
 DEFAULT_DECODER_CHECKPOINT = "logs/rsl_rl/g1_distillation/distill_cloud_unitree_racket_tennis_2026-05-12_09-35-14/model_30000.pt"
 DEFAULT_SONIC_DECODER_ONNX = "ckpt/GEAR-SONIC/model_decoder.onnx"
+DEFAULT_SONIC_ENCODER_ONNX = "ckpt/GEAR-SONIC/model_encoder.onnx"
 RIGHT_WRIST_RESIDUAL_JOINTS = (
   "right_wrist_roll_joint",
   "right_wrist_pitch_joint",
@@ -217,6 +218,23 @@ def unitree_g1_tennis_sonic_hit_env_cfg(
   return cfg
 
 
+def unitree_g1_tennis_sonic_encoder_hit_env_cfg(
+  play: bool = False,
+  court_size: CourtSizeType = DEFAULT_COURT_SIZE,
+) -> TennisLatentEnvCfg:
+  """创建使用 SONIC encoder prior + token residual 的 G1 网球 Hit 任务。"""
+  cfg = unitree_g1_tennis_sonic_hit_env_cfg(
+    play=play,
+    court_size=court_size,
+  )
+  action = cfg.actions["latent_joint_pos"]
+  assert isinstance(action, SonicDecoderTokenJointPositionActionCfg)
+  action.encoder_onnx_path = DEFAULT_SONIC_ENCODER_ONNX
+  action.use_encoder_token_prior = True
+  action.token_residual_scale = 0.2
+  return cfg
+
+
 def unitree_g1_tennis_sonic_cross_env_cfg(
   play: bool = False,
   court_size: CourtSizeType = DEFAULT_COURT_SIZE,
@@ -234,4 +252,21 @@ def unitree_g1_tennis_sonic_cross_env_cfg(
     token_dim=64,
     decoder_onnx_path=DEFAULT_SONIC_DECODER_ONNX,
   )
+  return cfg
+
+
+def unitree_g1_tennis_sonic_encoder_cross_env_cfg(
+  play: bool = False,
+  court_size: CourtSizeType = DEFAULT_COURT_SIZE,
+) -> TennisLatentEnvCfg:
+  """创建使用 SONIC encoder prior + token residual 的 G1 网球 Cross 任务。"""
+  cfg = unitree_g1_tennis_sonic_cross_env_cfg(
+    play=play,
+    court_size=court_size,
+  )
+  action = cfg.actions["latent_joint_pos"]
+  assert isinstance(action, SonicDecoderTokenJointPositionActionCfg)
+  action.encoder_onnx_path = DEFAULT_SONIC_ENCODER_ONNX
+  action.use_encoder_token_prior = True
+  action.token_residual_scale = 0.2
   return cfg
