@@ -34,7 +34,7 @@ RIGHT_WRIST_RESIDUAL_JOINTS = (
   "right_wrist_pitch_joint",
   "right_wrist_yaw_joint",
 )
-RIGHT_WRIST_RESIDUAL_SCALE = (0.15, 0.2, 0.2)
+RIGHT_WRIST_RESIDUAL_SCALE = (0.03, 0.05, 0.05)
 
 
 def unitree_g1_tennis_latent_hit_env_cfg(
@@ -147,8 +147,8 @@ def unitree_g1_tennis_cross_wrist_lab_env_cfg(
   play: bool = False,
   court_size: CourtSizeType = DEFAULT_COURT_SIZE,
 ) -> TennisLatentEnvCfg:
-  """创建 Cross-LAB-from-Cross + 高层右腕 residual 的 G1 网球任务。"""
-  cfg = unitree_g1_tennis_cross_lab_env_cfg(
+  """创建 Cross-from-Cross + 高层右腕 residual 的 G1 网球任务。"""
+  cfg = unitree_g1_tennis_latent_cross_env_cfg(
     play=play,
     court_size=court_size,
   )
@@ -156,15 +156,15 @@ def unitree_g1_tennis_cross_wrist_lab_env_cfg(
   assert isinstance(action, FrozenDecoderLatentJointPositionActionCfg)
   action.wrist_residual_joint_names = RIGHT_WRIST_RESIDUAL_JOINTS
   action.wrist_residual_scale = RIGHT_WRIST_RESIDUAL_SCALE
-  action.wrist_residual_migration_std = 0.2
+  action.wrist_residual_migration_std = 0.02
   cfg.rewards["wrist_residual_l2"] = RewardTermCfg(
     func=mdp.wrist_residual_l2,
-    weight=-0.02,
+    weight=-0.5,
     params={"action_name": "latent_joint_pos"},
   )
   cfg.rewards["wrist_residual_rate_l2"] = RewardTermCfg(
     func=mdp.wrist_residual_rate_l2,
-    weight=-0.03,
+    weight=-0.5,
     params={"action_name": "latent_joint_pos"},
   )
   return cfg

@@ -174,9 +174,53 @@ class continuous_rally_failure(TennisHitTrackerTerm):
       landing_y_limits,
     )
     tracker = self.tracker
-    failed_landing = tracker.bounce_edge & ~tracker.landing_in_bounds_edge
+    active_rally = ~tracker.in_recovery
+    failed_landing = (
+      tracker.bounce_edge
+      & ~tracker.landing_in_bounds_edge
+      & ~tracker.has_landed_in_bounds
+    )
     extra_racket_contact = tracker.racket_hit_count >= 2
-    return failed_landing | extra_racket_contact
+    return active_rally & (failed_landing | extra_racket_contact)
+
+
+class continuous_ball_in_play(TennisHitTrackerTerm):
+  """Ignore old-ball out-of-bounds events while waiting to respawn next feed."""
+
+  def __init__(self, cfg: TerminationTermCfg, env: ManagerBasedRlEnv):
+    super().__init__(cfg, env)
+
+  def __call__(
+    self,
+    env: ManagerBasedRlEnv,
+    sensor_name: str,
+    ball_cfg: SceneEntityCfg = _BALL_CFG,
+    force_threshold: float = 1.0,
+    ground_z: float = 0.06,
+    net_x: float = 0.0,
+    landing_x_limits: tuple[float, float] | None = None,
+    landing_y_limits: tuple[float, float] | None = None,
+    x_limits: tuple[float, float] = (-5.8, 3.6),
+    y_limits: tuple[float, float] = (-2.7, 2.7),
+    z_limits: tuple[float, float] = (BALL_MIN_HEIGHT, 2.6),
+  ) -> torch.Tensor:
+    del (
+      sensor_name,
+      force_threshold,
+      ground_z,
+      net_x,
+      landing_x_limits,
+      landing_y_limits,
+    )
+    tracker = self.tracker
+    out_of_play = ball_in_play(
+      env,
+      ball_cfg=ball_cfg,
+      x_limits=x_limits,
+      y_limits=y_limits,
+      z_limits=z_limits,
+    )
+    return out_of_play & ~tracker.in_recovery
 
 
 class continuous_rally_complete(TennisHitTrackerTerm):

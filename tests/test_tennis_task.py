@@ -18,6 +18,7 @@ from mjlab.tasks.tennis.config.g1.rl_cfg import (
 from mjlab.tasks.tennis.mdp import (
   FrozenDecoderLatentJointPositionAction,
   FrozenDecoderLatentJointPositionActionCfg,
+  OpponentFeederCfg,
   SonicDecoderTokenJointPositionAction,
   SonicDecoderTokenJointPositionActionCfg,
   apply_latent_action_barrier,
@@ -26,10 +27,15 @@ from mjlab.tasks.tennis.mdp.ball_providers import RandomFeederCfg
 from mjlab.tasks.tennis.rl import TennisLatentOnPolicyRunnerCfg
 from mjlab.tasks.tennis.rl.runner import (
   expand_actor_action_head_for_wrist_residual,
+  expand_mlp_input_for_observation,
 )
 from mjlab.tasks.tennis.tennis_env_cfg import (
   BALL_SPAWN_X_RANGE,
   BALL_SPAWN_Z_RANGE,
+  CONTINUOUS_RALLY_INITIAL_SUCCESSFUL_RETURNS,
+  CONTINUOUS_RALLY_SUCCESSFUL_RETURNS,
+  CONTINUOUS_RECOVERY_FINAL_TIME_RANGE,
+  CONTINUOUS_RECOVERY_INITIAL_TIME_RANGE,
   COURT_HALF_LENGTH,
   COURT_HALF_WIDTH,
   DEFAULT_COURT_SIZE,
@@ -113,7 +119,7 @@ def test_tennis_rl_config_loads() -> None:
     load_rl_cfg("Mjlab-Tennis-Cross-Wrist-LAB-Unitree-G1"),
   )
   assert cross_wrist_lab_cfg.experiment_name == "g1_tennis_latent_cross_wrist_lab"
-  assert cross_wrist_lab_cfg.run_name == "tennis_cross_wrist_lab_from_cross"
+  assert cross_wrist_lab_cfg.run_name == "tennis_cross_wrist_from_cross"
   assert cross_wrist_lab_cfg.resume is True
   assert (
     cross_wrist_lab_cfg.load_checkpoint_file
@@ -130,6 +136,7 @@ def test_tennis_rl_config_loads() -> None:
   assert continuous_cfg.run_name == "tennis_continuous_from_cross"
   assert continuous_cfg.resume is True
   assert continuous_cfg.load_checkpoint_file == DEFAULT_CONTINUOUS_RESUME_CHECKPOINT
+  assert continuous_cfg.reset_resume_progress is True
   assert continuous_cfg.algorithm.entropy_coef == 0.003
 
   sonic_hit_cfg = cast(
@@ -198,16 +205,15 @@ def test_tennis_cross_wrist_lab_env_adds_wrist_residual_actions() -> None:
   cfg = load_env_cfg("Mjlab-Tennis-Cross-Wrist-LAB-Unitree-G1")
   action_cfg = cfg.actions["latent_joint_pos"]
   assert isinstance(action_cfg, FrozenDecoderLatentJointPositionActionCfg)
-  assert action_cfg.use_latent_action_barrier is True
-  assert action_cfg.latent_barrier_scale == 1.5
+  assert action_cfg.use_latent_action_barrier is False
   assert action_cfg.wrist_residual_joint_names == (
     "right_wrist_roll_joint",
     "right_wrist_pitch_joint",
     "right_wrist_yaw_joint",
   )
-  assert action_cfg.wrist_residual_scale == (0.15, 0.2, 0.2)
-  assert cfg.rewards["wrist_residual_l2"].weight == -0.02
-  assert cfg.rewards["wrist_residual_rate_l2"].weight == -0.03
+  assert action_cfg.wrist_residual_scale == (0.03, 0.05, 0.05)
+  assert cfg.rewards["wrist_residual_l2"].weight == -0.5
+  assert cfg.rewards["wrist_residual_rate_l2"].weight == -0.5
 
   cfg.scene.num_envs = 2
   env = ManagerBasedRlEnv(cfg=cfg, device="cpu")
@@ -224,7 +230,7 @@ def test_tennis_cross_wrist_lab_env_adds_wrist_residual_actions() -> None:
     raw_actions = torch.zeros(env.num_envs, env.action_manager.total_action_dim)
     raw_actions[:, 16:] = 10.0
     env.step(raw_actions)
-    expected_wrist = torch.tensor((0.15, 0.2, 0.2))
+    expected_wrist = torch.tensor((0.03, 0.05, 0.05))
     assert torch.allclose(
       action.wrist_residual_action.cpu(),
       expected_wrist.expand(env.num_envs, -1),
@@ -327,8 +333,7 @@ def test_tennis_latent_action_barrier_config() -> None:
   cross_wrist_lab_cfg = load_env_cfg("Mjlab-Tennis-Cross-Wrist-LAB-Unitree-G1")
   cross_wrist_lab_action = cross_wrist_lab_cfg.actions["latent_joint_pos"]
   assert isinstance(cross_wrist_lab_action, FrozenDecoderLatentJointPositionActionCfg)
-  assert cross_wrist_lab_action.use_latent_action_barrier is True
-  assert cross_wrist_lab_action.latent_barrier_scale == 1.5
+  assert cross_wrist_lab_action.use_latent_action_barrier is False
   assert len(cross_wrist_lab_action.wrist_residual_joint_names) == 3
 
   continuous_cfg = load_env_cfg("Mjlab-Tennis-Continuous-Unitree-G1")
@@ -362,6 +367,10 @@ def test_tennis_hit_rewards_and_terminations_end_on_first_hit() -> None:
   assert "racket_towards_ball" in cfg.rewards
   assert "racket_hit_event" in cfg.rewards
   assert "post_hit_x_progress" not in cfg.rewards
+  assert cfg.metrics["racket_hit_count"].reduce == "last"
+  assert cfg.metrics["crossed_net_count"].reduce == "last"
+  assert cfg.metrics["landing_in_bounds_count"].reduce == "last"
+  assert cfg.metrics["successful_return_count"].reduce == "last"
 
   assert "first_racket_hit" in cfg.terminations
   assert "second_contact" in cfg.terminations
@@ -389,6 +398,9 @@ def test_tennis_cross_rewards_and_terminations_target_landing() -> None:
   assert cfg.rewards["crossed_net_event"].weight == 500.0
   assert "landing_in_bounds_event" in cfg.rewards
   assert cfg.rewards["landing_in_bounds_event"].weight == 1000.0
+  assert cfg.metrics["crossed_net_count"].params["landing_x_limits"][1] == 0.0
+  assert cfg.metrics["landing_in_bounds_count"].params["landing_y_limits"][0] < 0.0
+  assert cfg.metrics["successful_return_count"].params["landing_y_limits"][1] > 0.0
 
   assert "first_racket_hit" not in cfg.terminations
   assert "second_contact" in cfg.terminations
@@ -455,29 +467,112 @@ def test_tennis_wrist_lab_checkpoint_action_head_migration() -> None:
   )
 
 
+def test_expand_mlp_input_for_observation_appends_zero_weight_columns() -> None:
+  model_sd = {
+    "obs_normalizer._mean": torch.tensor([[1.0, 2.0]]),
+    "obs_normalizer._var": torch.tensor([[3.0, 4.0]]),
+    "obs_normalizer._std": torch.tensor([[5.0, 6.0]]),
+    "obs_normalizer.count": torch.tensor(7.0),
+    "mlp.0.weight": torch.arange(6, dtype=torch.float32).reshape(3, 2),
+    "mlp.0.bias": torch.zeros(3),
+  }
+
+  migrated = expand_mlp_input_for_observation(model_sd, target_dim=5)
+
+  assert migrated is True
+  assert model_sd["mlp.0.weight"].shape == (3, 5)
+  assert torch.allclose(
+    model_sd["mlp.0.weight"][:, :2],
+    torch.arange(6, dtype=torch.float32).reshape(3, 2),
+  )
+  assert torch.all(model_sd["mlp.0.weight"][:, 2:] == 0.0)
+  assert torch.allclose(
+    model_sd["obs_normalizer._mean"],
+    torch.tensor([[1.0, 2.0, 0.0, 0.0, 0.0]]),
+  )
+  assert torch.allclose(
+    model_sd["obs_normalizer._var"],
+    torch.tensor([[3.0, 4.0, 1.0, 1.0, 1.0]]),
+  )
+  assert torch.allclose(
+    model_sd["obs_normalizer._std"],
+    torch.tensor([[5.0, 6.0, 1.0, 1.0, 1.0]]),
+  )
+
+
 def test_tennis_continuous_respawns_until_eight_successful_returns() -> None:
   cfg = load_env_cfg("Mjlab-Tennis-Continuous-Unitree-G1")
 
+  provider_cfg = cfg.events["reset_ball"].params["provider_cfg"]
+  assert isinstance(provider_cfg, OpponentFeederCfg)
+  assert provider_cfg.spawn_x_range[0] < provider_cfg.spawn_x_range[1] < 0.0
+  assert provider_cfg.target_x_range[0] > 0.0
+
   assert "landing_in_bounds_event" in cfg.rewards
   assert "continuous_rally_complete_bonus" in cfg.rewards
-  assert "respawn_successful_continuous_rally_ball" in cfg.rewards
-  assert cfg.rewards["respawn_successful_continuous_rally_ball"].weight == 1.0e-9
+  assert "continuous_recovery_ready_pose" in cfg.rewards
+  assert "advance_continuous_rally_ball" in cfg.rewards
+  assert "respawn_successful_continuous_rally_ball" not in cfg.rewards
+  assert "continuous_success_ratio" in cfg.metrics
+  assert "in_recovery_rate" in cfg.metrics
+  assert "net_contact_count" in cfg.metrics
+  assert "invalid_feed_count" in cfg.metrics
+  assert "continuous_fault_count" in cfg.metrics
+  assert cfg.metrics["continuous_success_ratio"].reduce == "last"
+  assert cfg.metrics["in_recovery_rate"].reduce == "mean"
+  assert (
+    cfg.metrics["continuous_success_ratio"].params["max_successful_returns"]
+    == CONTINUOUS_RALLY_SUCCESSFUL_RETURNS
+  )
+  assert "continuous_ball_phase" in cfg.observations["actor"].terms
+  assert "continuous_ball_phase" in cfg.observations["critic"].terms
+  assert cfg.rewards["approach_point"].params["racket_sensor_name"] == (
+    "racket_ball_contact"
+  )
+  assert cfg.rewards["approach_point"].params["net_sensor_name"] == "ball_net_contact"
+  assert cfg.rewards["continuous_recovery_ready_pose"].weight == 20.0
+  assert cfg.rewards["advance_continuous_rally_ball"].weight == 1.0e-9
 
+  assert "ball_out_of_bounds" not in cfg.terminations
   assert "landing_in_bounds_after_hit" not in cfg.terminations
   assert "second_contact" not in cfg.terminations
-  assert "continuous_rally_failure" in cfg.terminations
+  assert "continuous_ball_fault" in cfg.terminations
+  assert "continuous_rally_failure" not in cfg.terminations
   assert "continuous_rally_complete" in cfg.terminations
 
   complete_params = cfg.terminations["continuous_rally_complete"].params
-  assert complete_params["max_successful_returns"] == 8
-  respawn_params = cfg.rewards["respawn_successful_continuous_rally_ball"].params
-  assert respawn_params["max_successful_returns"] == 8
+  assert (
+    complete_params["max_successful_returns"]
+    == CONTINUOUS_RALLY_INITIAL_SUCCESSFUL_RETURNS
+  )
+  respawn_params = cfg.rewards["advance_continuous_rally_ball"].params
+  assert (
+    respawn_params["max_successful_returns"]
+    == CONTINUOUS_RALLY_INITIAL_SUCCESSFUL_RETURNS
+  )
+  assert respawn_params["recovery_time_range"] == CONTINUOUS_RECOVERY_INITIAL_TIME_RANGE
   assert (
     respawn_params["provider_cfg"] is cfg.events["reset_ball"].params["provider_cfg"]
   )
 
   curriculum_params = cfg.curriculum["ball_target_region"].params
   assert curriculum_params["success_term_name"] == "continuous_rally_complete"
+  length_stages = cfg.curriculum["continuous_rally_length"].params["stages"]
+  assert length_stages[0]["params"]["max_successful_returns"] == (
+    CONTINUOUS_RALLY_INITIAL_SUCCESSFUL_RETURNS
+  )
+  assert length_stages[-1]["params"]["max_successful_returns"] == (
+    CONTINUOUS_RALLY_SUCCESSFUL_RETURNS
+  )
+  respawn_stages = cfg.curriculum["continuous_respawn_length"].params["stages"]
+  assert respawn_stages == length_stages
+  wait_stages = cfg.curriculum["continuous_wait_interval"].params["stages"]
+  assert wait_stages[0]["params"]["recovery_time_range"] == (
+    CONTINUOUS_RECOVERY_INITIAL_TIME_RANGE
+  )
+  assert wait_stages[-1]["params"]["recovery_time_range"] == (
+    CONTINUOUS_RECOVERY_FINAL_TIME_RANGE
+  )
 
 
 def test_tennis_reset_ranges_face_opponent_half() -> None:

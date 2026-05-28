@@ -7,8 +7,6 @@ from typing import TYPE_CHECKING, cast
 
 import torch
 
-from mjlab.tasks.tennis.mdp.ball_providers import RandomFeederCfg
-
 if TYPE_CHECKING:
   from mjlab.envs import ManagerBasedRlEnv
   from mjlab.managers.curriculum_manager import CurriculumTermCfg
@@ -35,8 +33,9 @@ class random_feeder_target_curriculum:
 
   def __init__(self, cfg: CurriculumTermCfg, env: ManagerBasedRlEnv):
     provider_cfg = cfg.params["provider_cfg"]
-    if not isinstance(provider_cfg, RandomFeederCfg):
-      raise TypeError("provider_cfg must be a RandomFeederCfg instance.")
+    for attr_name in ("target_x_range", "target_y_range"):
+      if not hasattr(provider_cfg, attr_name):
+        raise TypeError("provider_cfg must expose target_x_range and target_y_range.")
 
     self._provider_cfg = provider_cfg
     self._success_term_name = str(
@@ -91,7 +90,7 @@ class random_feeder_target_curriculum:
     self,
     env: ManagerBasedRlEnv,
     env_ids: torch.Tensor | slice,
-    provider_cfg: RandomFeederCfg,
+    provider_cfg: object,
     initial_target_x_range: tuple[float, float],
     initial_target_y_range: tuple[float, float],
     final_target_x_range: tuple[float, float] | None = None,

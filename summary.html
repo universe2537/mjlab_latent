@@ -47,6 +47,58 @@
     commands, failures, or next steps change.
   </p>
 
+  <h2>2026-05-28 Continuous Tennis Redesign</h2>
+  <ul>
+    <li>
+      <code>Mjlab-Tennis-Continuous-Unitree-G1</code> now uses a dedicated
+      continuous ball state machine in <code>tennis/mdp/ball_state.py</code>
+      instead of reusing the Cross/Hit tracker as a multi-ball rally state.
+    </li>
+    <li>
+      Incoming feeds are sampled from bird's-eye ground endpoints by
+      <code>OpponentFeederCfg</code>: start points are in the opponent half
+      (<code>x &lt; 0</code>) and target points are in the robot half. Both
+      endpoints use the ball-center ground height <code>GROUND_Z</code>; the
+      feeder solves the upward velocity from a flight time whose lower bound is
+      computed from the required net-clearance height, so generated feeds should
+      clear the net by construction.
+    </li>
+    <li>
+      Invalid opponent feeds, such as an incoming net touch before the robot has
+      a chance to hit, are counted in metrics but are not robot failures. Robot
+      faults are reserved for missed aerial interceptions, return-side
+      out-of-play, net contact after robot return, low net crossing, failed
+      opponent-court landing, or extra racket contacts.
+    </li>
+    <li>
+      Continuous adds a ball-net contact sensor
+      <code>ball_net_contact</code>, replaces old
+      <code>continuous_rally_failure</code> with
+      <code>continuous_ball_fault</code>, and terminates rally success through
+      <code>continuous_rally_complete</code>.
+    </li>
+    <li>
+      After each successful return, the next feed is delayed by a recovery
+      interval. The wait curriculum starts at <code>3-5s</code>, moves through
+      <code>1-2s</code>, and ends at <code>0.3-0.5s</code>. During recovery,
+      the ready-pose reward is active and old-ball faults are ignored.
+    </li>
+    <li>
+      Continuous still warm-starts from the old Cross checkpoint, but its runner
+      config now sets <code>reset_resume_progress=True</code>. That loads model
+      weights while resetting optimizer, iteration, RND, and saved environment
+      progress, preventing old checkpoint step counters from skipping the easy
+      curriculum stages.
+    </li>
+    <li>
+      Verified checks:
+      <code>uv run ty check src/mjlab/rl/runner.py src/mjlab/tasks/tennis tests/test_tennis_task.py tests/test_tennis_hit_state.py</code>,
+      <code>uv run pytest tests/test_tennis_task.py tests/test_tennis_hit_state.py -q</code>,
+      and a CPU construction smoke test for
+      <code>Mjlab-Tennis-Continuous-Unitree-G1</code>.
+    </li>
+  </ul>
+
   <h2>2026-05-27 Status</h2>
   <ul>
     <li>
@@ -67,6 +119,15 @@
       It had <code>landing_in_bounds_after_hit=0</code>, dominant
       <code>second_contact</code>/<code>ball_out_of_bounds</code> terminations,
       and <code>Mean action std ~= 799</code>.
+    </li>
+    <li>
+      New active tmux session: <code>tennis_cross_wrist_from_cross</code>. It
+      runs <code>Mjlab-Tennis-Cross-Wrist-LAB-Unitree-G1</code> from the old
+      non-LAB Cross checkpoint but with LAB disabled in the env config. The
+      run directory is
+      <code>logs/rsl_rl/g1_tennis_latent_cross_wrist_lab/tennis_cross_wrist_from_cross_2026-05-27_13-55-48</code>,
+      and live output is mirrored to
+      <code>/tmp/tennis_cross_wrist_from_cross_train.log</code>.
     </li>
     <li>
       New active tmux session: <code>sonic_encoder_hit</code>. It runs
@@ -93,8 +154,13 @@
       </tr>
       <tr>
         <td><code>Mjlab-Tennis-Cross-Wrist-LAB-Unitree-G1</code></td>
-        <td>Adds 3 right-wrist residual dimensions on top of 16 LAB latent dims.</td>
-        <td>Old 16-dim Cross checkpoints are migrated to 19 dims by expanding the actor head and reinitializing optimizer state.</td>
+        <td>Adds 3 right-wrist residual dimensions on top of the old Cross latent action.</td>
+        <td>Despite the legacy task name, the current recommended config preserves non-LAB Cross action semantics: LAB is disabled, wrist residual scale is small, migration std is low, and wrist residual penalties are strong.</td>
+      </tr>
+      <tr>
+        <td><code>Mjlab-Tennis-Continuous-Unitree-G1</code></td>
+        <td>Attempts multi-ball rallies by delaying the next feed after each successful Cross-style return.</td>
+        <td>Continuous now has an explicit recovery phase: successful landing starts a countdown, phase/timer/return-count observations are exposed, ready-position recovery is rewarded, and respawn happens only after the countdown.</td>
       </tr>
       <tr>
         <td><code>Mjlab-Tennis-Hit/Cross-SONIC-Unitree-G1</code></td>
@@ -177,6 +243,26 @@
     <li>
       If encoder-prior is too conservative, increase
       <code>token_residual_scale</code> gradually instead of removing the prior.
+    </li>
+    <li>
+      For the active wrist-residual Cross run, monitor whether
+      <code>landing_in_bounds_after_hit</code> rises while
+      <code>second_contact</code> drops. If it stalls, inspect play videos from
+      <code>tennis_cross_wrist_from_cross_2026-05-27_13-55-48</code> before
+      changing rewards.
+    </li>
+    <li>
+      For Continuous, monitor whether recovery rewards reduce falls and improve
+      second-ball hits. The rally-length curriculum starts at two successful
+      returns and later raises the target to four and eight.
+    </li>
+    <li>
+      Tennis sparse events should be interpreted through
+      <code>Episode_Metrics/*</code>, not only <code>Episode_Reward/*</code>.
+      Reward logs are weighted and time-scaled; metrics now expose raw
+      per-episode counts for racket hits, net crossings, in-bounds landings,
+      successful returns, plus Continuous recovery occupancy and success ratio.
+      Restart training to see these metrics in a run that was already active.
     </li>
   </ul>
 </body>

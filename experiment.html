@@ -1,0 +1,249 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>mjlab_latent Experiment Log</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f6f7f9;
+      --paper: #ffffff;
+      --ink: #202124;
+      --muted: #5f6673;
+      --line: #dfe3ea;
+      --soft: #eef3ff;
+      --accent: #2457d6;
+      --warn: #8a5b00;
+      --bad: #9b1c1c;
+      --good: #17643b;
+    }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.52;
+    }
+    main {
+      max-width: 1280px;
+      margin: 0 auto;
+      padding: 28px;
+    }
+    header {
+      background: var(--paper);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 24px;
+      margin-bottom: 18px;
+    }
+    h1, h2, h3 {
+      line-height: 1.2;
+      margin: 0 0 12px;
+    }
+    h1 { font-size: 28px; }
+    h2 { margin-top: 22px; font-size: 21px; }
+    h3 { margin-top: 18px; font-size: 16px; }
+    p { margin: 8px 0; }
+    code {
+      background: #f1f3f6;
+      border: 1px solid #e3e7ef;
+      border-radius: 4px;
+      padding: 1px 4px;
+      font-family: "SFMono-Regular", Consolas, monospace;
+      font-size: 0.92em;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 12px;
+      margin: 14px 0;
+    }
+    .card {
+      background: var(--paper);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 16px;
+    }
+    .pill {
+      display: inline-block;
+      border-radius: 999px;
+      padding: 2px 8px;
+      margin-right: 6px;
+      font-size: 12px;
+      border: 1px solid var(--line);
+      background: #fff;
+      color: var(--muted);
+    }
+    .good { color: var(--good); font-weight: 650; }
+    .warn { color: var(--warn); font-weight: 650; }
+    .bad { color: var(--bad); font-weight: 650; }
+    .muted { color: var(--muted); }
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      background: var(--paper);
+      border: 1px solid var(--line);
+      font-size: 13px;
+    }
+    th, td {
+      border: 1px solid var(--line);
+      padding: 7px 8px;
+      vertical-align: top;
+      text-align: left;
+    }
+    th {
+      position: sticky;
+      top: 0;
+      background: #f3f5f9;
+      z-index: 1;
+    }
+    tbody tr:nth-child(even) { background: #fbfcfe; }
+    .table-wrap {
+      overflow: auto;
+      border-radius: 8px;
+      border: 1px solid var(--line);
+      background: var(--paper);
+      margin: 12px 0 18px;
+    }
+    .table-wrap table { border: 0; }
+    .note {
+      border-left: 4px solid var(--accent);
+      padding: 10px 12px;
+      background: var(--soft);
+      margin: 12px 0;
+    }
+    details {
+      background: var(--paper);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 12px 14px;
+      margin: 12px 0;
+    }
+    summary { cursor: pointer; font-weight: 650; }
+    ul { margin-top: 8px; }
+    li { margin: 5px 0; }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>mjlab_latent 实验日志整理</h1>
+    <p class="muted">生成时间：2026-05-27 15:22:42，仓库：<code>/home/universe/workspace/mjlab_latent</code></p>
+    <p>这个页面把本地 <code>logs/rsl_rl</code>、<code>command.md</code>、<code>summary.html</code> 和近期讨论结论整理成一个实验复盘入口。数值来自 TensorBoard scalar 的最后值 / 历史最好值；不同任务的 success 定义不完全一致，所以结论以任务内比较为主。</p>
+  </header>
+
+  <section class="grid">
+    <div class="card">
+      <h2>当前结论</h2>
+      <p><span class="good">最强回球能力：</span>原始 Cross <code>tennis_cross_from_hit_2026-05-21_15-21-12/model_59998.pt</code>，最后 success_rate 约 <code>0.636</code>，但 std 爆到 <code>948.7</code>。</p>
+      <p><span class="good">最稳命中：</span>Hit-LAB <code>model_29999.pt</code>，hit 成功接近满分，但继续 Cross 后倾向挡球。</p>
+      <p><span class="warn">当前活跃训练：</span><code>continous-recover-12</code>，run 为 <code>tennis_continuous_from_cross_2026-05-27_14-37-48</code>。</p>
+      <p><span class="bad">不推荐继续：</span>Cross clamp std、Cross-LAB-from-Hit-LAB、SONIC encoder-prior 初版。</p>
+    </div>
+    <div class="card">
+      <h2>主线判断</h2>
+      <p>如果目标是完整接网球 demo，短期应以原始 Cross 能力为基线，先把连续接球的 recovery/respawn 做稳；不要过早把 SONIC encoder-prior 作为主线。</p>
+      <p>LAB 的价值在“动作更稳定”，但目前牺牲了回球成功率。后续要靠更强 post-hit/landing 信号或更精细 action parameterization，而不是单纯多跑 iter。</p>
+    </div>
+    <div class="card">
+      <h2>关键风险</h2>
+      <p>Cross 系列的 <code>Policy/mean_std</code> 普遍异常高，说明探索噪声或 checkpoint 继承状态仍会污染后续任务。</p>
+      <p>连续任务目前有回球信号，但 <code>continuous_rally_complete</code> 仍为 0；它还不是多回合 demo。</p>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>实验族谱</h2>
+    <ol>
+      <li><b>Tracking / Distillation</b>：提供 G1-with-racket 的运动先验和 frozen latent decoder。关键 decoder ckpt 是 <code>logs/rsl_rl/g1_distillation/distill_cloud_unitree_racket_tennis_2026-05-12_09-35-14/model_30000.pt</code>。</li>
+      <li><b>Latent Hit</b>：学习第一次球拍接触，为 Cross 提供 resume checkpoint。</li>
+      <li><b>Latent Cross</b>：从 Hit 继续，学习击球后过网和对方半场落点，是当前最佳性能基线。</li>
+      <li><b>Clamp std</b>：算法稳定性尝试，结论是直接 clamp std 会破坏已学会的 Cross 策略。</li>
+      <li><b>LAB / Wrist-LAB</b>：尝试把高层动作限制在合理流形附近，视觉更稳但 Cross 正确率下降。</li>
+      <li><b>Continuous</b>：把单次 Cross 扩展为多球回合，最新版本加入 recovery phase、respawn countdown 和 rally-length curriculum。</li>
+      <li><b>SONIC</b>：复用 SONIC decoder/encoder；direct token 在 Hit 上可学，encoder prior 初版在当前输入构造下不稳。</li>
+    </ol>
+  </section>
+
+  <section>
+    <h2>关键 run 指标表</h2>
+    <div class="note">表中 reward/success 为 <b>最后值 / 历史最好值</b>。Cross 成功主要看 <code>landing_in_bounds_after_hit</code> 和 <code>Curriculum/ball_target_region/success_rate</code>；Hit 主要看 <code>first_racket_hit</code> 和 <code>racket_hit_event</code>。</div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>族</th><th>Run</th><th>Latest ckpt</th><th>Step</th><th>Mean reward</th><th>Std</th><th>Success</th><th>Hit reward</th><th>Cross reward</th><th>Landing reward</th><th>Landing term</th><th>Second contact</th><th>Root height</th><th>Ball out</th><th>判断</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td>Latent Hit</td><td><code>tennis_cloud_tennis_B_curr_quarter_2026-05-18_22-02-07</code></td><td><code>model_29999.pt</code></td><td>29999</td><td>33.70 / 34.56</td><td>78.17</td><td>0.0283 / 1.000</td><td>0.0135</td><td>-</td><td>-</td><td>-</td><td>0.0833</td><td>0.0000</td><td>0.0000</td><td>Hit 基线，最终仍能命中但后期 hit event 变低；用于 Cross 的实际起点是该 run 的 model_29999。</td></tr><tr><td>Latent Cross</td><td><code>tennis_cross_from_hit_2026-05-21_15-21-12</code></td><td><code>model_59998.pt</code></td><td>59998</td><td>85.39 / 89.87</td><td>948.7</td><td>0.6358 / 0.6875</td><td>0.1247</td><td>2.329</td><td>3.139</td><td>48.75</td><td>52.75</td><td>0.7083</td><td>46.58</td><td>当前最强 Cross 基线。能过网并落点成功，但 Policy/std 爆到 948，继续训练噪声很大。</td></tr><tr><td>Latent Cross Clamp</td><td><code>tennis_cross_cloud_clamp_2026-05-22_15-48-37</code></td><td><code>model_66000.pt</code></td><td>66204</td><td>18.14 / 89.36</td><td>2.000</td><td>0.0350 / 0.6842</td><td>0.1040</td><td>0.1182</td><td>0.1529</td><td>3.792</td><td>97.58</td><td>1.042</td><td>42.29</td><td>Clamp std 低成本但效果不好：后期成功率坍塌，second_contact 升高。结论是不推荐作为主线。</td></tr><tr><td>Hit LAB</td><td><code>tennis_hit_lab_2026-05-24_01-49-58</code></td><td><code>model_29999.pt</code></td><td>29999</td><td>6.498 / 7.251</td><td>7.751</td><td>0.9958 / 1.000</td><td>0.4970</td><td>-</td><td>-</td><td>-</td><td>0.5417</td><td>0.0417</td><td>0.1667</td><td>Hit-LAB 很稳，命中接近满分；但从它继续 Cross 的新 LAB run 学不会回球，动作好看但倾向挡球。</td></tr><tr><td>Cross LAB from Cross</td><td><code>old_tennis_cross_cloud_lab_2026-05-22_21-26-16</code></td><td><code>model_89997.pt</code></td><td>89997</td><td>29.65 / 33.97</td><td>1150.9</td><td>0.0583 / 0.0808</td><td>0.1064</td><td>0.2070</td><td>0.2735</td><td>3.458</td><td>51.92</td><td>0.0417</td><td>16.46</td><td>老 Cross 上加 LAB 的路线，视觉更稳但成功率明显低于原 Cross。</td></tr><tr><td>Cross LAB from Cross</td><td><code>old_tennis_cross_lab_2026-05-24_01-49-21</code></td><td><code>model_109996.pt</code></td><td>109996</td><td>24.70 / 36.61</td><td>1174.8</td><td>0.0708 / 0.0958</td><td>0.1109</td><td>0.2604</td><td>0.3590</td><td>4.333</td><td>50.42</td><td>0.0417</td><td>16.42</td><td>目前 LAB 里相对更稳定的一版，但过网/落点成功仍低；继续加 iter 可能有限，需要增强 post-hit 信号或动作空间。</td></tr><tr><td>Cross LAB from Hit-LAB</td><td><code>tennis_cross_lab_2026-05-25_10-10-42</code></td><td><code>model_42000.pt</code></td><td>42428</td><td>9.553 / 11.57</td><td>7.971</td><td>0.0000 / 0.0000</td><td>0.1162</td><td>0.0000</td><td>0.0000</td><td>0.0000</td><td>68.21</td><td>0.0833</td><td>13.83</td><td>从 Hit-LAB 继续的 Cross-LAB：会碰到球，但没有学会过网，主要是挡球/二次接触。</td></tr><tr><td>Cross LAB from Hit-LAB</td><td><code>tennis_cross_lab_2026-05-25_19-08-06</code></td><td><code>model_39500.pt</code></td><td>39670</td><td>18.25 / 24.44</td><td>7.917</td><td>0.0000 / 0.0000</td><td>0.0238</td><td>0.0000</td><td>0.0000</td><td>0.0000</td><td>63.83</td><td>0.8333</td><td>10.75</td><td>另一版从 Hit-LAB 继续，仍然没有落点成功；方法路线暂时不如 Cross-from-Cross。</td></tr><tr><td>Cross Wrist</td><td><code>tennis_cross_wrist_lab_from_cross_2026-05-26_15-07-20</code></td><td><code>model_73500.pt</code></td><td>73926</td><td>-0.0910 / 0.4798</td><td>799.0</td><td>0.0000 / 0.0000</td><td>0.0002</td><td>0.0000</td><td>0.0000</td><td>0.0000</td><td>73.92</td><td>0.7083</td><td>37.54</td><td>LAB + wrist residual 的失败样本，已 Ctrl-C 停止；hit 基本消失，std 很高。</td></tr><tr><td>Cross Wrist from Cross</td><td><code>tennis_cross_wrist_from_cross_2026-05-27_13-55-48</code></td><td><code>model_60000.pt</code></td><td>60387</td><td>6.688 / 48.52</td><td>798.9</td><td>0.0050 / 0.1533</td><td>0.0615</td><td>0.0145</td><td>0.0241</td><td>0.3750</td><td>61.71</td><td>2.042</td><td>24.92</td><td>保留 Cross 语义、加小 wrist residual 的路线有过短暂信号，但最后仍弱；当前 tmux 中未见该任务活跃。</td></tr><tr><td>Continuous</td><td><code>tennis_continuous_from_cross_2026-05-22_21-27-44</code></td><td><code>model_99997.pt</code></td><td>99997</td><td>86.02 / 89.70</td><td>1132.5</td><td>0.0000 / 0.0000</td><td>0.0249</td><td>0.4650</td><td>0.6504</td><td>-</td><td>-</td><td>0.6667</td><td>26.38</td><td>早期 Continuous：保留一定回球能力，但还没有真正多回合成功指标。</td></tr><tr><td>Continuous Recovery</td><td><code>tennis_continuous_from_cross_2026-05-27_14-37-48</code></td><td><code>model_60500.pt</code></td><td>60688</td><td>66.62 / 75.51</td><td>953.9</td><td>0.0000 / 0.0000</td><td>0.0250</td><td>0.3528</td><td>0.5530</td><td>-</td><td>-</td><td>8.417</td><td>21.04</td><td>当前活跃 tmux：continous-recover-12。新增 recovery/re-spawn 后仍未完成 rally，root_height 和 ball_out 需要盯。</td></tr><tr><td>SONIC direct token</td><td><code>tennis_hit_sonic_token_2026-05-26_01-50-16</code></td><td><code>model_12000.pt</code></td><td>12140</td><td>7.504 / 7.860</td><td>0.6426</td><td>0.9950 / 0.9992</td><td>0.4973</td><td>-</td><td>-</td><td>-</td><td>0.2083</td><td>0.2917</td><td>0.1667</td><td>Hit 指标很好，但用 Cross 播放时行为奇怪，已保存 wo_encoder baseline video。</td></tr><tr><td>SONIC encoder prior</td><td><code>tennis_hit_sonic_encoder_prior_2026-05-27_01-51-16</code></td><td><code>model_5000.pt</code></td><td>5400</td><td>-7.009 / -6.797</td><td>0.9371</td><td>0.0000 / 0.0042</td><td>0.0000</td><td>-</td><td>-</td><td>-</td><td>0.0000</td><td>370.3</td><td>0.0000</td><td>encoder prior 初版失败：root_height 终止极高，说明当前 encoder 输入/先验动作不稳定，不应直接转 Cross。</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="grid">
+    <div class="card">
+      <h2>最值得保留的 checkpoint</h2>
+      <ul>
+        <li>Cross best practical baseline: <code>logs/rsl_rl/g1_tennis_latent_cross/tennis_cross_from_hit_2026-05-21_15-21-12/model_59998.pt</code></li>
+        <li>Hit-LAB stable hit: <code>logs/rsl_rl/g1_tennis_latent_hit_lab/tennis_hit_lab_2026-05-24_01-49-58/model_29999.pt</code></li>
+        <li>Old Cross-LAB stable visual baseline: <code>logs/rsl_rl/g1_tennis_latent_cross_lab/old_tennis_cross_lab_2026-05-24_01-49-21/model_109996.pt</code></li>
+        <li>Continuous older long run: <code>logs/rsl_rl/g1_tennis_latent_continuous/tennis_continuous_from_cross_2026-05-22_21-27-44/model_99997.pt</code></li>
+        <li>SONIC direct-token Hit: <code>logs/rsl_rl/g1_tennis_sonic_hit/tennis_hit_sonic_token_2026-05-26_01-50-16/model_12000.pt</code></li>
+      </ul>
+    </div>
+    <div class="card">
+      <h2>视频与可视化</h2>
+      <p>已保存的 SONIC wo-encoder baseline 视频：</p>
+      <ul><li><code>logs/rsl_rl/g1_tennis_latent_continuous/tennis_continuous_from_cross_2026-05-22_21-27-44/videos/play/rl-video-step-0.mp4</code></li><li><code>logs/rsl_rl/g1_tennis_latent_cross/tennis_cross_from_hit_2026-05-21_15-21-12/videos/play/rl-video-step-0.mp4</code></li><li><code>logs/rsl_rl/g1_tennis_latent_cross_lab/old_tennis_cross_cloud_lab_2026-05-22_21-26-16/videos/play/rl-video-step-0.mp4</code></li><li><code>logs/rsl_rl/g1_tennis_latent_cross_lab/tennis_cross_lab_2026-05-25_10-10-42/videos/play/rl-video-step-0.mp4</code></li><li><code>logs/rsl_rl/g1_tennis_latent_hit/tennis_cloud_tennis_A_2026-05-12_14-45-44/videos/play/rl-video-step-0.mp4</code></li><li><code>logs/rsl_rl/g1_tennis_latent_hit/tennis_cloud_tennis_B_2026-05-13_12-25-04/videos/play/full_size.mp4</code></li><li><code>logs/rsl_rl/g1_tennis_latent_hit/tennis_cloud_tennis_B_curr_quarter_2026-05-18_22-02-07/videos/play/failure.mp4</code></li><li><code>logs/rsl_rl/g1_tennis_latent_hit_lab/tennis_hit_lab_2026-05-24_01-49-58/videos/play/rl-video-step-0.mp4</code></li><li><code>logs/rsl_rl/g1_tennis_sonic_hit/tennis_hit_sonic_token_2026-05-26_01-50-16/videos/play/rl-video-step-0.mp4</code></li><li><code>logs/rsl_rl/g1_tennis_sonic_hit/tennis_sonic_cross_wo_encoder_video_2026-05-27/videos/play/sonic-wo-encoder-step-0.mp4</code></li><li><code>logs/rsl_rl/g1_tracking/tennis/videos/play/rl-video-step-0.mp4</code></li></ul>
+      <p class="muted">渲染经验：普通 sandbox 下 EGL/CUDA 不可见，视频渲染需要离开沙盒并使用 <code>MUJOCO_GL=egl</code>，不需要打开 viewer。</p>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>推荐下一步</h2>
+    <ol>
+      <li><b>Continuous 主线继续看恢复期：</b>当前 active run 已经有 recovery reward，但 rally complete 仍为 0。先生成视频，确认是恢复站姿失败、第二球来球时机不合理，还是击球后动作无法回正。</li>
+      <li><b>Cross baseline 做稳定版：</b>不要再直接 clamp std。更好的做法是降低 entropy、重置/约束 std 初始化、或者在 resume 时显式处理 distribution 状态。</li>
+      <li><b>LAB 只作为稳定性分支：</b>从 Cross 继续优于从 Hit-LAB 继续。需要提高 post-hit/cross/landing 的相对权重，减少只挡球的局部最优。</li>
+      <li><b>SONIC encoder prior 暂停转 Cross：</b>Hit encoder-prior root_height 崩溃，说明当前 encoder 输入构造或 token prior 不适合直接训练。先离线对比 encoder token 解码动作是否站得住，再进入 RL。</li>
+      <li><b>统一实验记录：</b>后续每个新 run 至少记录：起点 checkpoint、关键改动、预期变化指标、最后指标、视频路径。</li>
+    </ol>
+  </section>
+
+  <section>
+    <h2>常用命令</h2>
+    <ul><li><code>uv run play Mjlab-Tennis-Cross-Unitree-G1 --checkpoint-file logs/rsl_rl/g1_tennis_latent_cross/tennis_cross_from_hit_2026-05-21_15-21-12/model_59998.pt --viewer viser</code></li><li><code>uv run play Mjlab-Tennis-Cross-LAB-Unitree-G1 --checkpoint-file logs/rsl_rl/g1_tennis_latent_cross_lab/old_tennis_cross_lab_2026-05-24_01-49-21/model_109996.pt --viewer viser</code></li><li><code>uv run play Mjlab-Tennis-Cross-Wrist-LAB-Unitree-G1 --checkpoint-file logs/rsl_rl/g1_tennis_latent_cross_wrist_lab/tennis_cross_wrist_lab_from_cross_2026-05-26_15-07-20/model_73500.pt --viewer viser</code></li><li><code>uv run play Mjlab-Tennis-Continuous-Unitree-G1 --checkpoint-file logs/rsl_rl/g1_tennis_latent_continuous/tennis_continuous_from_cross_2026-05-22_21-27-44/model_99997.pt --viewer viser</code></li><li><code>uv run play Mjlab-Tennis-Cross-SONIC-Unitree-G1 --checkpoint-file logs/rsl_rl/g1_tennis_sonic_hit/tennis_hit_sonic_token_2026-05-26_01-50-16/model_12000.pt --viewer viser</code></li><li><code>uv run play Mjlab-Tennis-Cross-SONIC-Encoder-Unitree-G1 --checkpoint-file logs/rsl_rl/g1_tennis_sonic_encoder_hit/tennis_hit_sonic_encoder_prior_2026-05-27_01-51-16/model_5000.pt --viewer viser</code></li><li><code>uv run train Mjlab-Tennis-Continuous-Unitree-G1 --env.scene.num_envs 4096 --gpu-ids [4,5,6]</code></li></ul>
+  </section>
+
+  <details open>
+    <summary>完整 run inventory</summary>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>Experiment</th><th>Run</th><th>Ckpts</th><th>Latest</th><th>Events</th><th>ONNX</th><th>Videos</th><th>Path</th></tr>
+        </thead>
+        <tbody><tr class="support"><td>g1_distillation</td><td><code>distill_cloud_unitree_racket_lafan_forward_2026-05-09_12-05-32</code></td><td>89</td><td><code>model_22000.pt</code></td><td>1</td><td>1</td><td>0</td><td><code>logs/rsl_rl/g1_distillation/distill_cloud_unitree_racket_lafan_forward_2026-05-09_12-05-32</code></td></tr><tr class="support"><td>g1_distillation</td><td><code>distill_cloud_unitree_racket_lafan_forward_2026-05-09_15-08-36</code></td><td>121</td><td><code>model_30000.pt</code></td><td>1</td><td>1</td><td>0</td><td><code>logs/rsl_rl/g1_distillation/distill_cloud_unitree_racket_lafan_forward_2026-05-09_15-08-36</code></td></tr><tr class="support"><td>g1_distillation</td><td><code>distill_cloud_unitree_racket_lafan_forward_2026-05-09_18-36-58</code></td><td>121</td><td><code>model_30000.pt</code></td><td>1</td><td>1</td><td>0</td><td><code>logs/rsl_rl/g1_distillation/distill_cloud_unitree_racket_lafan_forward_2026-05-09_18-36-58</code></td></tr><tr class="support"><td>g1_distillation</td><td><code>distill_cloud_unitree_racket_lafan_forward_2026-05-11_00-32-49</code></td><td>229</td><td><code>model_57000.pt</code></td><td>2</td><td>1</td><td>0</td><td><code>logs/rsl_rl/g1_distillation/distill_cloud_unitree_racket_lafan_forward_2026-05-11_00-32-49</code></td></tr><tr class="support"><td>g1_distillation</td><td><code>distill_cloud_unitree_racket_lafan_forward_2026-05-11_10-33-08</code></td><td>120</td><td><code>model_29750.pt</code></td><td>1</td><td>1</td><td>0</td><td><code>logs/rsl_rl/g1_distillation/distill_cloud_unitree_racket_lafan_forward_2026-05-11_10-33-08</code></td></tr><tr class="support"><td>g1_distillation</td><td><code>distill_cloud_unitree_racket_lafan_forward_2026-05-11_14-51-41</code></td><td>121</td><td><code>model_30000.pt</code></td><td>2</td><td>1</td><td>0</td><td><code>logs/rsl_rl/g1_distillation/distill_cloud_unitree_racket_lafan_forward_2026-05-11_14-51-41</code></td></tr><tr class="support"><td>g1_distillation</td><td><code>distill_cloud_unitree_racket_lafan_forward_mini_2026-05-11_15-58-55</code></td><td>121</td><td><code>model_30000.pt</code></td><td>1</td><td>1</td><td>0</td><td><code>logs/rsl_rl/g1_distillation/distill_cloud_unitree_racket_lafan_forward_mini_2026-05-11_15-58-55</code></td></tr><tr class="support"><td>g1_distillation</td><td><code>distill_cloud_unitree_racket_tennis_2026-05-12_09-35-14</code></td><td>121</td><td><code>model_30000.pt</code></td><td>1</td><td>1</td><td>0</td><td><code>logs/rsl_rl/g1_distillation/distill_cloud_unitree_racket_tennis_2026-05-12_09-35-14</code></td></tr><tr class="support"><td>g1_distillation</td><td><code>tennis_distill_w_kl_wo_teacher_2026-05-19_09-04-10</code></td><td>121</td><td><code>model_30000.pt</code></td><td>2</td><td>1</td><td>0</td><td><code>logs/rsl_rl/g1_distillation/tennis_distill_w_kl_wo_teacher_2026-05-19_09-04-10</code></td></tr><tr class="tennis"><td>g1_tennis_latent_continuous</td><td><code>tennis_continuous_from_cross_2026-05-22_21-27-44</code></td><td>81</td><td><code>model_99997.pt</code></td><td>1</td><td>1</td><td>1</td><td><code>logs/rsl_rl/g1_tennis_latent_continuous/tennis_continuous_from_cross_2026-05-22_21-27-44</code></td></tr><tr class="tennis"><td>g1_tennis_latent_continuous</td><td><code>tennis_continuous_from_cross_2026-05-27_14-37-48</code></td><td>2</td><td><code>model_60500.pt</code></td><td>1</td><td>1</td><td>0</td><td><code>logs/rsl_rl/g1_tennis_latent_continuous/tennis_continuous_from_cross_2026-05-27_14-37-48</code></td></tr><tr class="tennis"><td>g1_tennis_latent_cross</td><td><code>tennis_cross_cloud_clamp_2026-05-22_15-48-37</code></td><td>13</td><td><code>model_66000.pt</code></td><td>1</td><td>1</td><td>0</td><td><code>logs/rsl_rl/g1_tennis_latent_cross/tennis_cross_cloud_clamp_2026-05-22_15-48-37</code></td></tr><tr class="tennis"><td>g1_tennis_latent_cross</td><td><code>tennis_cross_from_hit_2026-05-20_19-18-24</code></td><td>61</td><td><code>model_59998.pt</code></td><td>1</td><td>1</td><td>0</td><td><code>logs/rsl_rl/g1_tennis_latent_cross/tennis_cross_from_hit_2026-05-20_19-18-24</code></td></tr><tr class="tennis"><td>g1_tennis_latent_cross</td><td><code>tennis_cross_from_hit_2026-05-21_15-21-12</code></td><td>61</td><td><code>model_59998.pt</code></td><td>1</td><td>1</td><td>1</td><td><code>logs/rsl_rl/g1_tennis_latent_cross/tennis_cross_from_hit_2026-05-21_15-21-12</code></td></tr><tr class="tennis"><td>g1_tennis_latent_cross_lab</td><td><code>old_tennis_cross_cloud_lab_2026-05-22_21-26-16</code></td><td>61</td><td><code>model_89997.pt</code></td><td>1</td><td>1</td><td>1</td><td><code>logs/rsl_rl/g1_tennis_latent_cross_lab/old_tennis_cross_cloud_lab_2026-05-22_21-26-16</code></td></tr><tr class="tennis"><td>g1_tennis_latent_cross_lab</td><td><code>old_tennis_cross_lab_2026-05-24_01-49-21</code></td><td>41</td><td><code>model_109996.pt</code></td><td>1</td><td>1</td><td>0</td><td><code>logs/rsl_rl/g1_tennis_latent_cross_lab/old_tennis_cross_lab_2026-05-24_01-49-21</code></td></tr><tr class="tennis"><td>g1_tennis_latent_cross_lab</td><td><code>tennis_cross_lab_2026-05-25_10-10-42</code></td><td>25</td><td><code>model_42000.pt</code></td><td>1</td><td>1</td><td>1</td><td><code>logs/rsl_rl/g1_tennis_latent_cross_lab/tennis_cross_lab_2026-05-25_10-10-42</code></td></tr><tr class="tennis"><td>g1_tennis_latent_cross_lab</td><td><code>tennis_cross_lab_2026-05-25_19-08-06</code></td><td>20</td><td><code>model_39500.pt</code></td><td>1</td><td>1</td><td>0</td><td><code>logs/rsl_rl/g1_tennis_latent_cross_lab/tennis_cross_lab_2026-05-25_19-08-06</code></td></tr><tr class="tennis"><td>g1_tennis_latent_cross_wrist_lab</td><td><code>tennis_cross_wrist_from_cross_2026-05-27_13-55-48</code></td><td>1</td><td><code>model_60000.pt</code></td><td>1</td><td>1</td><td>0</td><td><code>logs/rsl_rl/g1_tennis_latent_cross_wrist_lab/tennis_cross_wrist_from_cross_2026-05-27_13-55-48</code></td></tr><tr class="tennis"><td>g1_tennis_latent_cross_wrist_lab</td><td><code>tennis_cross_wrist_lab_from_cross_2026-05-26_15-07-20</code></td><td>28</td><td><code>model_73500.pt</code></td><td>1</td><td>1</td><td>0</td><td><code>logs/rsl_rl/g1_tennis_latent_cross_wrist_lab/tennis_cross_wrist_lab_from_cross_2026-05-26_15-07-20</code></td></tr><tr class="tennis"><td>g1_tennis_latent_hit</td><td><code>2026-05-18_22-20-59</code></td><td>151</td><td><code>model_29999.pt</code></td><td>1</td><td>1</td><td>0</td><td><code>logs/rsl_rl/g1_tennis_latent_hit/2026-05-18_22-20-59</code></td></tr><tr class="tennis"><td>g1_tennis_latent_hit</td><td><code>tennis_cloud_lafan_2026-05-11_22-45-20</code></td><td>51</td><td><code>model_9999.pt</code></td><td>1</td><td>1</td><td>0</td><td><code>logs/rsl_rl/g1_tennis_latent_hit/tennis_cloud_lafan_2026-05-11_22-45-20</code></td></tr><tr class="tennis"><td>g1_tennis_latent_hit</td><td><code>tennis_cloud_lafan_A_2026-05-12_10-23-24</code></td><td>43</td><td><code>model_8400.pt</code></td><td>1</td><td>1</td><td>0</td><td><code>logs/rsl_rl/g1_tennis_latent_hit/tennis_cloud_lafan_A_2026-05-12_10-23-24</code></td></tr><tr class="tennis"><td>g1_tennis_latent_hit</td><td><code>tennis_cloud_lafan_A_2026-05-12_13-51-48</code></td><td>11</td><td><code>model_2000.pt</code></td><td>1</td><td>1</td><td>0</td><td><code>logs/rsl_rl/g1_tennis_latent_hit/tennis_cloud_lafan_A_2026-05-12_13-51-48</code></td></tr><tr class="tennis"><td>g1_tennis_latent_hit</td><td><code>tennis_cloud_tennis_A_2026-05-12_14-45-44</code></td><td>22</td><td><code>model_4200.pt</code></td><td>1</td><td>1</td><td>1</td><td><code>logs/rsl_rl/g1_tennis_latent_hit/tennis_cloud_tennis_A_2026-05-12_14-45-44</code></td></tr><tr class="tennis"><td>g1_tennis_latent_hit</td><td><code>tennis_cloud_tennis_A_2026-05-12_16-53-15</code></td><td>51</td><td><code>model_9999.pt</code></td><td>1</td><td>1</td><td>0</td><td><code>logs/rsl_rl/g1_tennis_latent_hit/tennis_cloud_tennis_A_2026-05-12_16-53-15</code></td></tr><tr class="tennis"><td>g1_tennis_latent_hit</td><td><code>tennis_cloud_tennis_B_2026-05-13_12-25-04</code></td><td>31</td><td><code>model_6000.pt</code></td><td>1</td><td>1</td><td>1</td><td><code>logs/rsl_rl/g1_tennis_latent_hit/tennis_cloud_tennis_B_2026-05-13_12-25-04</code></td></tr><tr class="tennis"><td>g1_tennis_latent_hit</td><td><code>tennis_cloud_tennis_B_2026-05-13_14-41-26</code></td><td>22</td><td><code>model_4200.pt</code></td><td>1</td><td>1</td><td>0</td><td><code>logs/rsl_rl/g1_tennis_latent_hit/tennis_cloud_tennis_B_2026-05-13_14-41-26</code></td></tr><tr class="tennis"><td>g1_tennis_latent_hit</td><td><code>tennis_cloud_tennis_B_curr_2026-05-13_16-29-06</code></td><td>23</td><td><code>model_4400.pt</code></td><td>1</td><td>1</td><td>0</td><td><code>logs/rsl_rl/g1_tennis_latent_hit/tennis_cloud_tennis_B_curr_2026-05-13_16-29-06</code></td></tr><tr class="tennis"><td>g1_tennis_latent_hit</td><td><code>tennis_cloud_tennis_B_curr_2026-05-13_17-15-36</code></td><td>151</td><td><code>model_29999.pt</code></td><td>1</td><td>1</td><td>0</td><td><code>logs/rsl_rl/g1_tennis_latent_hit/tennis_cloud_tennis_B_curr_2026-05-13_17-15-36</code></td></tr><tr class="tennis"><td>g1_tennis_latent_hit</td><td><code>tennis_cloud_tennis_B_curr_2026-05-13_19-25-16</code></td><td>151</td><td><code>model_29999.pt</code></td><td>1</td><td>1</td><td>0</td><td><code>logs/rsl_rl/g1_tennis_latent_hit/tennis_cloud_tennis_B_curr_2026-05-13_19-25-16</code></td></tr><tr class="tennis"><td>g1_tennis_latent_hit</td><td><code>tennis_cloud_tennis_B_curr_mini_2026-05-18_10-35-56</code></td><td>118</td><td><code>model_23400.pt</code></td><td>1</td><td>1</td><td>0</td><td><code>logs/rsl_rl/g1_tennis_latent_hit/tennis_cloud_tennis_B_curr_mini_2026-05-18_10-35-56</code></td></tr><tr class="tennis"><td>g1_tennis_latent_hit</td><td><code>tennis_cloud_tennis_B_curr_quarter_2026-05-18_22-02-07</code></td><td>151</td><td><code>model_29999.pt</code></td><td>1</td><td>1</td><td>1</td><td><code>logs/rsl_rl/g1_tennis_latent_hit/tennis_cloud_tennis_B_curr_quarter_2026-05-18_22-02-07</code></td></tr><tr class="tennis"><td>g1_tennis_latent_hit_lab</td><td><code>tennis_hit_lab_2026-05-24_01-49-58</code></td><td>61</td><td><code>model_29999.pt</code></td><td>1</td><td>1</td><td>1</td><td><code>logs/rsl_rl/g1_tennis_latent_hit_lab/tennis_hit_lab_2026-05-24_01-49-58</code></td></tr><tr class="tennis"><td>g1_tennis_sonic_encoder_hit</td><td><code>tennis_hit_sonic_encoder_prior_2026-05-27_01-51-16</code></td><td>11</td><td><code>model_5000.pt</code></td><td>1</td><td>0</td><td>0</td><td><code>logs/rsl_rl/g1_tennis_sonic_encoder_hit/tennis_hit_sonic_encoder_prior_2026-05-27_01-51-16</code></td></tr><tr class="tennis"><td>g1_tennis_sonic_hit</td><td><code>tennis_hit_sonic_token_2026-05-26_01-50-16</code></td><td>25</td><td><code>model_12000.pt</code></td><td>1</td><td>0</td><td>1</td><td><code>logs/rsl_rl/g1_tennis_sonic_hit/tennis_hit_sonic_token_2026-05-26_01-50-16</code></td></tr><tr class="tennis"><td>g1_tennis_sonic_hit</td><td><code>tennis_sonic_cross_wo_encoder_video_2026-05-27</code></td><td>0</td><td>-</td><td>0</td><td>0</td><td>1</td><td><code>logs/rsl_rl/g1_tennis_sonic_hit/tennis_sonic_cross_wo_encoder_video_2026-05-27</code></td></tr><tr class="support"><td>g1_tracking</td><td><code>2026-05-07_13-52-37</code></td><td>42</td><td><code>model_20500.pt</code></td><td>1</td><td>1</td><td>0</td><td><code>logs/rsl_rl/g1_tracking/2026-05-07_13-52-37</code></td></tr><tr class="support"><td>g1_tracking</td><td><code>lafan</code></td><td>61</td><td><code>model_29999.pt</code></td><td>1</td><td>1</td><td>0</td><td><code>logs/rsl_rl/g1_tracking/lafan</code></td></tr><tr class="support"><td>g1_tracking</td><td><code>tennis</code></td><td>61</td><td><code>model_29999.pt</code></td><td>1</td><td>1</td><td>1</td><td><code>logs/rsl_rl/g1_tracking/tennis</code></td></tr><tr class="support"><td>go1_velocity</td><td><code>2026-05-18_15-02-01</code></td><td>36</td><td><code>model_1750.pt</code></td><td>1</td><td>1</td><td>0</td><td><code>logs/rsl_rl/go1_velocity/2026-05-18_15-02-01</code></td></tr><tr class="support"><td>go1_velocity</td><td><code>stairs_go1_2026-05-19_15-35-35</code></td><td>201</td><td><code>model_9999.pt</code></td><td>1</td><td>1</td><td>0</td><td><code>logs/rsl_rl/go1_velocity/stairs_go1_2026-05-19_15-35-35</code></td></tr></tbody>
+      </table>
+    </div>
+  </details>
+
+  <details open>
+    <summary>指标解释</summary>
+    <ul>
+      <li><code>Train/mean_reward</code>：每轮 rollout 的平均 reward，跨任务不可直接比较，只能看同任务趋势。</li>
+      <li><code>Policy/mean_std</code>：Gaussian policy 的探索标准差。Cross 中数百到上千代表动作分布很吵，即使 reward 高也可能不稳定。</li>
+      <li><code>racket_hit_event</code> / <code>first_racket_hit</code>：是否能完成首次有效球拍接触，Hit 任务核心指标。</li>
+      <li><code>post_hit_x_progress</code> / <code>post_hit_ball_velocity_direction</code>：击球后球是否朝对方半场推进，是 Cross 的中间质量指标。</li>
+      <li><code>crossed_net_event</code>：球过网事件；为 0 时通常是挡球、粘球、球速方向不对。</li>
+      <li><code>landing_in_bounds_event</code> / <code>landing_in_bounds_after_hit</code>：真正的 Cross 成功信号，表示击球后对方半场界内落地。</li>
+      <li><code>second_contact</code>：二次接触高通常表示挡球/黏球局部最优。</li>
+      <li><code>root_height</code> / <code>bad_orientation</code>：身体稳定性问题，过高说明动作先验或控制输出破坏站立。</li>
+      <li><code>ball_out_of_bounds</code>：球离场，可能是没击中、击球方向差，或回球速度过大。</li>
+      <li><code>Curriculum/ball_target_region/success_rate</code>：课程学习用成功率；Hit/Cross/Continuous 的语义不同，解读时要结合任务。</li>
+    </ul>
+  </details>
+</main>
+</body>
+</html>

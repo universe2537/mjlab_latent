@@ -68,6 +68,59 @@ def expand_actor_action_head_for_wrist_residual(
   return True
 
 
+def expand_mlp_input_for_observation(
+  model_state_dict: dict[str, torch.Tensor],
+  *,
+  target_dim: int,
+) -> bool:
+  """Expand an MLP policy/value input layer when new observations are appended."""
+  weight_key = _mlp_input_layer_key(model_state_dict)
+  old_weight = model_state_dict[weight_key]
+  current_dim = int(old_weight.shape[1])
+  if current_dim == target_dim:
+    return False
+  if current_dim > target_dim:
+    raise ValueError(
+      f"Cannot migrate observation dim {current_dim} down to {target_dim}."
+    )
+
+  new_weight = old_weight.new_zeros((old_weight.shape[0], target_dim))
+  new_weight[:, :current_dim] = old_weight
+  model_state_dict[weight_key] = new_weight
+
+  for key in ("obs_normalizer._mean", "obs_normalizer._var", "obs_normalizer._std"):
+    tensor = model_state_dict.get(key)
+    if not isinstance(tensor, torch.Tensor):
+      continue
+    if tensor.shape[-1] != current_dim:
+      continue
+    fill_value = 0.0 if key.endswith("_mean") else 1.0
+    new_tensor = tensor.new_full((*tensor.shape[:-1], target_dim), fill_value)
+    new_tensor[..., :current_dim] = tensor
+    model_state_dict[key] = new_tensor
+  return True
+
+
+def _mlp_input_layer_key(model_state_dict: dict[str, torch.Tensor]) -> str:
+  for key in ("mlp.0.weight", "actor.0.weight"):
+    tensor = model_state_dict.get(key)
+    if isinstance(tensor, torch.Tensor) and tensor.ndim == 2:
+      return key
+  candidates = [
+    key
+    for key, tensor in model_state_dict.items()
+    if key.endswith(".weight") and isinstance(tensor, torch.Tensor) and tensor.ndim == 2
+  ]
+  if not candidates:
+    raise ValueError("Cannot find MLP input layer in checkpoint.")
+  return candidates[0]
+
+
+def _model_state_obs_dim(model_state_dict: dict[str, torch.Tensor]) -> int:
+  weight_key = _mlp_input_layer_key(model_state_dict)
+  return int(model_state_dict[weight_key].shape[1])
+
+
 def _actor_state_action_dim(actor_state_dict: dict[str, torch.Tensor]) -> int:
   for key in (
     "distribution.std_param",
@@ -186,6 +239,7 @@ class TennisLatentOnPolicyRunner(MjlabOnPolicyRunner):
     self.require_decoder_checkpoint = bool(
       train_cfg.pop("require_decoder_checkpoint", True)
     )
+    self.reset_resume_progress = bool(train_cfg.pop("reset_resume_progress", False))
     self.decoder_action_name = "latent_joint_pos"
     self._validate_decoder_checkpoint(env)
     super().__init__(env, train_cfg, log_dir, device)
@@ -275,9 +329,7 @@ class TennisLatentOnPolicyRunner(MjlabOnPolicyRunner):
     map_location: str | None = None,
   ) -> dict:
     """Load checkpoints, skipping optimizer state when action dim is migrated."""
-    if load_cfg is None and self._checkpoint_needs_action_dim_migration(
-      path, map_location
-    ):
+    if load_cfg is None and self._checkpoint_needs_model_migration(path, map_location):
       load_cfg = {
         "actor": True,
         "critic": True,
@@ -286,35 +338,57 @@ class TennisLatentOnPolicyRunner(MjlabOnPolicyRunner):
         "rnd": True,
       }
       print(
-        "[INFO] Migrating tennis actor action head for wrist residual; "
+        "[INFO] Migrating tennis checkpoint model shapes; "
         "optimizer state will be reinitialized."
+      )
+    if self.reset_resume_progress:
+      load_cfg = {
+        "actor": True,
+        "critic": True,
+        "optimizer": False,
+        "iteration": False,
+        "rnd": False,
+        **(load_cfg or {}),
+      }
+      load_cfg["optimizer"] = False
+      load_cfg["iteration"] = False
+      load_cfg["rnd"] = False
+      print(
+        "[INFO] Warm-starting tennis checkpoint weights; "
+        "iteration, optimizer, RND, and env progress will reset."
       )
     return super().load(path, load_cfg, strict, map_location)
 
   def _preprocess_loaded_dict(self, loaded_dict: dict) -> dict:
     loaded_dict = super()._preprocess_loaded_dict(loaded_dict)
     action = self._decoder_action()
-    if action.wrist_residual_dim == 0:
-      return loaded_dict
     actor_sd = loaded_dict.get("actor_state_dict")
-    if not isinstance(actor_sd, dict):
-      return loaded_dict
-    migrated = expand_actor_action_head_for_wrist_residual(
-      actor_sd,
-      latent_dim=action.cfg.latent_dim,
-      target_dim=action.action_dim,
-      wrist_init_std=action.cfg.wrist_residual_migration_std,
-    )
-    if migrated:
+    if isinstance(actor_sd, dict):
+      expand_mlp_input_for_observation(
+        actor_sd,
+        target_dim=self._target_observation_dim("actor"),
+      )
+      if action.wrist_residual_dim > 0:
+        expand_actor_action_head_for_wrist_residual(
+          actor_sd,
+          latent_dim=action.cfg.latent_dim,
+          target_dim=action.action_dim,
+          wrist_init_std=action.cfg.wrist_residual_migration_std,
+        )
       loaded_dict["actor_state_dict"] = actor_sd
+    critic_sd = loaded_dict.get("critic_state_dict")
+    if isinstance(critic_sd, dict):
+      expand_mlp_input_for_observation(
+        critic_sd,
+        target_dim=self._target_observation_dim("critic"),
+      )
+      loaded_dict["critic_state_dict"] = critic_sd
     return loaded_dict
 
-  def _checkpoint_needs_action_dim_migration(
+  def _checkpoint_needs_model_migration(
     self, path: str, map_location: str | None
   ) -> bool:
     action = self._decoder_action()
-    if action.wrist_residual_dim == 0:
-      return False
     checkpoint = torch.load(
       path,
       map_location=map_location or self.device,
@@ -325,7 +399,25 @@ class TennisLatentOnPolicyRunner(MjlabOnPolicyRunner):
       actor_sd = checkpoint["model_state_dict"]
     if not isinstance(actor_sd, dict):
       return False
-    return _actor_state_action_dim(actor_sd) != action.action_dim
+    needs_action_migration = _actor_state_action_dim(actor_sd) != action.action_dim
+    needs_actor_obs_migration = _model_state_obs_dim(
+      actor_sd
+    ) != self._target_observation_dim("actor")
+    critic_sd = checkpoint.get("critic_state_dict", {})
+    needs_critic_obs_migration = False
+    if isinstance(critic_sd, dict) and critic_sd:
+      needs_critic_obs_migration = _model_state_obs_dim(
+        critic_sd
+      ) != self._target_observation_dim("critic")
+    return (
+      needs_action_migration or needs_actor_obs_migration or needs_critic_obs_migration
+    )
+
+  def _target_observation_dim(self, group_name: str) -> int:
+    dim = self.env.unwrapped.observation_manager.group_obs_dim[group_name]
+    if not isinstance(dim, tuple) or len(dim) != 1:
+      raise ValueError(f"Expected flat {group_name!r} observation dim, got {dim}.")
+    return int(dim[0])
 
 
 class TennisTokenOnPolicyRunner(MjlabOnPolicyRunner):

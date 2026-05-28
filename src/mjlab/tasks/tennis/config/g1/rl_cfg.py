@@ -27,6 +27,7 @@ def unitree_g1_tennis_latent_ppo_runner_cfg(
   run_name: str = "",
   resume: bool = False,
   load_checkpoint_file: str | None = None,
+  reset_resume_progress: bool = False,
 ) -> TennisLatentOnPolicyRunnerCfg:
   """Create PPO config for the G1 tennis high-level latent policy."""
   return TennisLatentOnPolicyRunnerCfg(
@@ -63,6 +64,7 @@ def unitree_g1_tennis_latent_ppo_runner_cfg(
     run_name=run_name,
     resume=resume,
     load_checkpoint_file=load_checkpoint_file,
+    reset_resume_progress=reset_resume_progress,
     save_interval=500,
     num_steps_per_env=24,
     max_iterations=30000,
@@ -110,7 +112,7 @@ def unitree_g1_tennis_cross_wrist_lab_ppo_runner_cfg() -> TennisLatentOnPolicyRu
   """Create PPO config for the G1 tennis Cross-Wrist-LAB task."""
   cfg = unitree_g1_tennis_latent_ppo_runner_cfg(
     experiment_name="g1_tennis_latent_cross_wrist_lab",
-    run_name="tennis_cross_wrist_lab_from_cross",
+    run_name="tennis_cross_wrist_from_cross",
     resume=True,
     load_checkpoint_file=DEFAULT_CROSS_WRIST_LAB_RESUME_CHECKPOINT,
   )
@@ -126,6 +128,7 @@ def unitree_g1_tennis_continuous_ppo_runner_cfg() -> TennisLatentOnPolicyRunnerC
     run_name="tennis_continuous_from_cross",
     resume=True,
     load_checkpoint_file=DEFAULT_CONTINUOUS_RESUME_CHECKPOINT,
+    reset_resume_progress=True,
   )
   cfg.algorithm.entropy_coef = 0.003
   cfg.max_iterations = 40000
@@ -149,7 +152,9 @@ def unitree_g1_tennis_sonic_hit_ppo_runner_cfg() -> TennisLatentOnPolicyRunnerCf
   return cfg
 
 
-def unitree_g1_tennis_sonic_encoder_hit_ppo_runner_cfg() -> TennisLatentOnPolicyRunnerCfg:
+def unitree_g1_tennis_sonic_encoder_hit_ppo_runner_cfg() -> (
+  TennisLatentOnPolicyRunnerCfg
+):
   """Create PPO config for the G1 tennis Hit-SONIC-Encoder task."""
   cfg = unitree_g1_tennis_latent_ppo_runner_cfg(
     experiment_name="g1_tennis_sonic_encoder_hit",
@@ -185,7 +190,9 @@ def unitree_g1_tennis_sonic_cross_ppo_runner_cfg() -> TennisLatentOnPolicyRunner
   return cfg
 
 
-def unitree_g1_tennis_sonic_encoder_cross_ppo_runner_cfg() -> TennisLatentOnPolicyRunnerCfg:
+def unitree_g1_tennis_sonic_encoder_cross_ppo_runner_cfg() -> (
+  TennisLatentOnPolicyRunnerCfg
+):
   """Create PPO config for the G1 tennis Cross-SONIC-Encoder task."""
   cfg = unitree_g1_tennis_latent_ppo_runner_cfg(
     experiment_name="g1_tennis_sonic_encoder_cross",

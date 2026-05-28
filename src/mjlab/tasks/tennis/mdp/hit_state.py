@@ -62,6 +62,10 @@ class TennisHitTracker:
     self.racket_hit_count = zeros_long()
     self.bounce_count = zeros_long()
     self.successful_return_count = zeros_long()
+    self.episode_racket_hit_count = zeros_long()
+    self.episode_bounce_count = zeros_long()
+    self.episode_crossed_net_count = zeros_long()
+    self.episode_landing_in_bounds_count = zeros_long()
 
     self.racket_hit_edge = zeros_bool()
     self.bounce_edge = zeros_bool()
@@ -72,6 +76,9 @@ class TennisHitTracker:
     self.has_crossed_net = zeros_bool()
     self.has_landed_in_bounds = zeros_bool()
 
+    self.recovery_steps_left = zeros_long()
+    self.recovery_steps_total = zeros_long()
+
     self._prev_contact = zeros_bool()
     self._prev_vz = zeros_float()
     self._prev_x = zeros_float()
@@ -81,6 +88,10 @@ class TennisHitTracker:
     if env_ids is None:
       env_ids = slice(None)
     self.successful_return_count[env_ids] = 0
+    self.episode_racket_hit_count[env_ids] = 0
+    self.episode_bounce_count[env_ids] = 0
+    self.episode_crossed_net_count[env_ids] = 0
+    self.episode_landing_in_bounds_count[env_ids] = 0
     self.reset_rally(env_ids)
     self._last_step = -1
 
@@ -97,6 +108,8 @@ class TennisHitTracker:
     self.has_racket_hit[env_ids] = False
     self.has_crossed_net[env_ids] = False
     self.has_landed_in_bounds[env_ids] = False
+    self.recovery_steps_left[env_ids] = 0
+    self.recovery_steps_total[env_ids] = 0
     self._prev_contact[env_ids] = False
     self._prev_vz[env_ids] = 0.0
     self._prev_x[env_ids] = 0.0
@@ -164,6 +177,10 @@ class TennisHitTracker:
     self.racket_hit_count += racket_hit_edge.long()
     self.bounce_count += bounce_edge.long()
     self.successful_return_count += landing_in_bounds_edge.long()
+    self.episode_racket_hit_count += racket_hit_edge.long()
+    self.episode_bounce_count += bounce_edge.long()
+    self.episode_crossed_net_count += crossed_net_edge.long()
+    self.episode_landing_in_bounds_count += landing_in_bounds_edge.long()
     self.has_racket_hit |= racket_hit_edge
     self.has_crossed_net |= crossed_net_edge
     self.has_landed_in_bounds |= landing_in_bounds_edge
@@ -178,6 +195,36 @@ class TennisHitTracker:
   def total_contact_count(self) -> torch.Tensor:
     """返回本回合累计的球拍击球与地面弹跳次数。"""
     return self.racket_hit_count + self.bounce_count
+
+  @property
+  def in_recovery(self) -> torch.Tensor:
+    """Whether each env is between successful returns waiting for the next feed."""
+    return self.recovery_steps_left > 0
+
+  @property
+  def recovery_fraction_remaining(self) -> torch.Tensor:
+    """Recovery timer normalized to ``[0, 1]`` for policy observations."""
+    total = self.recovery_steps_total.clamp_min(1).float()
+    return self.recovery_steps_left.float() / total
+
+  def start_recovery(self, env_ids: torch.Tensor, recovery_steps: int) -> None:
+    """Start a between-ball recovery window for selected environments."""
+    if env_ids.numel() == 0:
+      return
+    steps = max(1, int(recovery_steps))
+    self.recovery_steps_left[env_ids] = steps
+    self.recovery_steps_total[env_ids] = steps
+
+  def step_recovery(self, active_mask: torch.Tensor | None = None) -> torch.Tensor:
+    """Advance active recovery timers and return envs that are ready to respawn."""
+    if active_mask is None:
+      active_mask = self.in_recovery
+    active_mask = active_mask & self.in_recovery
+    if torch.any(active_mask):
+      self.recovery_steps_left[active_mask] -= 1
+    ready = active_mask & (self.recovery_steps_left <= 0)
+    self.recovery_steps_left[ready] = 0
+    return ready
 
 
 def get_tennis_hit_tracker(

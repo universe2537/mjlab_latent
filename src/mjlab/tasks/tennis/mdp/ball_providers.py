@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import torch
 
@@ -173,7 +173,7 @@ def spawn_ball_from_provider(
   env: "ManagerBasedRlEnv",
   env_ids: torch.Tensor,
   *,
-  provider_cfg: RandomFeederCfg,
+  provider_cfg: Any,
 ) -> None:
   """兼容事件管理器的包装函数，通过随机发球器生成球。"""
   cache_key = f"_ball_provider_{id(provider_cfg)}"

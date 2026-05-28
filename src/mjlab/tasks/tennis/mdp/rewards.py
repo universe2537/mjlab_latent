@@ -12,12 +12,16 @@ from mjlab.tasks.tennis.mdp.ball_providers import (
   RandomFeederCfg,
   spawn_ball_from_provider,
 )
-from mjlab.tasks.tennis.mdp.hit_state import TennisHitTrackerTerm
+from mjlab.tasks.tennis.mdp.hit_state import (
+  TennisHitTrackerTerm,
+  get_tennis_hit_tracker,
+)
 from mjlab.tasks.tennis.mdp.observations import (
   _predict_hit_intersection_w,
   racket_to_ball_b,
   racket_velocity_b,
 )
+from mjlab.utils.lab_api.math import quat_apply_inverse, wrap_to_pi
 
 if TYPE_CHECKING:
   from mjlab.entity import Entity
@@ -124,6 +128,12 @@ def racket_to_predicted_hit_point_dense(
   hit_height_offset: float = 0.05,
   gravity: float = 9.81,
   max_horizon: float = 1.5,
+  sensor_name: str | None = None,
+  force_threshold: float = 1.0,
+  ground_z: float = 0.06,
+  net_x: float = 0.0,
+  landing_x_limits: tuple[float, float] | None = None,
+  landing_y_limits: tuple[float, float] | None = None,
 ) -> torch.Tensor:
   """鼓励球拍接近预计击球点，而不是追逐球的当前位置。"""
   robot: Entity = env.scene[robot_cfg.name]
@@ -138,7 +148,22 @@ def racket_to_predicted_hit_point_dense(
   )
   error = torch.sum(torch.square(hit_w - racket_pos_w), dim=-1)
   reward = torch.exp(-error / std**2)
-  return reward * valid.float()
+  reward = reward * valid.float()
+  if sensor_name is None:
+    return reward
+  tracker = get_tennis_hit_tracker(
+    env,
+    sensor_name=sensor_name,
+    ball_cfg=ball_cfg,
+    force_threshold=force_threshold,
+    ground_z=ground_z,
+    net_x=net_x,
+    landing_x_limits=landing_x_limits,
+    landing_y_limits=landing_y_limits,
+  )
+  tracker.update()
+  active = ~tracker.has_racket_hit & ~tracker.in_recovery
+  return reward * active.float()
 
 
 class racket_towards_ball_velocity(TennisHitTrackerTerm):
@@ -317,7 +342,7 @@ class landing_in_bounds_event(TennisHitTrackerTerm):
 
 
 class respawn_successful_continuous_rally_ball(TennisHitTrackerTerm):
-  """连续接球中成功回球后重新发球，并开始下一小回合。"""
+  """连续接球中成功回球后延迟重新发球，并开始下一小回合。"""
 
   def __init__(self, cfg: RewardTermCfg, env: ManagerBasedRlEnv):
     super().__init__(cfg, env)
@@ -334,15 +359,99 @@ class respawn_successful_continuous_rally_ball(TennisHitTrackerTerm):
     landing_x_limits: tuple[float, float] | None = None,
     landing_y_limits: tuple[float, float] | None = None,
     max_successful_returns: int = 8,
+    recovery_steps: int = 40,
   ) -> torch.Tensor:
     del sensor_name, ball_cfg, force_threshold, ground_z, net_x
     del landing_x_limits, landing_y_limits
     tracker = self.tracker
-    should_respawn = tracker.landing_in_bounds_edge & (
-      tracker.successful_return_count < int(max_successful_returns)
+    active_before = tracker.in_recovery.clone()
+    should_start_recovery = (
+      tracker.landing_in_bounds_edge
+      & (tracker.successful_return_count < int(max_successful_returns))
+      & ~active_before
     )
-    env_ids = should_respawn.nonzero(as_tuple=False).flatten()
-    if env_ids.numel() > 0:
-      spawn_ball_from_provider(env, env_ids, provider_cfg=provider_cfg)
-      tracker.reset_rally(env_ids)
+    start_env_ids = should_start_recovery.nonzero(as_tuple=False).flatten()
+    if start_env_ids.numel() > 0:
+      tracker.start_recovery(start_env_ids, recovery_steps=recovery_steps)
+
+    should_respawn = tracker.step_recovery(active_before)
+    respawn_env_ids = should_respawn.nonzero(as_tuple=False).flatten()
+    if respawn_env_ids.numel() > 0:
+      spawn_ball_from_provider(env, respawn_env_ids, provider_cfg=provider_cfg)
+      tracker.reset_rally(respawn_env_ids)
     return torch.zeros(env.num_envs, device=env.device)
+
+
+class continuous_recovery_ready_pose(TennisHitTrackerTerm):
+  """Reward returning to a stable ready position between successful returns."""
+
+  def __init__(self, cfg: RewardTermCfg, env: ManagerBasedRlEnv):
+    super().__init__(cfg, env)
+
+  def __call__(
+    self,
+    env: ManagerBasedRlEnv,
+    sensor_name: str,
+    racket_cfg: SceneEntityCfg = _RACKET_CFG,
+    robot_cfg: SceneEntityCfg = _ROBOT_CFG,
+    ball_cfg: SceneEntityCfg = _BALL_CFG,
+    force_threshold: float = 1.0,
+    ground_z: float = 0.06,
+    net_x: float = 0.0,
+    landing_x_limits: tuple[float, float] | None = None,
+    landing_y_limits: tuple[float, float] | None = None,
+    target_x: float = 3.4,
+    target_y: float = 0.0,
+    target_heading: float = 3.141592653589793,
+    base_pos_std: float = 0.6,
+    heading_std: float = 0.7,
+    lin_vel_std: float = 0.8,
+    upright_std: float = 0.35,
+    racket_target_b: tuple[float, float, float] = (0.35, -0.35, 0.25),
+    racket_std: float = 0.6,
+  ) -> torch.Tensor:
+    del (
+      sensor_name,
+      ball_cfg,
+      force_threshold,
+      ground_z,
+      net_x,
+      landing_x_limits,
+      landing_y_limits,
+    )
+    tracker = self.tracker
+    active = tracker.in_recovery.float()
+    if not torch.any(active > 0.0):
+      return active
+
+    robot: Entity = env.scene[robot_cfg.name]
+    base_pos_l = robot.data.root_link_pos_w - env.scene.env_origins
+    base_xy_error = torch.square(base_pos_l[:, 0] - target_x) + torch.square(
+      base_pos_l[:, 1] - target_y
+    )
+    base_reward = torch.exp(-base_xy_error / base_pos_std**2)
+
+    heading_error = wrap_to_pi(robot.data.heading_w - target_heading)
+    heading_reward = torch.exp(-torch.square(heading_error) / heading_std**2)
+
+    lin_vel_xy = torch.sum(torch.square(robot.data.root_link_lin_vel_b[:, :2]), dim=1)
+    still_reward = torch.exp(-lin_vel_xy / lin_vel_std**2)
+
+    upright_error = torch.sum(
+      torch.square(robot.data.projected_gravity_b[:, :2]), dim=1
+    )
+    upright_reward = torch.exp(-upright_error / upright_std**2)
+
+    racket_pos_w = robot.data.site_pos_w[:, racket_cfg.site_ids].squeeze(1)
+    racket_delta_w = racket_pos_w - robot.data.root_link_pos_w
+    racket_pos_b = quat_apply_inverse(robot.data.root_link_quat_w, racket_delta_w)
+    racket_target = torch.tensor(
+      racket_target_b, dtype=torch.float32, device=env.device
+    )
+    racket_error = torch.sum(torch.square(racket_pos_b - racket_target), dim=1)
+    racket_reward = torch.exp(-racket_error / racket_std**2)
+
+    reward = (
+      base_reward + heading_reward + still_reward + upright_reward + racket_reward
+    ) / 5.0
+    return reward * active

@@ -119,6 +119,13 @@ Changed
 - Added ``Mjlab-Tennis-Continuous-Unitree-G1``, a non-LAB multi-ball rally task
   that respawns a new feed after each successful in-bounds return and ends after
   eight consecutive successful returns.
+- Reworked ``Mjlab-Tennis-Continuous-Unitree-G1`` around a dedicated continuous
+  ball state machine with bird's-eye opponent-half feed endpoints, analytic
+  net-clearance timing, net-contact fault detection, invalid-feed resampling,
+  recovery-phase ready-pose shaping, and a wait curriculum that shrinks the
+  post-return pause from ``3-5s`` to ``0.3-0.5s``. Continuous now warm-starts
+  from Cross weights while resetting checkpoint iteration and environment
+  progress so easy curriculum stages are not skipped.
 - Updated ``Mjlab-Tennis-Hit`` high-level observations to expose a predicted
   waist-height hit point with ``time_to_hit``, replaced the dense
   ``approach_ball`` shaping term with ``approach_point`` toward that future

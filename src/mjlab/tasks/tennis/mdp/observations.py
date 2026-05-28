@@ -8,6 +8,7 @@ import torch
 
 from mjlab.entity import Entity
 from mjlab.managers.scene_entity_config import SceneEntityCfg
+from mjlab.tasks.tennis.mdp.hit_state import get_tennis_hit_tracker
 from mjlab.utils.lab_api.math import quat_apply_inverse
 
 if TYPE_CHECKING:
@@ -184,3 +185,35 @@ def ball_predicted_landing_b(
   delta_w = landing - robot.data.root_link_pos_w
   delta_b = quat_apply_inverse(robot.data.root_link_quat_w, delta_w)
   return torch.cat([delta_b[:, :2], t.unsqueeze(-1)], dim=-1)
+
+
+def continuous_rally_phase(
+  env: ManagerBasedRlEnv,
+  sensor_name: str,
+  ball_cfg: SceneEntityCfg = _BALL_CFG,
+  force_threshold: float = 1.0,
+  ground_z: float = 0.06,
+  net_x: float = 0.0,
+  landing_x_limits: tuple[float, float] | None = None,
+  landing_y_limits: tuple[float, float] | None = None,
+  max_successful_returns: int = 8,
+) -> torch.Tensor:
+  """Expose continuous-rally phase, recovery timer, and return count."""
+  tracker = get_tennis_hit_tracker(
+    env,
+    sensor_name=sensor_name,
+    ball_cfg=ball_cfg,
+    force_threshold=force_threshold,
+    ground_z=ground_z,
+    net_x=net_x,
+    landing_x_limits=landing_x_limits,
+    landing_y_limits=landing_y_limits,
+  )
+  tracker.update()
+  max_returns = max(1, int(max_successful_returns))
+  in_recovery = tracker.in_recovery.float()
+  recovery_remaining = tracker.recovery_fraction_remaining
+  return_count = (tracker.successful_return_count.float() / float(max_returns)).clamp(
+    max=1.0
+  )
+  return torch.stack((in_recovery, recovery_remaining, return_count), dim=-1)

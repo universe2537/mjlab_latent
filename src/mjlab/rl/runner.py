@@ -136,8 +136,9 @@ class MjlabOnPolicyRunner(OnPolicyRunner):
     if load_iteration:
       self.current_learning_iteration = loaded_dict["iter"]
 
+    restore_env_state = load_cfg is None or bool(load_cfg.get("iteration", True))
     infos = loaded_dict["infos"]
-    if infos and "env_state" in infos:
+    if restore_env_state and infos and "env_state" in infos:
       self.env.unwrapped.common_step_counter = infos["env_state"]["common_step_counter"]
     return infos
 

@@ -35,6 +35,7 @@ from mjlab.envs import ManagerBasedRlEnvCfg
 from mjlab.managers.action_manager import ActionTermCfg
 from mjlab.managers.curriculum_manager import CurriculumTermCfg
 from mjlab.managers.event_manager import EventTermCfg
+from mjlab.managers.metrics_manager import MetricsTermCfg
 from mjlab.managers.observation_manager import ObservationGroupCfg, ObservationTermCfg
 from mjlab.managers.reward_manager import RewardTermCfg
 from mjlab.managers.scene_entity_config import SceneEntityCfg
@@ -45,6 +46,7 @@ from mjlab.sim import MujocoCfg, SimulationCfg
 from mjlab.tasks.tennis import mdp
 from mjlab.tasks.tennis.mdp import FrozenDecoderLatentJointPositionActionCfg
 from mjlab.tasks.tennis.mdp.ball_providers import RandomFeederCfg
+from mjlab.tasks.tennis.mdp.ball_state import OpponentFeederCfg
 from mjlab.tasks.tennis.scene import (
   BASELINE_SELF_X,
   COURT_HALF_LENGTH,
@@ -66,6 +68,7 @@ _RACKET_CFG = SceneEntityCfg("robot", site_names=("tennis_racket_center",))
 _BALL_CFG = SceneEntityCfg("ball")
 _COURT_CFG = SceneEntityCfg("court")
 _RACKET_BALL_SENSOR = "racket_ball_contact"
+_BALL_NET_SENSOR = "ball_net_contact"
 
 # ---------------------------------------------------------------------------
 # 机器人复位（己方半场中后部，面向球网）。
@@ -114,6 +117,12 @@ COURT_OUT_Y_LIMITS = (-COURT_HALF_WIDTH - 0.5, COURT_HALF_WIDTH + 0.5)
 COURT_OUT_Z_LIMITS = (0.02, 3.0)
 OPPONENT_LANDING_MARGIN = 0.0
 CONTINUOUS_RALLY_SUCCESSFUL_RETURNS = 8
+CONTINUOUS_RALLY_INITIAL_SUCCESSFUL_RETURNS = 2
+CONTINUOUS_RECOVERY_INITIAL_TIME_RANGE = (3.0, 5.0)
+CONTINUOUS_RECOVERY_MID_TIME_RANGE = (1.0, 2.0)
+CONTINUOUS_RECOVERY_FINAL_TIME_RANGE = (0.3, 0.5)
+CONTINUOUS_RECOVERY_STEPS = 40
+CONTINUOUS_RALLY_LENGTH_STAGE_STEPS = (0, 10000 * 24, 25000 * 24)
 
 # ---------------------------------------------------------------------------
 # 冻结低层解码器的状态项（必须与蒸馏检查点一致）。
@@ -182,15 +191,48 @@ def _apply_court_geometry(cfg: "TennisLatentEnvCfg") -> None:
   cfg.events["reset_robot_base"].params["pose_range"]["y"] = robot_reset_y_range
 
   # -- 出界判定 --
-  cfg.terminations["ball_out_of_bounds"].params["x_limits"] = court_out_x_limits
-  cfg.terminations["ball_out_of_bounds"].params["y_limits"] = court_out_y_limits
+  ball_out_cfg = cfg.terminations.get("ball_out_of_bounds")
+  if ball_out_cfg is not None:
+    ball_out_cfg.params["x_limits"] = court_out_x_limits
+    ball_out_cfg.params["y_limits"] = court_out_y_limits
+    ball_out_params = ball_out_cfg.params
+    if "sensor_name" in ball_out_params:
+      ball_out_params["landing_x_limits"] = landing_x_limits
+      ball_out_params["landing_y_limits"] = landing_y_limits
   for term_name in (
     "crossed_net_event",
     "landing_in_bounds_event",
     "landing_in_bounds_after_hit",
     "second_contact",
+    "continuous_rally_failure",
+    "continuous_rally_complete",
+    "continuous_recovery_ready_pose",
+    "respawn_successful_continuous_rally_ball",
+    "advance_continuous_rally_ball",
+    "continuous_ball_fault",
+    "continuous_rally_complete_state",
+    "continuous_racket_to_predicted_hit_point_dense",
+    "continuous_racket_towards_ball_velocity",
+    "continuous_racket_hit_event",
+    "continuous_crossed_net_event",
+    "continuous_landing_in_bounds_event",
+    "continuous_post_hit_x_progress",
+    "continuous_post_hit_ball_velocity_direction",
   ):
     term_cfg = cfg.rewards.get(term_name) or cfg.terminations.get(term_name)
+    if term_cfg is None:
+      continue
+    term_cfg.params["landing_x_limits"] = landing_x_limits
+    term_cfg.params["landing_y_limits"] = landing_y_limits
+
+  for term_cfg in cfg.metrics.values():
+    term_cfg.params["landing_x_limits"] = landing_x_limits
+    term_cfg.params["landing_y_limits"] = landing_y_limits
+
+  for obs_group in cfg.observations.values():
+    term_cfg = obs_group.terms.get("continuous_rally_phase")
+    if term_cfg is None:
+      term_cfg = obs_group.terms.get("continuous_ball_phase")
     if term_cfg is None:
       continue
     term_cfg.params["landing_x_limits"] = landing_x_limits
@@ -607,6 +649,37 @@ def make_tennis_latent_env_cfg(
     )
   }
 
+  metrics = {
+    "racket_hit_count": MetricsTermCfg(
+      func=mdp.racket_hit_count_metric,
+      reduce="last",
+      params=dict(tracker_params),
+    ),
+    "crossed_net_count": MetricsTermCfg(
+      func=mdp.crossed_net_count_metric,
+      reduce="last",
+      params=dict(tracker_params),
+    ),
+    "landing_in_bounds_count": MetricsTermCfg(
+      func=mdp.landing_in_bounds_count_metric,
+      reduce="last",
+      params={
+        **dict(tracker_params),
+        "landing_x_limits": None,
+        "landing_y_limits": None,
+      },
+    ),
+    "successful_return_count": MetricsTermCfg(
+      func=mdp.successful_return_count_metric,
+      reduce="last",
+      params={
+        **dict(tracker_params),
+        "landing_x_limits": None,
+        "landing_y_limits": None,
+      },
+    ),
+  }
+
   cfg = TennisLatentEnvCfg(
     court_size=court_size,
     scene=SceneCfg(
@@ -625,6 +698,7 @@ def make_tennis_latent_env_cfg(
     events=events,
     rewards=rewards,
     terminations=terminations,
+    metrics=metrics,
     curriculum=curriculum,
     viewer=ViewerConfig(
       origin_type=ViewerConfig.OriginType.ASSET_BODY,
@@ -690,6 +764,9 @@ def make_tennis_latent_cross_env_cfg(
       "landing_y_limits": landing_y_limits,
     }
   )
+  for term_cfg in cfg.metrics.values():
+    term_cfg.params["landing_x_limits"] = landing_x_limits
+    term_cfg.params["landing_y_limits"] = landing_y_limits
   cfg.rewards["approach_point"].weight = 5.0
   cfg.rewards["racket_towards_ball"].weight = 2.0
   cfg.rewards["racket_hit_event"].weight = 25.0
@@ -746,22 +823,136 @@ def make_tennis_continuous_env_cfg(
   次后才作为整局成功终止。
   """
   cfg = make_tennis_latent_cross_env_cfg(court_size=court_size)
-  landing_params = cfg.terminations["landing_in_bounds_after_hit"].params
-  tracker_params = dict(landing_params)
-  ball_provider_cfg = cfg.events["reset_ball"].params["provider_cfg"]
+  scale = resolve_court_scale(court_size)
+  cl = COURT_HALF_LENGTH * scale
+  cw = COURT_HALF_WIDTH * scale
+  robot_reset_x_range = (cl * 0.50, cl * 0.64)
+  robot_reset_x_center = 0.5 * (robot_reset_x_range[0] + robot_reset_x_range[1])
+  initial_successful_returns = min(
+    CONTINUOUS_RALLY_INITIAL_SUCCESSFUL_RETURNS,
+    max_successful_returns,
+  )
+  landing_x_limits = (-cl - OPPONENT_LANDING_MARGIN, NET_X)
+  landing_y_limits = (-cw - OPPONENT_LANDING_MARGIN, cw + OPPONENT_LANDING_MARGIN)
+  court_out_x_limits = (-cl - 1.0, cl + 1.0)
+  court_out_y_limits = (-cw - 0.5, cw + 0.5)
+  continuous_z_limits = (COURT_OUT_Z_LIMITS[0], 4.0)
+  continuous_params = {
+    "racket_sensor_name": _RACKET_BALL_SENSOR,
+    "net_sensor_name": _BALL_NET_SENSOR,
+    "ball_cfg": _BALL_CFG,
+    "force_threshold": HIT_FORCE_THRESHOLD,
+    "ground_z": GROUND_Z,
+    "net_x": NET_X,
+    "net_height": NET_CENTER_HEIGHT,
+    "landing_x_limits": landing_x_limits,
+    "landing_y_limits": landing_y_limits,
+    "x_limits": court_out_x_limits,
+    "y_limits": court_out_y_limits,
+    "z_limits": continuous_z_limits,
+  }
+  target_initial_x_range = (
+    robot_reset_x_center - 0.15 * scale,
+    robot_reset_x_center + 0.15 * scale,
+  )
+  target_initial_y_range = (-0.15 * scale, 0.15 * scale)
+  target_x_range = (max(0.3, 0.8 * scale), max(0.5, cl - 0.8 * scale))
+  target_y_range = (-cw, cw)
+  phase_params = {
+    **dict(continuous_params),
+    "max_successful_returns": max_successful_returns,
+  }
+  opponent_provider_cfg = OpponentFeederCfg(
+    ball_cfg=_BALL_CFG,
+    spawn_x_range=(-cl + 0.2 * scale, -max(0.2, 0.3 * scale)),
+    spawn_y_range=(-cw, cw),
+    target_x_range=target_initial_x_range,
+    target_y_range=target_initial_y_range,
+    flight_time_range=(0.85, 1.35),
+    flight_time_slack_range=(0.05, 0.35),
+    spawn_z_range=(GROUND_Z, GROUND_Z),
+    ground_z=GROUND_Z,
+    net_x=NET_X,
+    net_height=NET_CENTER_HEIGHT,
+    net_clearance=0.25,
+  )
+
+  ball_net_sensor = ContactSensorCfg(
+    name=_BALL_NET_SENSOR,
+    primary=ContactMatch(mode="geom", pattern="tennis_ball", entity="ball"),
+    secondary=ContactMatch(
+      mode="geom",
+      pattern="tennis_net_collision",
+      entity="court",
+    ),
+    fields=("found", "force"),
+    reduce="maxforce",
+    num_slots=1,
+    history_length=4,
+  )
+  cfg.scene.sensors = (*cfg.scene.sensors, ball_net_sensor)
+  cfg.events["reset_ball"].params["provider_cfg"] = opponent_provider_cfg
 
   cfg.episode_length_s = 20.0
+  cfg.observations["actor"].terms["continuous_ball_phase"] = ObservationTermCfg(
+    func=mdp.continuous_ball_phase,
+    params=dict(phase_params),
+  )
+  cfg.observations["critic"].terms["continuous_ball_phase"] = ObservationTermCfg(
+    func=mdp.continuous_ball_phase,
+    params=dict(phase_params),
+  )
+  cfg.rewards[
+    "approach_point"
+  ].func = mdp.continuous_racket_to_predicted_hit_point_dense
+  cfg.rewards["approach_point"].params = {
+    **dict(continuous_params),
+    "std": 0.4,
+    "racket_cfg": _RACKET_CFG,
+    "robot_cfg": _ROBOT_CFG,
+    "hit_height_offset": HIT_POINT_HEIGHT_OFFSET,
+    "max_horizon": HIT_POINT_MAX_HORIZON,
+  }
+  cfg.rewards["racket_towards_ball"].func = mdp.continuous_racket_towards_ball_velocity
+  cfg.rewards["racket_towards_ball"].params = {
+    **dict(continuous_params),
+    "racket_cfg": _RACKET_CFG,
+    "robot_cfg": _ROBOT_CFG,
+    "speed_scale": 2.0,
+    "distance_std": 0.8,
+  }
+  cfg.rewards["racket_hit_event"].func = mdp.continuous_racket_hit_event
+  cfg.rewards["racket_hit_event"].params = dict(continuous_params)
+  cfg.rewards["post_hit_x_progress"].func = mdp.continuous_post_hit_x_progress
+  cfg.rewards["post_hit_x_progress"].params = {
+    **dict(continuous_params),
+    "max_progress": 0.05,
+  }
+  cfg.rewards[
+    "post_hit_ball_velocity_direction"
+  ].func = mdp.continuous_post_hit_ball_velocity_direction
+  cfg.rewards["post_hit_ball_velocity_direction"].params = {
+    **dict(continuous_params),
+    "x_speed_scale": 4.0,
+    "lateral_speed_std": 1.5,
+  }
+  cfg.rewards["crossed_net_event"].func = mdp.continuous_crossed_net_event
+  cfg.rewards["crossed_net_event"].params = dict(continuous_params)
+  cfg.rewards["landing_in_bounds_event"].func = mdp.continuous_landing_in_bounds_event
+  cfg.rewards["landing_in_bounds_event"].params = dict(continuous_params)
+
+  cfg.terminations.pop("ball_out_of_bounds", None)
   cfg.terminations.pop("landing_in_bounds_after_hit", None)
   cfg.terminations.pop("second_contact", None)
-  cfg.terminations["continuous_rally_failure"] = TerminationTermCfg(
-    func=mdp.continuous_rally_failure,
-    params=dict(tracker_params),
+  cfg.terminations["continuous_ball_fault"] = TerminationTermCfg(
+    func=mdp.continuous_ball_fault,
+    params=dict(continuous_params),
   )
   cfg.terminations["continuous_rally_complete"] = TerminationTermCfg(
-    func=mdp.continuous_rally_complete,
+    func=mdp.continuous_rally_complete_state,
     params={
-      **dict(tracker_params),
-      "max_successful_returns": max_successful_returns,
+      **dict(continuous_params),
+      "max_successful_returns": initial_successful_returns,
     },
   )
 
@@ -770,17 +961,128 @@ def make_tennis_continuous_env_cfg(
     weight=2000.0,
     params={"term_names": ("continuous_rally_complete",)},
   )
-  cfg.rewards["respawn_successful_continuous_rally_ball"] = RewardTermCfg(
-    func=mdp.respawn_successful_continuous_rally_ball,
+  cfg.rewards["continuous_recovery_ready_pose"] = RewardTermCfg(
+    func=mdp.continuous_recovery_ready_pose_state,
+    weight=20.0,
+    params={
+      **dict(continuous_params),
+      "racket_cfg": _RACKET_CFG,
+      "robot_cfg": _ROBOT_CFG,
+      "target_x": robot_reset_x_center,
+      "target_y": 0.0,
+      "target_heading": ROBOT_RESET_YAW,
+    },
+  )
+  cfg.rewards["advance_continuous_rally_ball"] = RewardTermCfg(
+    func=mdp.advance_continuous_rally_ball,
     weight=1.0e-9,
     params={
-      **dict(tracker_params),
-      "provider_cfg": ball_provider_cfg,
+      **dict(continuous_params),
+      "provider_cfg": opponent_provider_cfg,
+      "max_successful_returns": initial_successful_returns,
+      "recovery_time_range": CONTINUOUS_RECOVERY_INITIAL_TIME_RANGE,
+    },
+  )
+  cfg.rewards.pop("respawn_successful_continuous_rally_ball", None)
+  cfg.metrics["racket_hit_count"].func = mdp.continuous_racket_hit_count_metric
+  cfg.metrics["racket_hit_count"].params = dict(continuous_params)
+  cfg.metrics["crossed_net_count"].func = mdp.continuous_crossed_net_count_metric
+  cfg.metrics["crossed_net_count"].params = dict(continuous_params)
+  cfg.metrics[
+    "landing_in_bounds_count"
+  ].func = mdp.continuous_landing_in_bounds_count_metric
+  cfg.metrics["landing_in_bounds_count"].params = dict(continuous_params)
+  cfg.metrics[
+    "successful_return_count"
+  ].func = mdp.continuous_successful_return_count_metric
+  cfg.metrics["successful_return_count"].params = dict(continuous_params)
+  cfg.metrics["continuous_success_ratio"] = MetricsTermCfg(
+    func=mdp.continuous_success_ratio_metric_state,
+    reduce="last",
+    params={
+      **dict(continuous_params),
       "max_successful_returns": max_successful_returns,
     },
+  )
+  cfg.metrics["in_recovery_rate"] = MetricsTermCfg(
+    func=mdp.continuous_in_recovery_metric_state,
+    params=dict(continuous_params),
+  )
+  cfg.metrics["net_contact_count"] = MetricsTermCfg(
+    func=mdp.continuous_net_contact_count_metric,
+    reduce="last",
+    params=dict(continuous_params),
+  )
+  cfg.metrics["invalid_feed_count"] = MetricsTermCfg(
+    func=mdp.continuous_invalid_feed_count_metric,
+    reduce="last",
+    params=dict(continuous_params),
+  )
+  cfg.metrics["continuous_fault_count"] = MetricsTermCfg(
+    func=mdp.continuous_fault_count_metric,
+    reduce="last",
+    params=dict(continuous_params),
   )
 
   cfg.curriculum["ball_target_region"].params["success_term_name"] = (
     "continuous_rally_complete"
+  )
+  cfg.curriculum["ball_target_region"].params["provider_cfg"] = opponent_provider_cfg
+  cfg.curriculum["ball_target_region"].params["initial_target_x_range"] = (
+    target_initial_x_range
+  )
+  cfg.curriculum["ball_target_region"].params["initial_target_y_range"] = (
+    target_initial_y_range
+  )
+  cfg.curriculum["ball_target_region"].params["final_target_x_range"] = target_x_range
+  cfg.curriculum["ball_target_region"].params["final_target_y_range"] = target_y_range
+  rally_length_stages = [
+    {
+      "step": CONTINUOUS_RALLY_LENGTH_STAGE_STEPS[0],
+      "params": {"max_successful_returns": initial_successful_returns},
+    },
+    {
+      "step": CONTINUOUS_RALLY_LENGTH_STAGE_STEPS[1],
+      "params": {"max_successful_returns": min(4, max_successful_returns)},
+    },
+    {
+      "step": CONTINUOUS_RALLY_LENGTH_STAGE_STEPS[2],
+      "params": {"max_successful_returns": max_successful_returns},
+    },
+  ]
+  cfg.curriculum["continuous_rally_length"] = CurriculumTermCfg(
+    func=mdp.termination_curriculum,
+    params={
+      "termination_name": "continuous_rally_complete",
+      "stages": rally_length_stages,
+    },
+  )
+  cfg.curriculum["continuous_respawn_length"] = CurriculumTermCfg(
+    func=mdp.reward_curriculum,
+    params={
+      "reward_name": "advance_continuous_rally_ball",
+      "stages": rally_length_stages,
+    },
+  )
+  wait_interval_stages = [
+    {
+      "step": CONTINUOUS_RALLY_LENGTH_STAGE_STEPS[0],
+      "params": {"recovery_time_range": CONTINUOUS_RECOVERY_INITIAL_TIME_RANGE},
+    },
+    {
+      "step": CONTINUOUS_RALLY_LENGTH_STAGE_STEPS[1],
+      "params": {"recovery_time_range": CONTINUOUS_RECOVERY_MID_TIME_RANGE},
+    },
+    {
+      "step": CONTINUOUS_RALLY_LENGTH_STAGE_STEPS[2],
+      "params": {"recovery_time_range": CONTINUOUS_RECOVERY_FINAL_TIME_RANGE},
+    },
+  ]
+  cfg.curriculum["continuous_wait_interval"] = CurriculumTermCfg(
+    func=mdp.reward_curriculum,
+    params={
+      "reward_name": "advance_continuous_rally_ball",
+      "stages": wait_interval_stages,
+    },
   )
   return cfg

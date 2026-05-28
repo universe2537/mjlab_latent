@@ -11,3 +11,6 @@ class TennisLatentOnPolicyRunnerCfg(RslRlOnPolicyRunnerCfg):
 
   require_decoder_checkpoint: bool = True
   """Raise during runner construction when no decoder checkpoint is configured."""
+
+  reset_resume_progress: bool = False
+  """Load policy weights while resetting iteration and environment progress."""
