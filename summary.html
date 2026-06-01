@@ -160,7 +160,7 @@
       <tr>
         <td><code>Mjlab-Tennis-Continuous-Unitree-G1</code></td>
         <td>Attempts multi-ball rallies by delaying the next feed after each successful Cross-style return.</td>
-        <td>Continuous now has an explicit recovery phase: successful landing starts a countdown, phase/timer/return-count observations are exposed, ready-position recovery is rewarded, and respawn happens only after the countdown.</td>
+        <td>Continuous now has an explicit recovery phase: successful landing starts a countdown, the actor/critic see only a 3-way phase one-hot, ready-position recovery is rewarded, and respawn happens only after the countdown.</td>
       </tr>
       <tr>
         <td><code>Mjlab-Tennis-Hit/Cross-SONIC-Unitree-G1</code></td>
@@ -205,8 +205,110 @@
     </li>
   </ul>
 
+  <h2>Tennis Deployable Observation Notes</h2>
+  <ul>
+    <li>
+      Tennis actor ball history now uses <code>torso_to_ball_b</code> instead
+      of <code>racket_to_ball_b</code>. The dimension is unchanged
+      (<code>10 * 3</code>), so old latent policy checkpoints still have a
+      compatible first layer, but the semantics of that slice changed.
+    </li>
+    <li>
+      Keep precise racket-site quantities such as <code>racket_to_ball_b</code>
+      and <code>racket_velocity_b</code> in critic observations, rewards, and
+      contact logic. They are useful asymmetric-training signals but should not
+      be required actor inputs for deployment.
+    </li>
+    <li>
+      Continuous <code>continuous_ball_phase</code> now returns only
+      <code>[incoming, return_flight, recovery]</code>. The removed
+      <code>recovery_fraction_remaining</code> and normalized return-count are
+      still internal metrics/state but no longer policy observations.
+    </li>
+    <li>
+      <code>predicted_hit_point</code> and <code>approach_point</code> now
+      prefer the descending intersection with the hit-height plane. The old
+      logic picked the earliest positive root, which could target the upward
+      crossing near the opponent feed; in a Continuous reset sample that looked
+      like <code>x=3-8m</code> and <code>t=0.07-0.18s</code>. After the fix,
+      the same sample is around <code>x=-0.08..1.65m</code> and
+      <code>t=0.81..1.45s</code>.
+    </li>
+  </ul>
+
+  <h2>Tennis Continuous Run Baselines</h2>
+  <ul>
+    <li>
+      Best pre-large-refactor Continuous run found so far:
+      <code>logs/rsl_rl/g1_tennis_latent_continuous/tennis_continuous_from_cross_2026-05-27_14-37-48</code>.
+      It resumed from
+      <code>logs/rsl_rl/g1_tennis_latent_cross/tennis_cross_from_hit_2026-05-21_15-21-12/model_59998.pt</code>.
+    </li>
+    <li>
+      Near <code>model_79000.pt</code>, it had
+      <code>mean_reward=105.9</code>,
+      <code>mean_episode_length=179</code>,
+      <code>crossed_net_event=0.53</code>,
+      <code>landing_in_bounds_event=0.85</code>, and low fall terminations
+      (<code>bad_orientation=0.04</code>, <code>root_height=0.38</code>).
+      <code>continuous_rally_complete</code> stayed effectively zero, so this
+      was strong at first return and recovery shaping but not solved multi-shot
+      rally completion.
+    </li>
+    <li>
+      The later <code>2026-05-28_10-38-28</code> run had raw metrics and high
+      apparent crossing/landing counts, but it was trained before the
+      descending <code>predicted_hit_point</code> fix and had many invalid
+      generated feeds, so do not treat it as the clean baseline.
+    </li>
+    <li>
+      Latest post-fix Continuous run:
+      <code>logs/rsl_rl/g1_tennis_latent_continuous/tennis_continuous_from_cross_2026-05-28_16-47-00</code>
+      reached <code>model_39999.pt</code>. It can hit and usually cross the net
+      (<code>racket_hit_count ~= 1.00</code>,
+      <code>crossed_net_count ~= 0.95</code>), with about
+      <code>0.66</code> successful returns per episode. It still does not solve
+      rally completion (<code>continuous_rally_complete = 0</code>) because the
+      scheduled curriculum has already pushed <code>max_successful_returns</code>
+      to <code>8</code>. The main warning signs are high
+      <code>invalid_feed_count</code> (<code>~0.66</code>) and rising
+      <code>Policy/mean_std</code> (<code>~1325</code>).
+    </li>
+    <li>
+      Current Continuous recovery experiment should start from
+      <code>model_25000.pt</code> in the same run, because that is where
+      <code>successful_return_count</code> peaked before the step-based
+      curriculum pushed the task to eight returns. The task config now rejects
+      opponent feeds whose analytical trajectory clears the net plane but would
+      exceed the apex limit or graze the net volume, gates stillness rewards so
+      they matter only near the home/ready position, and holds the rally target
+      at two successful returns instead of step-advancing to four/eight.
+    </li>
+    <li>
+      The first recovery-gated run
+      <code>tennis_continuous_recovery_gated_from_25000_2026-05-31_00-18-12</code>
+      reached only <code>model_1500.pt</code> before stopping around iteration
+      <code>1613</code>. It reduced early invalid feeds substantially compared
+      with the previous post-fix run, held the curriculum at two returns, and
+      produced nonzero two-return completion
+      (<code>continuous_rally_complete tail100 ~= 0.21</code>). However average
+      successful returns stayed around <code>0.65</code>, invalid feeds rose
+      back to <code>~0.4</code>, and ball-fault terminations remained high
+      (<code>~10.7</code>), so the next change should split invalid-feed/fault
+      reasons and make respawn depend on being near the recovery target.
+    </li>
+  </ul>
+
   <h2>Rendering Notes</h2>
   <ul>
+    <li>
+      <code>play-distill.py</code> supports video capture with
+      <code>--video</code>. It records from step 0 via the shared
+      <code>VideoRecorder</code>, saves mp4s under the selected checkpoint
+      directory at <code>videos/play-distill/</code>, and accepts
+      <code>--video-length</code>, <code>--video-height</code>, and
+      <code>--video-width</code>.
+    </li>
     <li>
       In the normal sandbox, headless video failed because CUDA/EGL was not
       visible. <code>osmesa</code> also failed due missing OpenGL symbols, and
@@ -222,6 +324,7 @@
 
   <h2>Useful Commands</h2>
   <ul>
+    <li><code>uv run play-distill.py --checkpoint-file /path/to/model.pt --motion-files /path/to/motion.npz --video --video-length 300</code></li>
     <li><code>uv run pytest tests/test_tennis_task.py -q</code></li>
     <li><code>uv run pytest tests/test_tennis_task.py tests/test_tennis_hit_state.py -q</code></li>
     <li><code>uv run ty check src/mjlab/tasks/tennis/mdp/sonic_actions.py tests/test_tennis_task.py</code></li>

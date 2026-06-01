@@ -22,6 +22,8 @@ from mjlab.tasks.tennis.mdp import (
   SonicDecoderTokenJointPositionAction,
   SonicDecoderTokenJointPositionActionCfg,
   apply_latent_action_barrier,
+  racket_to_ball_b,
+  torso_to_ball_b,
 )
 from mjlab.tasks.tennis.mdp.ball_providers import RandomFeederCfg
 from mjlab.tasks.tennis.rl import TennisLatentOnPolicyRunnerCfg
@@ -33,8 +35,6 @@ from mjlab.tasks.tennis.tennis_env_cfg import (
   BALL_SPAWN_X_RANGE,
   BALL_SPAWN_Z_RANGE,
   CONTINUOUS_RALLY_INITIAL_SUCCESSFUL_RETURNS,
-  CONTINUOUS_RALLY_SUCCESSFUL_RETURNS,
-  CONTINUOUS_RECOVERY_FINAL_TIME_RANGE,
   CONTINUOUS_RECOVERY_INITIAL_TIME_RANGE,
   COURT_HALF_LENGTH,
   COURT_HALF_WIDTH,
@@ -182,6 +182,9 @@ def test_tennis_rl_config_loads() -> None:
 
 def test_tennis_env_uses_latent_actions() -> None:
   cfg = load_env_cfg("Mjlab-Tennis-Hit-Unitree-G1")
+  assert cfg.observations["actor"].terms["ball_pos_window"].func is torso_to_ball_b
+  assert cfg.observations["critic"].terms["racket_to_ball"].func is racket_to_ball_b
+
   cfg.scene.num_envs = 2
   env = ManagerBasedRlEnv(cfg=cfg, device="cpu")
   try:
@@ -500,6 +503,37 @@ def test_expand_mlp_input_for_observation_appends_zero_weight_columns() -> None:
   )
 
 
+def test_expand_mlp_input_for_observation_truncates_small_tail() -> None:
+  model_sd = {
+    "obs_normalizer._mean": torch.tensor([[1.0, 2.0, 3.0, 4.0, 5.0]]),
+    "obs_normalizer._var": torch.tensor([[6.0, 7.0, 8.0, 9.0, 10.0]]),
+    "obs_normalizer._std": torch.tensor([[11.0, 12.0, 13.0, 14.0, 15.0]]),
+    "mlp.0.weight": torch.arange(15, dtype=torch.float32).reshape(3, 5),
+    "mlp.0.bias": torch.zeros(3),
+  }
+
+  migrated = expand_mlp_input_for_observation(model_sd, target_dim=3)
+
+  assert migrated is True
+  assert model_sd["mlp.0.weight"].shape == (3, 3)
+  assert torch.allclose(
+    model_sd["mlp.0.weight"],
+    torch.arange(15, dtype=torch.float32).reshape(3, 5)[:, :3],
+  )
+  assert torch.allclose(
+    model_sd["obs_normalizer._mean"],
+    torch.tensor([[1.0, 2.0, 3.0]]),
+  )
+  assert torch.allclose(
+    model_sd["obs_normalizer._var"],
+    torch.tensor([[6.0, 7.0, 8.0]]),
+  )
+  assert torch.allclose(
+    model_sd["obs_normalizer._std"],
+    torch.tensor([[11.0, 12.0, 13.0]]),
+  )
+
+
 def test_tennis_continuous_respawns_until_eight_successful_returns() -> None:
   cfg = load_env_cfg("Mjlab-Tennis-Continuous-Unitree-G1")
 
@@ -522,10 +556,14 @@ def test_tennis_continuous_respawns_until_eight_successful_returns() -> None:
   assert cfg.metrics["in_recovery_rate"].reduce == "mean"
   assert (
     cfg.metrics["continuous_success_ratio"].params["max_successful_returns"]
-    == CONTINUOUS_RALLY_SUCCESSFUL_RETURNS
+    == CONTINUOUS_RALLY_INITIAL_SUCCESSFUL_RETURNS
   )
   assert "continuous_ball_phase" in cfg.observations["actor"].terms
   assert "continuous_ball_phase" in cfg.observations["critic"].terms
+  assert (
+    "max_successful_returns"
+    not in cfg.observations["actor"].terms["continuous_ball_phase"].params
+  )
   assert cfg.rewards["approach_point"].params["racket_sensor_name"] == (
     "racket_ball_contact"
   )
@@ -554,24 +592,24 @@ def test_tennis_continuous_respawns_until_eight_successful_returns() -> None:
   assert (
     respawn_params["provider_cfg"] is cfg.events["reset_ball"].params["provider_cfg"]
   )
+  assert (
+    provider_cfg.max_apex_z
+    < cfg.terminations["continuous_ball_fault"].params["z_limits"][1]
+  )
 
   curriculum_params = cfg.curriculum["ball_target_region"].params
   assert curriculum_params["success_term_name"] == "continuous_rally_complete"
   length_stages = cfg.curriculum["continuous_rally_length"].params["stages"]
+  assert len(length_stages) == 1
   assert length_stages[0]["params"]["max_successful_returns"] == (
     CONTINUOUS_RALLY_INITIAL_SUCCESSFUL_RETURNS
-  )
-  assert length_stages[-1]["params"]["max_successful_returns"] == (
-    CONTINUOUS_RALLY_SUCCESSFUL_RETURNS
   )
   respawn_stages = cfg.curriculum["continuous_respawn_length"].params["stages"]
   assert respawn_stages == length_stages
   wait_stages = cfg.curriculum["continuous_wait_interval"].params["stages"]
+  assert len(wait_stages) == 1
   assert wait_stages[0]["params"]["recovery_time_range"] == (
     CONTINUOUS_RECOVERY_INITIAL_TIME_RANGE
-  )
-  assert wait_stages[-1]["params"]["recovery_time_range"] == (
-    CONTINUOUS_RECOVERY_FINAL_TIME_RANGE
   )
 
 

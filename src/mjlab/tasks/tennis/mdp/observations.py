@@ -54,6 +54,18 @@ def racket_to_ball_b(
   return quat_apply_inverse(robot.data.root_link_quat_w, delta_w)
 
 
+def torso_to_ball_b(
+  env: ManagerBasedRlEnv,
+  ball_cfg: SceneEntityCfg = _BALL_CFG,
+  robot_cfg: SceneEntityCfg = _ROBOT_CFG,
+) -> torch.Tensor:
+  """从机器人 torso/base 到球的向量，以机器人基座坐标系表示。"""
+  robot: Entity = env.scene[robot_cfg.name]
+  ball: Entity = env.scene[ball_cfg.name]
+  delta_w = ball.data.root_link_pos_w - robot.data.root_link_pos_w
+  return quat_apply_inverse(robot.data.root_link_quat_w, delta_w)
+
+
 def ball_velocity_b(
   env: ManagerBasedRlEnv,
   ball_cfg: SceneEntityCfg = _BALL_CFG,
@@ -113,9 +125,17 @@ def _predict_hit_intersection_w(
   t0 = (-b - sqrt_disc) / denom
   t1 = (-b + sqrt_disc) / denom
   candidates = torch.stack([t0, t1], dim=-1)
+  future_candidates = candidates > min_time
+  vz_at_candidates = vel[:, 2].unsqueeze(-1) - gravity * candidates
+
   inf = torch.full_like(candidates, float("inf"))
-  candidates = torch.where(candidates > min_time, candidates, inf)
-  t_hit = candidates.amin(dim=-1)
+  descending_candidates = torch.where(
+    future_candidates & (vz_at_candidates <= 0.0), candidates, inf
+  )
+  fallback_candidates = torch.where(future_candidates, candidates, inf)
+  t_descending = descending_candidates.amin(dim=-1)
+  t_fallback = fallback_candidates.amin(dim=-1)
+  t_hit = torch.where(torch.isfinite(t_descending), t_descending, t_fallback)
 
   valid = has_real_root & torch.isfinite(t_hit) & (t_hit <= max_horizon)
   t_hit = torch.where(valid, t_hit, torch.zeros_like(t_hit))
@@ -196,9 +216,8 @@ def continuous_rally_phase(
   net_x: float = 0.0,
   landing_x_limits: tuple[float, float] | None = None,
   landing_y_limits: tuple[float, float] | None = None,
-  max_successful_returns: int = 8,
 ) -> torch.Tensor:
-  """Expose continuous-rally phase, recovery timer, and return count."""
+  """Expose the legacy continuous-rally recovery flag."""
   tracker = get_tennis_hit_tracker(
     env,
     sensor_name=sensor_name,
@@ -210,10 +229,5 @@ def continuous_rally_phase(
     landing_y_limits=landing_y_limits,
   )
   tracker.update()
-  max_returns = max(1, int(max_successful_returns))
   in_recovery = tracker.in_recovery.float()
-  recovery_remaining = tracker.recovery_fraction_remaining
-  return_count = (tracker.successful_return_count.float() / float(max_returns)).clamp(
-    max=1.0
-  )
-  return torch.stack((in_recovery, recovery_remaining, return_count), dim=-1)
+  return in_recovery.unsqueeze(-1)

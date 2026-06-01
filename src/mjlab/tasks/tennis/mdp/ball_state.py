@@ -73,6 +73,9 @@ class OpponentFeederCfg:
   net_x: float = 0.0
   net_height: float = 0.914
   net_clearance: float = 0.25
+  ball_radius: float = 0.0335
+  net_half_thickness: float = 0.012
+  max_apex_z: float = 3.9
   gravity: float = 9.81
   max_resample_attempts: int = 64
 
@@ -155,7 +158,10 @@ class OpponentFeeder:
     pz = torch.full_like(base_flight_t, cfg.ground_z)
     dx = tx - px
     net_fraction = ((cfg.net_x - px) / dx.clamp_min(1.0e-6)).clamp(1.0e-4, 1.0 - 1.0e-4)
-    required_clearance = max(1.0e-4, cfg.net_height + cfg.net_clearance - cfg.ground_z)
+    required_clearance = max(
+      1.0e-4,
+      cfg.net_height + cfg.net_clearance + cfg.ball_radius - cfg.ground_z,
+    )
     min_flight_t = torch.sqrt(
       torch.full_like(base_flight_t, 2.0 * required_clearance / g)
       / (net_fraction * (1.0 - net_fraction)).clamp_min(1.0e-6)
@@ -167,13 +173,26 @@ class OpponentFeeder:
 
     t_net = (cfg.net_x - px) / vx.clamp_min(1.0e-6)
     z_net = pz + vz * t_net - 0.5 * g * t_net * t_net
+    z_apex = pz + torch.square(vz) / (2.0 * g)
     valid = (
       (dx > 0.0)
       & (vx > 0.0)
       & (t_net > 0.0)
       & (t_net < flight_t)
-      & (z_net >= cfg.net_height + cfg.net_clearance)
+      & (z_net >= cfg.net_height + cfg.net_clearance + cfg.ball_radius)
+      & (z_apex <= cfg.max_apex_z)
     )
+    clearance_x = cfg.net_half_thickness + cfg.ball_radius
+    for x_check in (
+      cfg.net_x - clearance_x,
+      cfg.net_x + clearance_x,
+    ):
+      t_check = (x_check - px) / vx.clamp_min(1.0e-6)
+      within_flight = (t_check > 0.0) & (t_check < flight_t)
+      z_check = pz + vz * t_check - 0.5 * g * t_check * t_check
+      valid &= ~within_flight | (
+        z_check >= cfg.net_height + cfg.net_clearance + cfg.ball_radius
+      )
     return px, py, pz, vx, vy, vz, valid
 
   def _fallback_candidate(self, env_ids: torch.Tensor) -> tuple[torch.Tensor, ...]:
@@ -205,7 +224,10 @@ class OpponentFeeder:
     pz = torch.full((n,), cfg.ground_z, device=dev)
     dx = tx - px
     net_fraction = ((cfg.net_x - px) / dx.clamp_min(1.0e-6)).clamp(1.0e-4, 1.0 - 1.0e-4)
-    required_clearance = max(1.0e-4, cfg.net_height + cfg.net_clearance - cfg.ground_z)
+    required_clearance = max(
+      1.0e-4,
+      cfg.net_height + cfg.net_clearance + cfg.ball_radius - cfg.ground_z,
+    )
     min_flight_t = torch.sqrt(
       torch.full_like(flight_t, 2.0 * required_clearance / cfg.gravity)
       / (net_fraction * (1.0 - net_fraction)).clamp_min(1.0e-6)
@@ -673,9 +695,8 @@ def continuous_ball_phase(
   x_limits: tuple[float, float] = (-5.8, 3.6),
   y_limits: tuple[float, float] = (-2.7, 2.7),
   z_limits: tuple[float, float] = (0.02, 4.0),
-  max_successful_returns: int = 8,
 ) -> torch.Tensor:
-  """Expose phase one-hot, recovery timer, and normalized rally count."""
+  """Expose the current continuous-rally phase as a 3-way one-hot vector."""
   state = get_tennis_continuous_ball_state(
     env,
     racket_sensor_name=racket_sensor_name,
@@ -692,20 +713,14 @@ def continuous_ball_phase(
     z_limits=z_limits,
   )
   state.update()
-  max_returns = max(1, int(max_successful_returns))
   incoming = (state.phase == PHASE_INCOMING).float()
   return_flight = (state.phase == PHASE_RETURN_FLIGHT).float()
   recovery = (state.phase == PHASE_RECOVERY).float()
-  return_count = (state.successful_return_count.float() / float(max_returns)).clamp(
-    max=1.0
-  )
   return torch.stack(
     (
       incoming,
       return_flight,
       recovery,
-      state.recovery_fraction_remaining,
-      return_count,
     ),
     dim=-1,
   )
@@ -926,6 +941,7 @@ class continuous_recovery_ready_pose_state(TennisContinuousBallStateTerm):
     heading_std: float = 0.7,
     lin_vel_std: float = 0.8,
     upright_std: float = 0.35,
+    move_speed_scale: float = 1.0,
     racket_target_b: tuple[float, float, float] = (0.35, -0.35, 0.25),
     racket_std: float = 0.6,
     **_: object,
@@ -937,9 +953,11 @@ class continuous_recovery_ready_pose_state(TennisContinuousBallStateTerm):
 
     robot: Entity = env.scene[robot_cfg.name]
     base_pos_l = robot.data.root_link_pos_w - env.scene.env_origins
-    base_xy_error = torch.square(base_pos_l[:, 0] - target_x) + torch.square(
-      base_pos_l[:, 1] - target_y
+    target_xy = torch.tensor(
+      (target_x, target_y), dtype=torch.float32, device=env.device
     )
+    to_home_xy = target_xy.unsqueeze(0) - base_pos_l[:, :2]
+    base_xy_error = torch.sum(torch.square(to_home_xy), dim=1)
     base_reward = torch.exp(-base_xy_error / base_pos_std**2)
 
     heading_error = wrap_to_pi(robot.data.heading_w - target_heading)
@@ -947,6 +965,10 @@ class continuous_recovery_ready_pose_state(TennisContinuousBallStateTerm):
 
     lin_vel_xy = torch.sum(torch.square(robot.data.root_link_lin_vel_b[:, :2]), dim=1)
     still_reward = torch.exp(-lin_vel_xy / lin_vel_std**2)
+    dist_to_home = torch.sqrt(base_xy_error.clamp_min(1.0e-8))
+    home_dir = to_home_xy / dist_to_home.unsqueeze(-1).clamp_min(1.0e-4)
+    vel_to_home = torch.sum(robot.data.root_link_lin_vel_w[:, :2] * home_dir, dim=1)
+    move_reward = torch.clamp(vel_to_home / move_speed_scale, min=0.0, max=1.0)
 
     upright_error = torch.sum(
       torch.square(robot.data.projected_gravity_b[:, :2]), dim=1
@@ -962,9 +984,11 @@ class continuous_recovery_ready_pose_state(TennisContinuousBallStateTerm):
     racket_error = torch.sum(torch.square(racket_pos_b - racket_target), dim=1)
     racket_reward = torch.exp(-racket_error / racket_std**2)
 
-    reward = (
+    ready_reward = (
       base_reward + heading_reward + still_reward + upright_reward + racket_reward
     ) / 5.0
+    far_reward = 0.75 * move_reward + 0.25 * base_reward
+    reward = (1.0 - base_reward) * far_reward + base_reward * ready_reward
     return reward * active
 
 

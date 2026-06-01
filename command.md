@@ -34,7 +34,7 @@ MUJOCO_GL=egl uv run play Mjlab-Tennis-Cross-LAB-Unitree-G1 --checkpoint-file lo
 
 # Continuous
 uv run train Mjlab-Tennis-Hit-Continuous-Unitree-G1 --env.scene.num_envs 4096 --gpu-ids [4,5,6]
-uv run play Mjlab-Tennis-Continuous-Unitree-G1 --checkpoint-file logs/rsl_rl/g1_tennis_latent_continuous/tennis_continuous_from_cross_2026-05-27_14-37-48/model_68500.pt --viewer viser
+uv run play Mjlab-Tennis-Continuous-Unitree-G1 --checkpoint-file logs/rsl_rl/g1_tennis_latent_continuous/tennis_continuous_from_cross_2026-05-28_16-47-00/model_39999.pt --viewer viser
 MUJOCO_GL=egl uv run play Mjlab-Tennis-Continuous-Unitree-G1 --checkpoint-file logs/rsl_rl/g1_tennis_latent_continuous/tennis_continuous_from_cross_2026-05-27_14-37-48/model_68500.pt --video True --video-length 2000
 
 # SONIC
@@ -46,6 +46,5 @@ uv run train Mjlab-Tennis-Cross-SONIC-Encoder-Unitree-G1 --env.scene.num_envs 40
 uv run play Mjlab-Tennis-Cross-SONIC-Encoder-Unitree-G1 --checkpoint-file logs/rsl_rl/g1_tennis_sonic_encoder_hit/tennis_hit_sonic_encoder_prior_2026-05-27_01-51-16/model_5000.pt --viewer viser
 MUJOCO_GL=egl uv run play Mjlab-Tennis-Cross-SONIC-Unitree-G1 --checkpoint-file logs/rsl_rl/g1_tennis_sonic_hit/tennis_hit_sonic_token_2026-05-26_01-50-16/model_12000.pt --viewer viser
 # Saved wo-encoder baseline video:
-# logs/rsl_rl/g1_tennis_sonic_hit/tennis_sonic_cross_wo_encoder_video_2026-05-27/videos/play/sonic-wo-encoder-step-0.mp4
 
-uv run play-distill.py --checkpoint-file logs/rsl_rl/g1_distillation/distill_cloud_unitree_racket_tennis_2026-05-12_09-35-14/model_30000.pt --viewer viser
+MUJOCO_GL=egl uv run play-distill.py --checkpoint-file logs/rsl_rl/g1_distillation/distill_cloud_unitree_racket_tennis_2026-05-12_09-35-14/model_30000.pt --viewer viser --video True --video-length 2000

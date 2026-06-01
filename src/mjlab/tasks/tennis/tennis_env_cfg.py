@@ -48,10 +48,12 @@ from mjlab.tasks.tennis.mdp import FrozenDecoderLatentJointPositionActionCfg
 from mjlab.tasks.tennis.mdp.ball_providers import RandomFeederCfg
 from mjlab.tasks.tennis.mdp.ball_state import OpponentFeederCfg
 from mjlab.tasks.tennis.scene import (
+  BALL_RADIUS,
   BASELINE_SELF_X,
   COURT_HALF_LENGTH,
   COURT_HALF_WIDTH,
   NET_CENTER_HEIGHT,
+  NET_THICKNESS_HALF,
   get_tennis_ball_cfg,
   get_tennis_court_cfg,
   get_tennis_terrain_cfg,
@@ -361,13 +363,13 @@ def make_tennis_latent_env_cfg(
     ),
   }
 
-  # ---- Actor：带噪声本体感知 + 10 步球位置窗口 + 预计击球点 ---
+  # ---- Actor：带噪声本体感知 + 10 步 torso/base 球位置窗口 + 预计击球点 ---
   actor_terms = dict(proprio_actor)
-  # 球相对于球拍中心的位置，最近 10 帧（展平后 => 30 维）。
+  # 球相对于 torso/base 的位置，最近 10 帧（展平后 => 30 维）。
+  # 相比球拍中心位置，这个观测更接近真机视觉/状态估计可稳定获得的信号。
   actor_terms["ball_pos_window"] = ObservationTermCfg(
-    func=mdp.racket_to_ball_b,
+    func=mdp.torso_to_ball_b,
     params={
-      "racket_cfg": _RACKET_CFG,
       "ball_cfg": _BALL_CFG,
       "robot_cfg": _ROBOT_CFG,
     },
@@ -858,10 +860,7 @@ def make_tennis_continuous_env_cfg(
   target_initial_y_range = (-0.15 * scale, 0.15 * scale)
   target_x_range = (max(0.3, 0.8 * scale), max(0.5, cl - 0.8 * scale))
   target_y_range = (-cw, cw)
-  phase_params = {
-    **dict(continuous_params),
-    "max_successful_returns": max_successful_returns,
-  }
+  phase_params = dict(continuous_params)
   opponent_provider_cfg = OpponentFeederCfg(
     ball_cfg=_BALL_CFG,
     spawn_x_range=(-cl + 0.2 * scale, -max(0.2, 0.3 * scale)),
@@ -875,6 +874,9 @@ def make_tennis_continuous_env_cfg(
     net_x=NET_X,
     net_height=NET_CENTER_HEIGHT,
     net_clearance=0.25,
+    ball_radius=BALL_RADIUS,
+    net_half_thickness=NET_THICKNESS_HALF,
+    max_apex_z=continuous_z_limits[1] - 0.05,
   )
 
   ball_net_sensor = ContactSensorCfg(
@@ -971,6 +973,7 @@ def make_tennis_continuous_env_cfg(
       "target_x": robot_reset_x_center,
       "target_y": 0.0,
       "target_heading": ROBOT_RESET_YAW,
+      "move_speed_scale": 0.8,
     },
   )
   cfg.rewards["advance_continuous_rally_ball"] = RewardTermCfg(
@@ -1001,7 +1004,7 @@ def make_tennis_continuous_env_cfg(
     reduce="last",
     params={
       **dict(continuous_params),
-      "max_successful_returns": max_successful_returns,
+      "max_successful_returns": initial_successful_returns,
     },
   )
   cfg.metrics["in_recovery_rate"] = MetricsTermCfg(
@@ -1040,15 +1043,7 @@ def make_tennis_continuous_env_cfg(
     {
       "step": CONTINUOUS_RALLY_LENGTH_STAGE_STEPS[0],
       "params": {"max_successful_returns": initial_successful_returns},
-    },
-    {
-      "step": CONTINUOUS_RALLY_LENGTH_STAGE_STEPS[1],
-      "params": {"max_successful_returns": min(4, max_successful_returns)},
-    },
-    {
-      "step": CONTINUOUS_RALLY_LENGTH_STAGE_STEPS[2],
-      "params": {"max_successful_returns": max_successful_returns},
-    },
+    }
   ]
   cfg.curriculum["continuous_rally_length"] = CurriculumTermCfg(
     func=mdp.termination_curriculum,
@@ -1068,15 +1063,7 @@ def make_tennis_continuous_env_cfg(
     {
       "step": CONTINUOUS_RALLY_LENGTH_STAGE_STEPS[0],
       "params": {"recovery_time_range": CONTINUOUS_RECOVERY_INITIAL_TIME_RANGE},
-    },
-    {
-      "step": CONTINUOUS_RALLY_LENGTH_STAGE_STEPS[1],
-      "params": {"recovery_time_range": CONTINUOUS_RECOVERY_MID_TIME_RANGE},
-    },
-    {
-      "step": CONTINUOUS_RALLY_LENGTH_STAGE_STEPS[2],
-      "params": {"recovery_time_range": CONTINUOUS_RECOVERY_FINAL_TIME_RANGE},
-    },
+    }
   ]
   cfg.curriculum["continuous_wait_interval"] = CurriculumTermCfg(
     func=mdp.reward_curriculum,

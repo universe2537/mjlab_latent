@@ -8,6 +8,10 @@ Upcoming version (not yet released)
 Added
 ^^^^^
 
+- Added video recording support to ``play-distill.py`` through ``--video``,
+  ``--video-length``, ``--video-height``, and ``--video-width``. Recorded mp4s
+  are written under the selected checkpoint run directory in
+  ``videos/play-distill``.
 - Added ``Mjlab-Velocity-Stairs-Unitree-Go1``, a Go1 velocity task with a
   mixed ascending/descending pyramid-stair curriculum whose peak height grows
   to the robot's nominal body height, along with stair-specific reward shaping
@@ -131,6 +135,23 @@ Changed
   ``approach_ball`` shaping term with ``approach_point`` toward that future
   contact location, and raised the default registered court size from
   ``mini`` to ``quarter`` so G1 has room to reposition before contact.
+- Updated tennis actor ball-history observations to use ball position relative
+  to the robot torso/base instead of the racket center, keeping the same
+  observation dimension while making the policy input easier to reproduce from
+  real robot state estimation. Racket-relative quantities remain available to
+  the critic, rewards, and contact logic.
+- Simplified ``Mjlab-Tennis-Continuous`` phase observations to a three-way
+  one-hot phase vector, removing the recovery timer fraction and normalized
+  return-count from actor/critic observations. Tennis checkpoint migration can
+  now also truncate this small tail-only observation change when warm-starting
+  from an older Continuous checkpoint.
+- Tightened ``Mjlab-Tennis-Continuous`` opponent-half feed generation to reject
+  trajectories that only clear the mathematical net plane but would exceed the
+  configured apex height or graze the net volume, and held the Continuous rally
+  curriculum at two successful returns while recovery is being learned.
+- Changed ``Mjlab-Tennis-Continuous`` recovery shaping so standing still is
+  rewarded only near the ready position; farther away, the reward now favors
+  moving back toward court center.
 - Simplified ``Mjlab-Tennis-Hit`` ball reset logic to keep only the random
   feeder path, removing the unused fixed-spawn and ballistic-opponent ball
   provider variants.
@@ -166,6 +187,10 @@ Changed
 Fixed
 ^^^^^
 
+- Fixed tennis predicted hit-point selection when the incoming ball crosses the
+  hit-height plane twice. The predictor now prefers the descending
+  intersection, so ``predicted_hit_point`` and ``approach_point`` no longer
+  target the early upward crossing near the opponent feed.
 - Fixed ``ManagerBasedRlEnv`` initializing Warp on all visible CUDA devices
   even when constructed with ``device="cpu"``. ``seed_rng`` now accepts a
   ``device`` argument and skips ``wp.rand_init`` on CPU devices, so a

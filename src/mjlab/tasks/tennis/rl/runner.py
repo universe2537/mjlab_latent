@@ -73,19 +73,23 @@ def expand_mlp_input_for_observation(
   *,
   target_dim: int,
 ) -> bool:
-  """Expand an MLP policy/value input layer when new observations are appended."""
+  """Resize an MLP input layer for tail-appended or tail-truncated observations."""
   weight_key = _mlp_input_layer_key(model_state_dict)
   old_weight = model_state_dict[weight_key]
   current_dim = int(old_weight.shape[1])
   if current_dim == target_dim:
     return False
   if current_dim > target_dim:
-    raise ValueError(
-      f"Cannot migrate observation dim {current_dim} down to {target_dim}."
-    )
-
-  new_weight = old_weight.new_zeros((old_weight.shape[0], target_dim))
-  new_weight[:, :current_dim] = old_weight
+    removed_dim = current_dim - target_dim
+    if removed_dim > 2:
+      raise ValueError(
+        f"Cannot safely migrate observation dim {current_dim} down to "
+        f"{target_dim}; only small tail truncations are supported."
+      )
+    new_weight = old_weight[:, :target_dim].clone()
+  else:
+    new_weight = old_weight.new_zeros((old_weight.shape[0], target_dim))
+    new_weight[:, :current_dim] = old_weight
   model_state_dict[weight_key] = new_weight
 
   for key in ("obs_normalizer._mean", "obs_normalizer._var", "obs_normalizer._std"):
@@ -94,9 +98,12 @@ def expand_mlp_input_for_observation(
       continue
     if tensor.shape[-1] != current_dim:
       continue
-    fill_value = 0.0 if key.endswith("_mean") else 1.0
-    new_tensor = tensor.new_full((*tensor.shape[:-1], target_dim), fill_value)
-    new_tensor[..., :current_dim] = tensor
+    if current_dim > target_dim:
+      new_tensor = tensor[..., :target_dim].clone()
+    else:
+      fill_value = 0.0 if key.endswith("_mean") else 1.0
+      new_tensor = tensor.new_full((*tensor.shape[:-1], target_dim), fill_value)
+      new_tensor[..., :current_dim] = tensor
     model_state_dict[key] = new_tensor
   return True
 
