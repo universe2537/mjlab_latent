@@ -314,7 +314,17 @@ class TennisContinuousBallState:
     self.episode_landing_in_bounds_count = zeros_long()
     self.episode_net_contact_count = zeros_long()
     self.episode_invalid_feed_count = zeros_long()
+    self.episode_invalid_feed_net_count = zeros_long()
+    self.episode_invalid_feed_out_count = zeros_long()
+    self.episode_invalid_feed_opponent_bounce_count = zeros_long()
     self.episode_fault_count = zeros_long()
+    self.episode_fault_incoming_bounce_count = zeros_long()
+    self.episode_fault_return_bounce_out_count = zeros_long()
+    self.episode_fault_return_out_count = zeros_long()
+    self.episode_fault_net_contact_count = zeros_long()
+    self.episode_fault_extra_racket_count = zeros_long()
+    self.episode_fault_low_net_cross_count = zeros_long()
+    self.episode_recovery_ready_count = zeros_long()
 
     self.racket_hit_edge = zeros_bool()
     self.bounce_edge = zeros_bool()
@@ -324,11 +334,14 @@ class TennisContinuousBallState:
     self.net_contact_edge = zeros_bool()
     self.invalid_feed_edge = zeros_bool()
     self.fault_edge = zeros_bool()
+    self.recovery_ready_edge = zeros_bool()
     self.respawn_edge = zeros_bool()
 
     self.has_racket_hit = zeros_bool()
     self.has_crossed_net = zeros_bool()
     self.has_landed_in_bounds = zeros_bool()
+    self.has_recovery_ready = zeros_bool()
+    self.recovery_min_steps_left = zeros_long()
     self.recovery_steps_left = zeros_long()
     self.recovery_steps_total = zeros_long()
 
@@ -336,6 +349,7 @@ class TennisContinuousBallState:
     self._prev_net_contact = zeros_bool()
     self._prev_vz = zeros_float()
     self._prev_x = zeros_float()
+    self._prev_z = zeros_float()
     self.prev_ball_x = zeros_float()
 
   def reset(self, env_ids: torch.Tensor | slice | None = None) -> None:
@@ -347,7 +361,17 @@ class TennisContinuousBallState:
     self.episode_landing_in_bounds_count[env_ids] = 0
     self.episode_net_contact_count[env_ids] = 0
     self.episode_invalid_feed_count[env_ids] = 0
+    self.episode_invalid_feed_net_count[env_ids] = 0
+    self.episode_invalid_feed_out_count[env_ids] = 0
+    self.episode_invalid_feed_opponent_bounce_count[env_ids] = 0
     self.episode_fault_count[env_ids] = 0
+    self.episode_fault_incoming_bounce_count[env_ids] = 0
+    self.episode_fault_return_bounce_out_count[env_ids] = 0
+    self.episode_fault_return_out_count[env_ids] = 0
+    self.episode_fault_net_contact_count[env_ids] = 0
+    self.episode_fault_extra_racket_count[env_ids] = 0
+    self.episode_fault_low_net_cross_count[env_ids] = 0
+    self.episode_recovery_ready_count[env_ids] = 0
     self.reset_ball(env_ids)
     self._last_step = -1
 
@@ -366,16 +390,20 @@ class TennisContinuousBallState:
     self.net_contact_edge[env_ids] = False
     self.invalid_feed_edge[env_ids] = False
     self.fault_edge[env_ids] = False
+    self.recovery_ready_edge[env_ids] = False
     self.respawn_edge[env_ids] = False
     self.has_racket_hit[env_ids] = False
     self.has_crossed_net[env_ids] = False
     self.has_landed_in_bounds[env_ids] = False
+    self.has_recovery_ready[env_ids] = False
+    self.recovery_min_steps_left[env_ids] = 0
     self.recovery_steps_left[env_ids] = 0
     self.recovery_steps_total[env_ids] = 0
     self._prev_racket_contact[env_ids] = False
     self._prev_net_contact[env_ids] = False
     self._prev_vz[env_ids] = 0.0
     self._prev_x[env_ids] = 0.0
+    self._prev_z[env_ids] = 0.0
     self.prev_ball_x[env_ids] = 0.0
 
   @property
@@ -400,6 +428,7 @@ class TennisContinuousBallState:
     ball_z = ball_pos[:, 2]
     ball_vz = ball_vel[:, 2]
     prev_x = self._prev_x.clone()
+    prev_z = self._prev_z.clone()
 
     racket_contact_now = _sensor_contact_now(
       self._env,
@@ -424,15 +453,18 @@ class TennisContinuousBallState:
 
     racket_hit_edge = racket_contact_edge & active_ball
     first_hit_edge = racket_hit_edge & incoming
+    incoming_without_hit = incoming & ~first_hit_edge
+    return_flight_now = return_flight | first_hit_edge
     extra_racket_edge = racket_hit_edge & return_flight & self.has_racket_hit
     net_contact_active_edge = net_contact_edge & active_ball
 
     crossed_to_opp = (prev_x > self.net_x) & (ball_x <= self.net_x)
-    low_net_cross = crossed_to_opp & return_flight & (ball_z < self.net_height)
+    z_at_net = self._interpolate_net_z(prev_x, ball_x, prev_z, ball_z)
+    low_net_cross = crossed_to_opp & return_flight_now & (z_at_net < self.net_height)
     crossed_net_edge = (
       crossed_to_opp
-      & return_flight
-      & (ball_z >= self.net_height)
+      & return_flight_now
+      & (z_at_net >= self.net_height)
       & ~self.has_crossed_net
     )
     has_crossed_now = self.has_crossed_net | crossed_net_edge
@@ -440,24 +472,28 @@ class TennisContinuousBallState:
     landing_in_bounds = self._landing_in_bounds(ball_x, ball_y)
     successful_return_edge = (
       bounce_edge
-      & return_flight
+      & return_flight_now
       & has_crossed_now
       & landing_in_bounds
       & ~self.has_landed_in_bounds
     )
-    landing_failed = bounce_edge & return_flight & ~successful_return_edge
+    landing_failed = bounce_edge & return_flight_now & ~successful_return_edge
 
-    incoming_bounce_fault = bounce_edge & incoming & (ball_x > self.net_x)
-    incoming_invalid_feed = (net_contact_active_edge | out_of_play) & incoming
-    opponent_side_bounce = bounce_edge & incoming & (ball_x <= self.net_x)
-    invalid_feed_edge = incoming_invalid_feed | opponent_side_bounce
+    incoming_bounce_fault = bounce_edge & incoming_without_hit & (ball_x > self.net_x)
+    incoming_net_invalid = net_contact_active_edge & incoming_without_hit
+    incoming_out_invalid = out_of_play & incoming_without_hit
+    opponent_side_bounce = bounce_edge & incoming_without_hit & (ball_x <= self.net_x)
+    invalid_feed_edge = (
+      incoming_net_invalid | incoming_out_invalid | opponent_side_bounce
+    )
 
-    return_out = out_of_play & return_flight & ~successful_return_edge
+    return_out = out_of_play & return_flight_now & ~successful_return_edge
+    return_net_contact = net_contact_active_edge & return_flight_now
     fault_edge = (
       incoming_bounce_fault
       | landing_failed
       | return_out
-      | (net_contact_active_edge & return_flight)
+      | return_net_contact
       | extra_racket_edge
       | low_net_cross
     )
@@ -480,7 +516,16 @@ class TennisContinuousBallState:
     self.episode_landing_in_bounds_count += successful_return_edge.long()
     self.episode_net_contact_count += net_contact_active_edge.long()
     self.episode_invalid_feed_count += invalid_feed_edge.long()
+    self.episode_invalid_feed_net_count += incoming_net_invalid.long()
+    self.episode_invalid_feed_out_count += incoming_out_invalid.long()
+    self.episode_invalid_feed_opponent_bounce_count += opponent_side_bounce.long()
     self.episode_fault_count += fault_edge.long()
+    self.episode_fault_incoming_bounce_count += incoming_bounce_fault.long()
+    self.episode_fault_return_bounce_out_count += landing_failed.long()
+    self.episode_fault_return_out_count += return_out.long()
+    self.episode_fault_net_contact_count += return_net_contact.long()
+    self.episode_fault_extra_racket_count += extra_racket_edge.long()
+    self.episode_fault_low_net_cross_count += low_net_cross.long()
 
     self.has_racket_hit |= first_hit_edge
     self.has_crossed_net |= crossed_net_edge
@@ -491,7 +536,7 @@ class TennisContinuousBallState:
       incoming_bounce_fault,
       landing_failed,
       return_out,
-      net_contact_active_edge & return_flight,
+      return_net_contact,
       extra_racket_edge,
       low_net_cross,
     )
@@ -502,6 +547,7 @@ class TennisContinuousBallState:
     self._prev_vz[:] = ball_vz
     self.prev_ball_x[:] = prev_x
     self._prev_x[:] = ball_x
+    self._prev_z[:] = ball_z
     self._last_step = step
 
   def _clear_step_edges(self) -> None:
@@ -513,6 +559,7 @@ class TennisContinuousBallState:
     self.net_contact_edge[:] = False
     self.invalid_feed_edge[:] = False
     self.fault_edge[:] = False
+    self.recovery_ready_edge[:] = False
     self.respawn_edge[:] = False
 
   def _out_of_play(
@@ -540,6 +587,22 @@ class TennisContinuousBallState:
         ball_y <= self.landing_y_limits[1]
       )
     return landing_in_bounds
+
+  def _interpolate_net_z(
+    self,
+    prev_x: torch.Tensor,
+    ball_x: torch.Tensor,
+    prev_z: torch.Tensor,
+    ball_z: torch.Tensor,
+  ) -> torch.Tensor:
+    dx = ball_x - prev_x
+    safe_dx = torch.where(
+      torch.abs(dx) > 1.0e-6,
+      dx,
+      torch.full_like(dx, -1.0e-6),
+    )
+    alpha = ((self.net_x - prev_x) / safe_dx).clamp(0.0, 1.0)
+    return prev_z + alpha * (ball_z - prev_z)
 
   def _fault_reason(
     self,
@@ -587,12 +650,15 @@ class TennisContinuousBallState:
     self,
     env_ids: torch.Tensor,
     recovery_time_range: tuple[float, float],
+    min_recovery_time: float = 1.0,
   ) -> None:
     if env_ids.numel() == 0:
       return
     lo_s, hi_s = recovery_time_range
     lo_steps = max(1, int(math.ceil(lo_s / self._env.step_dt)))
     hi_steps = max(lo_steps, int(math.ceil(hi_s / self._env.step_dt)))
+    min_steps = max(1, int(math.ceil(min_recovery_time / self._env.step_dt)))
+    min_steps = min(min_steps, hi_steps)
     steps = torch.randint(
       lo_steps,
       hi_steps + 1,
@@ -600,6 +666,8 @@ class TennisContinuousBallState:
       dtype=torch.long,
       device=self._env.device,
     )
+    steps = torch.maximum(steps, torch.full_like(steps, min_steps))
+    self.recovery_min_steps_left[env_ids] = min_steps
     self.recovery_steps_left[env_ids] = steps
     self.recovery_steps_total[env_ids] = steps
 
@@ -608,10 +676,21 @@ class TennisContinuousBallState:
       active_mask = self.in_recovery
     active_mask = active_mask & self.in_recovery & (self.recovery_steps_left > 0)
     if torch.any(active_mask):
+      self.recovery_min_steps_left[active_mask] = torch.clamp(
+        self.recovery_min_steps_left[active_mask] - 1,
+        min=0,
+      )
       self.recovery_steps_left[active_mask] -= 1
     ready = active_mask & (self.recovery_steps_left <= 0)
     self.recovery_steps_left[ready] = 0
     return ready
+
+  def mark_recovery_ready(self, ready_mask: torch.Tensor) -> torch.Tensor:
+    edge = ready_mask & self.in_recovery & ~self.has_recovery_ready
+    self.recovery_ready_edge[:] = edge
+    self.has_recovery_ready |= edge
+    self.episode_recovery_ready_count += edge.long()
+    return edge
 
 
 def get_tennis_continuous_ball_state(
@@ -923,6 +1002,69 @@ class continuous_post_hit_ball_velocity_direction(TennisContinuousBallStateTerm)
     return x_reward * lateral_weight * active.float()
 
 
+def _continuous_recovery_home_terms(
+  env: "ManagerBasedRlEnv",
+  *,
+  racket_cfg: SceneEntityCfg,
+  robot_cfg: SceneEntityCfg,
+  target_x: float,
+  target_y: float,
+  target_heading: float,
+  base_pos_std: float,
+  heading_std: float,
+  lin_vel_std: float,
+  upright_std: float,
+  move_speed_scale: float,
+  racket_target_b: tuple[float, float, float],
+  racket_std: float,
+  ready_pos_threshold: float,
+  ready_heading_threshold: float,
+  ready_speed_threshold: float,
+  ready_upright_threshold: float,
+  ready_racket_threshold: float,
+) -> tuple[torch.Tensor, torch.Tensor]:
+  robot: Entity = env.scene[robot_cfg.name]
+  base_pos_l = robot.data.root_link_pos_w - env.scene.env_origins
+  target_xy = torch.tensor((target_x, target_y), dtype=torch.float32, device=env.device)
+  to_home_xy = target_xy.unsqueeze(0) - base_pos_l[:, :2]
+  base_xy_error = torch.sum(torch.square(to_home_xy), dim=1)
+  base_reward = torch.exp(-base_xy_error / base_pos_std**2)
+
+  heading_error = wrap_to_pi(robot.data.heading_w - target_heading)
+  heading_reward = torch.exp(-torch.square(heading_error) / heading_std**2)
+
+  lin_vel_xy_b = torch.sum(torch.square(robot.data.root_link_lin_vel_b[:, :2]), dim=1)
+  still_reward = torch.exp(-lin_vel_xy_b / lin_vel_std**2)
+  dist_to_home = torch.sqrt(base_xy_error.clamp_min(1.0e-8))
+  home_dir = to_home_xy / dist_to_home.unsqueeze(-1).clamp_min(1.0e-4)
+  vel_to_home = torch.sum(robot.data.root_link_lin_vel_w[:, :2] * home_dir, dim=1)
+  move_reward = torch.clamp(vel_to_home / move_speed_scale, min=0.0, max=1.0)
+
+  upright_error = torch.sum(torch.square(robot.data.projected_gravity_b[:, :2]), dim=1)
+  upright_reward = torch.exp(-upright_error / upright_std**2)
+
+  racket_pos_w = robot.data.site_pos_w[:, racket_cfg.site_ids].squeeze(1)
+  racket_delta_w = racket_pos_w - robot.data.root_link_pos_w
+  racket_pos_b = quat_apply_inverse(robot.data.root_link_quat_w, racket_delta_w)
+  racket_target = torch.tensor(racket_target_b, dtype=torch.float32, device=env.device)
+  racket_error = torch.sum(torch.square(racket_pos_b - racket_target), dim=1)
+  racket_reward = torch.exp(-racket_error / racket_std**2)
+
+  ready_reward = (
+    base_reward + heading_reward + still_reward + upright_reward + racket_reward
+  ) / 5.0
+  far_reward = 0.75 * move_reward + 0.25 * base_reward
+  reward = (1.0 - base_reward) * far_reward + base_reward * ready_reward
+  ready = (
+    (dist_to_home <= ready_pos_threshold)
+    & (torch.abs(heading_error) <= ready_heading_threshold)
+    & (torch.sqrt(lin_vel_xy_b) <= ready_speed_threshold)
+    & (torch.sqrt(upright_error) <= ready_upright_threshold)
+    & (torch.sqrt(racket_error) <= ready_racket_threshold)
+  )
+  return reward, ready
+
+
 class continuous_recovery_ready_pose_state(TennisContinuousBallStateTerm):
   """Reward returning to a stable ready pose between successful returns."""
 
@@ -944,6 +1086,11 @@ class continuous_recovery_ready_pose_state(TennisContinuousBallStateTerm):
     move_speed_scale: float = 1.0,
     racket_target_b: tuple[float, float, float] = (0.35, -0.35, 0.25),
     racket_std: float = 0.6,
+    ready_pos_threshold: float = 0.45,
+    ready_heading_threshold: float = 0.5,
+    ready_speed_threshold: float = 0.45,
+    ready_upright_threshold: float = 0.3,
+    ready_racket_threshold: float = 0.65,
     **_: object,
   ) -> torch.Tensor:
     state = self.state
@@ -951,45 +1098,81 @@ class continuous_recovery_ready_pose_state(TennisContinuousBallStateTerm):
     if not torch.any(active > 0.0):
       return active
 
-    robot: Entity = env.scene[robot_cfg.name]
-    base_pos_l = robot.data.root_link_pos_w - env.scene.env_origins
-    target_xy = torch.tensor(
-      (target_x, target_y), dtype=torch.float32, device=env.device
+    reward_values, _ready_unused = _continuous_recovery_home_terms(
+      env,
+      racket_cfg=racket_cfg,
+      robot_cfg=robot_cfg,
+      target_x=target_x,
+      target_y=target_y,
+      target_heading=target_heading,
+      base_pos_std=base_pos_std,
+      heading_std=heading_std,
+      lin_vel_std=lin_vel_std,
+      upright_std=upright_std,
+      move_speed_scale=move_speed_scale,
+      racket_target_b=racket_target_b,
+      racket_std=racket_std,
+      ready_pos_threshold=ready_pos_threshold,
+      ready_heading_threshold=ready_heading_threshold,
+      ready_speed_threshold=ready_speed_threshold,
+      ready_upright_threshold=ready_upright_threshold,
+      ready_racket_threshold=ready_racket_threshold,
     )
-    to_home_xy = target_xy.unsqueeze(0) - base_pos_l[:, :2]
-    base_xy_error = torch.sum(torch.square(to_home_xy), dim=1)
-    base_reward = torch.exp(-base_xy_error / base_pos_std**2)
+    return reward_values * active
 
-    heading_error = wrap_to_pi(robot.data.heading_w - target_heading)
-    heading_reward = torch.exp(-torch.square(heading_error) / heading_std**2)
 
-    lin_vel_xy = torch.sum(torch.square(robot.data.root_link_lin_vel_b[:, :2]), dim=1)
-    still_reward = torch.exp(-lin_vel_xy / lin_vel_std**2)
-    dist_to_home = torch.sqrt(base_xy_error.clamp_min(1.0e-8))
-    home_dir = to_home_xy / dist_to_home.unsqueeze(-1).clamp_min(1.0e-4)
-    vel_to_home = torch.sum(robot.data.root_link_lin_vel_w[:, :2] * home_dir, dim=1)
-    move_reward = torch.clamp(vel_to_home / move_speed_scale, min=0.0, max=1.0)
+class continuous_recovery_ready_event(TennisContinuousBallStateTerm):
+  """Sparse reward when the robot first reaches the ready pose in recovery."""
 
-    upright_error = torch.sum(
-      torch.square(robot.data.projected_gravity_b[:, :2]), dim=1
+  def __init__(self, cfg: RewardTermCfg, env: "ManagerBasedRlEnv") -> None:
+    super().__init__(cfg, env)
+
+  def __call__(
+    self,
+    env: "ManagerBasedRlEnv",
+    racket_cfg: SceneEntityCfg = _DEFAULT_RACKET_CFG,
+    robot_cfg: SceneEntityCfg = _DEFAULT_ROBOT_CFG,
+    target_x: float = 3.4,
+    target_y: float = 0.0,
+    target_heading: float = math.pi,
+    base_pos_std: float = 0.6,
+    heading_std: float = 0.7,
+    lin_vel_std: float = 0.8,
+    upright_std: float = 0.35,
+    move_speed_scale: float = 1.0,
+    racket_target_b: tuple[float, float, float] = (0.35, -0.35, 0.25),
+    racket_std: float = 0.6,
+    ready_pos_threshold: float = 0.45,
+    ready_heading_threshold: float = 0.5,
+    ready_speed_threshold: float = 0.45,
+    ready_upright_threshold: float = 0.3,
+    ready_racket_threshold: float = 0.65,
+    **_: object,
+  ) -> torch.Tensor:
+    state = self.state
+    if not torch.any(state.in_recovery):
+      return torch.zeros(env.num_envs, device=env.device)
+    _reward_unused, ready = _continuous_recovery_home_terms(
+      env,
+      racket_cfg=racket_cfg,
+      robot_cfg=robot_cfg,
+      target_x=target_x,
+      target_y=target_y,
+      target_heading=target_heading,
+      base_pos_std=base_pos_std,
+      heading_std=heading_std,
+      lin_vel_std=lin_vel_std,
+      upright_std=upright_std,
+      move_speed_scale=move_speed_scale,
+      racket_target_b=racket_target_b,
+      racket_std=racket_std,
+      ready_pos_threshold=ready_pos_threshold,
+      ready_heading_threshold=ready_heading_threshold,
+      ready_speed_threshold=ready_speed_threshold,
+      ready_upright_threshold=ready_upright_threshold,
+      ready_racket_threshold=ready_racket_threshold,
     )
-    upright_reward = torch.exp(-upright_error / upright_std**2)
-
-    racket_pos_w = robot.data.site_pos_w[:, racket_cfg.site_ids].squeeze(1)
-    racket_delta_w = racket_pos_w - robot.data.root_link_pos_w
-    racket_pos_b = quat_apply_inverse(robot.data.root_link_quat_w, racket_delta_w)
-    racket_target = torch.tensor(
-      racket_target_b, dtype=torch.float32, device=env.device
-    )
-    racket_error = torch.sum(torch.square(racket_pos_b - racket_target), dim=1)
-    racket_reward = torch.exp(-racket_error / racket_std**2)
-
-    ready_reward = (
-      base_reward + heading_reward + still_reward + upright_reward + racket_reward
-    ) / 5.0
-    far_reward = 0.75 * move_reward + 0.25 * base_reward
-    reward = (1.0 - base_reward) * far_reward + base_reward * ready_reward
-    return reward * active
+    return state.mark_recovery_ready(ready).float()
 
 
 class advance_continuous_rally_ball(TennisContinuousBallStateTerm):
@@ -1004,6 +1187,24 @@ class advance_continuous_rally_ball(TennisContinuousBallStateTerm):
     provider_cfg: OpponentFeederCfg,
     max_successful_returns: int = 8,
     recovery_time_range: tuple[float, float] = (3.0, 5.0),
+    min_recovery_time: float = 1.0,
+    racket_cfg: SceneEntityCfg = _DEFAULT_RACKET_CFG,
+    robot_cfg: SceneEntityCfg = _DEFAULT_ROBOT_CFG,
+    target_x: float = 3.4,
+    target_y: float = 0.0,
+    target_heading: float = math.pi,
+    base_pos_std: float = 0.6,
+    heading_std: float = 0.7,
+    lin_vel_std: float = 0.8,
+    upright_std: float = 0.35,
+    move_speed_scale: float = 1.0,
+    racket_target_b: tuple[float, float, float] = (0.35, -0.35, 0.25),
+    racket_std: float = 0.6,
+    ready_pos_threshold: float = 0.45,
+    ready_heading_threshold: float = 0.5,
+    ready_speed_threshold: float = 0.45,
+    ready_upright_threshold: float = 0.3,
+    ready_racket_threshold: float = 0.65,
     **_: object,
   ) -> torch.Tensor:
     state = self.state
@@ -1016,10 +1217,37 @@ class advance_continuous_rally_ball(TennisContinuousBallStateTerm):
     )
     start_env_ids = should_start.nonzero(as_tuple=False).flatten()
     if start_env_ids.numel() > 0:
-      state.start_recovery(start_env_ids, recovery_time_range)
+      state.start_recovery(start_env_ids, recovery_time_range, min_recovery_time)
 
-    ready = state.step_recovery(active_before)
-    respawn = ready | state.invalid_feed_edge
+    timed_out = state.step_recovery(active_before)
+    _reward_unused, ready_pose = _continuous_recovery_home_terms(
+      env,
+      racket_cfg=racket_cfg,
+      robot_cfg=robot_cfg,
+      target_x=target_x,
+      target_y=target_y,
+      target_heading=target_heading,
+      base_pos_std=base_pos_std,
+      heading_std=heading_std,
+      lin_vel_std=lin_vel_std,
+      upright_std=upright_std,
+      move_speed_scale=move_speed_scale,
+      racket_target_b=racket_target_b,
+      racket_std=racket_std,
+      ready_pos_threshold=ready_pos_threshold,
+      ready_heading_threshold=ready_heading_threshold,
+      ready_speed_threshold=ready_speed_threshold,
+      ready_upright_threshold=ready_upright_threshold,
+      ready_racket_threshold=ready_racket_threshold,
+    )
+    can_respawn_ready = (
+      active_before
+      & state.in_recovery
+      & (state.recovery_min_steps_left <= 0)
+      & ready_pose
+    )
+    state.mark_recovery_ready(can_respawn_ready)
+    respawn = can_respawn_ready | timed_out | state.invalid_feed_edge
     respawn_env_ids = respawn.nonzero(as_tuple=False).flatten()
     if respawn_env_ids.numel() > 0:
       spawn_ball_from_provider(env, respawn_env_ids, provider_cfg=provider_cfg)
@@ -1103,12 +1331,92 @@ def continuous_invalid_feed_count_metric(
   return state.episode_invalid_feed_count.float()
 
 
+def continuous_invalid_feed_net_count_metric(
+  env: "ManagerBasedRlEnv", **params: object
+) -> torch.Tensor:
+  state = get_tennis_continuous_ball_state(env, **params)  # type: ignore[arg-type]
+  state.update()
+  return state.episode_invalid_feed_net_count.float()
+
+
+def continuous_invalid_feed_out_count_metric(
+  env: "ManagerBasedRlEnv", **params: object
+) -> torch.Tensor:
+  state = get_tennis_continuous_ball_state(env, **params)  # type: ignore[arg-type]
+  state.update()
+  return state.episode_invalid_feed_out_count.float()
+
+
+def continuous_invalid_feed_opponent_bounce_count_metric(
+  env: "ManagerBasedRlEnv", **params: object
+) -> torch.Tensor:
+  state = get_tennis_continuous_ball_state(env, **params)  # type: ignore[arg-type]
+  state.update()
+  return state.episode_invalid_feed_opponent_bounce_count.float()
+
+
 def continuous_fault_count_metric(
   env: "ManagerBasedRlEnv", **params: object
 ) -> torch.Tensor:
   state = get_tennis_continuous_ball_state(env, **params)  # type: ignore[arg-type]
   state.update()
   return state.episode_fault_count.float()
+
+
+def continuous_fault_incoming_bounce_count_metric(
+  env: "ManagerBasedRlEnv", **params: object
+) -> torch.Tensor:
+  state = get_tennis_continuous_ball_state(env, **params)  # type: ignore[arg-type]
+  state.update()
+  return state.episode_fault_incoming_bounce_count.float()
+
+
+def continuous_fault_return_bounce_out_count_metric(
+  env: "ManagerBasedRlEnv", **params: object
+) -> torch.Tensor:
+  state = get_tennis_continuous_ball_state(env, **params)  # type: ignore[arg-type]
+  state.update()
+  return state.episode_fault_return_bounce_out_count.float()
+
+
+def continuous_fault_return_out_count_metric(
+  env: "ManagerBasedRlEnv", **params: object
+) -> torch.Tensor:
+  state = get_tennis_continuous_ball_state(env, **params)  # type: ignore[arg-type]
+  state.update()
+  return state.episode_fault_return_out_count.float()
+
+
+def continuous_fault_net_contact_count_metric(
+  env: "ManagerBasedRlEnv", **params: object
+) -> torch.Tensor:
+  state = get_tennis_continuous_ball_state(env, **params)  # type: ignore[arg-type]
+  state.update()
+  return state.episode_fault_net_contact_count.float()
+
+
+def continuous_fault_extra_racket_count_metric(
+  env: "ManagerBasedRlEnv", **params: object
+) -> torch.Tensor:
+  state = get_tennis_continuous_ball_state(env, **params)  # type: ignore[arg-type]
+  state.update()
+  return state.episode_fault_extra_racket_count.float()
+
+
+def continuous_fault_low_net_cross_count_metric(
+  env: "ManagerBasedRlEnv", **params: object
+) -> torch.Tensor:
+  state = get_tennis_continuous_ball_state(env, **params)  # type: ignore[arg-type]
+  state.update()
+  return state.episode_fault_low_net_cross_count.float()
+
+
+def continuous_recovery_ready_count_metric(
+  env: "ManagerBasedRlEnv", **params: object
+) -> torch.Tensor:
+  state = get_tennis_continuous_ball_state(env, **params)  # type: ignore[arg-type]
+  state.update()
+  return state.episode_recovery_ready_count.float()
 
 
 def continuous_success_ratio_metric_state(
@@ -1151,8 +1459,17 @@ __all__ = [
   "continuous_crossed_net_count_metric",
   "continuous_crossed_net_event",
   "continuous_fault_count_metric",
+  "continuous_fault_extra_racket_count_metric",
+  "continuous_fault_incoming_bounce_count_metric",
+  "continuous_fault_low_net_cross_count_metric",
+  "continuous_fault_net_contact_count_metric",
+  "continuous_fault_return_bounce_out_count_metric",
+  "continuous_fault_return_out_count_metric",
   "continuous_in_recovery_metric_state",
   "continuous_invalid_feed_count_metric",
+  "continuous_invalid_feed_net_count_metric",
+  "continuous_invalid_feed_opponent_bounce_count_metric",
+  "continuous_invalid_feed_out_count_metric",
   "continuous_landing_in_bounds_count_metric",
   "continuous_landing_in_bounds_event",
   "continuous_net_contact_count_metric",
@@ -1163,6 +1480,8 @@ __all__ = [
   "continuous_racket_to_predicted_hit_point_dense",
   "continuous_racket_towards_ball_velocity",
   "continuous_rally_complete_state",
+  "continuous_recovery_ready_count_metric",
+  "continuous_recovery_ready_event",
   "continuous_recovery_ready_pose_state",
   "continuous_success_ratio_metric_state",
   "continuous_successful_return_count_metric",

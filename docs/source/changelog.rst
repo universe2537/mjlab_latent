@@ -8,6 +8,9 @@ Upcoming version (not yet released)
 Added
 ^^^^^
 
+- Added ``data_reference.html`` documenting the observed raw bones-seed /
+  SOMA-BVH pickle motion schema, joint/body ordering, and how it differs from
+  mjlab's CSV preprocessing input and final tracking ``motion.npz`` format.
 - Added video recording support to ``play-distill.py`` through ``--video``,
   ``--video-length``, ``--video-height``, and ``--video-width``. Recorded mp4s
   are written under the selected checkpoint run directory in
@@ -130,6 +133,18 @@ Changed
   post-return pause from ``3-5s`` to ``0.3-0.5s``. Continuous now warm-starts
   from Cross weights while resetting checkpoint iteration and environment
   progress so easy curriculum stages are not skipped.
+- Raised the ``Mjlab-Tennis-Continuous`` ball-flight z out-of-play ceiling to
+  ``15m`` so high but valid-looking return arcs are not reset before their
+  first landing, while keeping opponent-feed apex sampling capped near the
+  previous value.
+- Changed ``Mjlab-Tennis-Continuous`` net-crossing height checks to interpolate
+  the ball height at the net plane from consecutive control frames. Near-net
+  returns are no longer marked as low net crossings only because the sampled
+  post-crossing frame has already dropped below net height.
+- Fixed same-control-step ``Mjlab-Tennis-Continuous`` event classification so a
+  first racket hit followed immediately by crossing, net contact, out-of-play,
+  or bounce is handled as return flight instead of being treated as an incoming
+  feed event.
 - Updated ``Mjlab-Tennis-Hit`` high-level observations to expose a predicted
   waist-height hit point with ``time_to_hit``, replaced the dense
   ``approach_ball`` shaping term with ``approach_point`` toward that future
@@ -152,6 +167,10 @@ Changed
 - Changed ``Mjlab-Tennis-Continuous`` recovery shaping so standing still is
   rewarded only near the ready position; farther away, the reward now favors
   moving back toward court center.
+- Added detailed ``Mjlab-Tennis-Continuous`` diagnostics for invalid-feed and
+  ball-fault reasons, plus a recovery-ready event/metric. Continuous respawn now
+  waits for a minimum recovery time and then requires the robot to reach the
+  ready pose, falling back to the maximum wait timeout if it never gets ready.
 - Simplified ``Mjlab-Tennis-Hit`` ball reset logic to keep only the random
   feeder path, removing the unused fixed-spawn and ballistic-opponent ball
   provider variants.

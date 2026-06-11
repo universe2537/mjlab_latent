@@ -297,6 +297,65 @@
       (<code>~10.7</code>), so the next change should split invalid-feed/fault
       reasons and make respawn depend on being near the recovery target.
     </li>
+    <li>
+      After checkpoint commit <code>7eb83d2</code>, Continuous gained detailed
+      invalid-feed metrics (<code>net</code>, <code>out</code>,
+      <code>opponent_bounce</code>) and fault metrics
+      (<code>incoming_bounce</code>, <code>return_bounce_out</code>,
+      <code>return_out</code>, <code>net_contact</code>,
+      <code>extra_racket</code>, <code>low_net_cross</code>). It also now logs a
+      <code>recovery_ready_count</code> and rewards
+      <code>continuous_recovery_ready_event</code>. The next feed waits for a
+      minimum recovery time, then respawns when the ready pose is reached, or
+      falls back to the maximum wait timeout.
+    </li>
+    <li>
+      A new run was launched on GPU2 from
+      <code>tennis_continuous_recovery_gated_from_25000_2026-05-31_00-18-12/model_1500.pt</code>:
+      <code>logs/rsl_rl/g1_tennis_latent_continuous/tennis_continuous_ready_gated_from_1500_2026-06-01_17-18-36</code>.
+      Watch the new reason metrics first; the desired pattern is
+      <code>recovery_ready_count</code> rising, <code>continuous_rally_complete</code>
+      rising, and invalid/fault reason counts identifying one dominant failure
+      mode to fix next.
+    </li>
+    <li>
+      By 2026-06-02 around iteration <code>18622/40000</code>, the
+      ready-gated run was still writing logs and had saved
+      <code>model_18500.pt</code>. It improved over the short
+      <code>model_1500.pt</code> parent run: <code>successful_return_count</code>
+      was about <code>0.86</code>, <code>continuous_success_ratio</code> about
+      <code>0.43</code>, <code>continuous_rally_complete</code> around
+      <code>3.5</code>, and <code>invalid_feed_count</code> down to about
+      <code>0.08</code>. Detailed diagnostics show the dominant remaining
+      failure is returned balls going out of play
+      (<code>fault_return_out_count ~= 0.70</code>), not bad opponent feeds.
+      Next fixes should focus on post-hit return/landing control rather than
+      feeder generation.
+    </li>
+    <li>
+      Continuous return-flight out-of-play now allows ball height up to
+      <code>15m</code> via <code>CONTINUOUS_OUT_Z_LIMITS</code>. This is meant
+      to avoid resetting high return arcs before their first bounce when they
+      visually look like they will land on the opponent side. Opponent feed
+      generation is intentionally still capped near the old apex
+      (<code>CONTINUOUS_FEED_MAX_APEX_Z = 3.95</code>) so serves do not become
+      unrealistically tall.
+    </li>
+    <li>
+      Continuous net-crossing height is now evaluated by interpolating the
+      ball height at the <code>x = 0</code> net plane between consecutive
+      control frames. This avoids misclassifying near-net opponent-side
+      landings as <code>low_net_cross</code> just because the sampled frame
+      after crossing has already fallen below net height.
+    </li>
+    <li>
+      Continuous same-control-step event classification is a subtle source of
+      visual/reset disagreement. If the first racket hit and over-net crossing
+      happen inside the same control step, that step is now treated as return
+      flight, so the crossing can be counted and a later in-bounds bounce can
+      succeed. Same-step post-hit net contact/out-of-play/bounce are likewise
+      classified as return faults, not invalid opponent feeds.
+    </li>
   </ul>
 
   <h2>Rendering Notes</h2>

@@ -89,7 +89,7 @@ def unitree_g1_tennis_hit_lab_ppo_runner_cfg() -> TennisLatentOnPolicyRunnerCfg:
   """Create PPO config for the G1 tennis Hit-LAB task."""
   cfg = unitree_g1_tennis_latent_ppo_runner_cfg(
     experiment_name="g1_tennis_latent_hit_lab",
-    run_name="tennis_hit_lab_scratch",
+    run_name="tennis_hit_lab_scratch", 
   )
   cfg.algorithm.entropy_coef = 0.003
   return cfg

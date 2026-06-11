@@ -34,7 +34,8 @@ MUJOCO_GL=egl uv run play Mjlab-Tennis-Cross-LAB-Unitree-G1 --checkpoint-file lo
 
 # Continuous
 uv run train Mjlab-Tennis-Hit-Continuous-Unitree-G1 --env.scene.num_envs 4096 --gpu-ids [4,5,6]
-uv run play Mjlab-Tennis-Continuous-Unitree-G1 --checkpoint-file logs/rsl_rl/g1_tennis_latent_continuous/tennis_continuous_from_cross_2026-05-28_16-47-00/model_39999.pt --viewer viser
+uv run play Mjlab-Tennis-Continuous-Unitree-G1 --checkpoint-file uv run train Mjlab-Tennis-Hit-Continuous-Unitree-G1 --env.scene.num_envs 4096 --gpu-ids [4,5,6]
+uv run play Mjlab-Tennis-Continuous-Unitree-G1 --checkpoint-file logs/rsl_rl/g1_tennis_latent_continuous/tennis_continuous_ready_gated_from_1500_2026-06-01_17-18-36/model_33000.pt --viewer viser
 MUJOCO_GL=egl uv run play Mjlab-Tennis-Continuous-Unitree-G1 --checkpoint-file logs/rsl_rl/g1_tennis_latent_continuous/tennis_continuous_from_cross_2026-05-27_14-37-48/model_68500.pt --video True --video-length 2000
 
 # SONIC

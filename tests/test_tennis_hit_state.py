@@ -13,6 +13,7 @@ from mjlab.tasks.tennis.mdp.ball_state import (
   OpponentFeederCfg,
   TennisContinuousBallState,
   continuous_ball_phase,
+  continuous_recovery_ready_event,
   continuous_recovery_ready_pose_state,
 )
 from mjlab.tasks.tennis.mdp.hit_state import TennisHitTracker
@@ -358,6 +359,94 @@ def test_continuous_ball_state_counts_successful_air_return() -> None:
   assert not state.fault_edge[0]
 
 
+def test_continuous_net_cross_uses_interpolated_height_near_net() -> None:
+  env, ball, racket_sensor, _ = _make_continuous_env()
+  state = _make_continuous_state(env)
+
+  state.update()
+
+  env.common_step_counter = 1
+  ball.data.root_link_pos_w[:] = torch.tensor([[0.1, 0.0, 2.0]])
+  ball.data.root_link_lin_vel_w[:] = torch.tensor([[-3.0, 0.0, -1.0]])
+  racket_sensor.data.force[:] = 5.0
+  state.update()
+  assert state.racket_hit_edge[0]
+  assert state.phase[0] == PHASE_RETURN_FLIGHT
+
+  env.common_step_counter = 2
+  racket_sensor.data.force.zero_()
+  ball.data.root_link_pos_w[:] = torch.tensor([[-0.1, 0.0, 0.5]])
+  ball.data.root_link_lin_vel_w[:] = torch.tensor([[-3.0, 0.0, -1.0]])
+  state.update()
+  assert state.crossed_net_edge[0]
+  assert not state.fault_edge[0]
+  assert state.episode_fault_low_net_cross_count[0] == 0
+
+  env.common_step_counter = 3
+  ball.data.root_link_pos_w[:] = torch.tensor([[-0.2, 0.0, 0.05]])
+  ball.data.root_link_lin_vel_w[:] = torch.tensor([[-2.0, 0.0, 1.0]])
+  state.update()
+  assert state.successful_return_edge[0]
+  assert state.successful_return_count[0] == 1
+
+
+def test_continuous_hit_and_cross_same_step_counts_as_return() -> None:
+  env, ball, racket_sensor, _ = _make_continuous_env()
+  state = _make_continuous_state(env)
+
+  state.update()
+
+  env.common_step_counter = 1
+  ball.data.root_link_pos_w[:] = torch.tensor([[1.0, 0.0, 1.2]])
+  ball.data.root_link_lin_vel_w[:] = torch.tensor([[-3.0, 0.0, -0.5]])
+  state.update()
+
+  env.common_step_counter = 2
+  ball.data.root_link_pos_w[:] = torch.tensor([[-0.2, 0.0, 1.1]])
+  ball.data.root_link_lin_vel_w[:] = torch.tensor([[-3.0, 0.0, -0.5]])
+  racket_sensor.data.force[:] = 5.0
+  state.update()
+
+  assert state.racket_hit_edge[0]
+  assert state.crossed_net_edge[0]
+  assert state.phase[0] == PHASE_RETURN_FLIGHT
+  assert not state.fault_edge[0]
+
+  env.common_step_counter = 3
+  racket_sensor.data.force.zero_()
+  ball.data.root_link_pos_w[:] = torch.tensor([[-1.0, 0.0, 0.05]])
+  ball.data.root_link_lin_vel_w[:] = torch.tensor([[-2.0, 0.0, 1.0]])
+  state.update()
+
+  assert state.successful_return_edge[0]
+  assert state.successful_return_count[0] == 1
+  assert not state.fault_edge[0]
+
+
+def test_continuous_hit_and_net_same_step_is_return_fault() -> None:
+  env, ball, racket_sensor, net_sensor = _make_continuous_env()
+  state = _make_continuous_state(env)
+
+  state.update()
+
+  env.common_step_counter = 1
+  ball.data.root_link_pos_w[:] = torch.tensor([[1.0, 0.0, 1.2]])
+  ball.data.root_link_lin_vel_w[:] = torch.tensor([[-3.0, 0.0, -0.5]])
+  state.update()
+
+  env.common_step_counter = 2
+  ball.data.root_link_pos_w[:] = torch.tensor([[0.1, 0.0, 0.9]])
+  ball.data.root_link_lin_vel_w[:] = torch.tensor([[-3.0, 0.0, -0.5]])
+  racket_sensor.data.force[:] = 5.0
+  net_sensor.data.force[:] = 5.0
+  state.update()
+
+  assert state.racket_hit_edge[0]
+  assert state.fault_edge[0]
+  assert state.episode_fault_net_contact_count[0] == 1
+  assert state.episode_invalid_feed_count[0] == 0
+
+
 def test_continuous_ball_phase_is_three_way_one_hot() -> None:
   env, ball, racket_sensor, _ = _make_continuous_env()
 
@@ -411,6 +500,9 @@ def test_continuous_ball_state_invalid_incoming_feed_is_not_failure() -> None:
 
   assert state.invalid_feed_edge[0]
   assert state.episode_invalid_feed_count[0] == 1
+  assert state.episode_invalid_feed_net_count[0] == 1
+  assert state.episode_invalid_feed_out_count[0] == 0
+  assert state.episode_invalid_feed_opponent_bounce_count[0] == 0
   assert not state.fault_edge[0]
   assert state.episode_fault_count[0] == 0
 
@@ -428,6 +520,7 @@ def test_continuous_ball_state_robot_side_incoming_bounce_fails() -> None:
   assert state.bounce_edge[0]
   assert state.fault_edge[0]
   assert state.episode_fault_count[0] == 1
+  assert state.episode_fault_incoming_bounce_count[0] == 1
 
 
 def test_opponent_feeder_fallback_still_clears_net() -> None:
@@ -544,6 +637,69 @@ def test_continuous_recovery_reward_requires_moving_home_when_far() -> None:
   assert far_still.item() < 0.05
   assert moving_home.item() > far_still.item() + 0.5
   assert near_ready.item() > 0.95
+
+
+def test_continuous_recovery_ready_event_counts_once() -> None:
+  env, ball, racket_sensor, net_sensor = _make_continuous_env()
+  robot = SimpleNamespace(
+    data=SimpleNamespace(
+      root_link_pos_w=torch.tensor([[3.4, 0.0, 0.0]], dtype=torch.float32),
+      root_link_quat_w=torch.tensor([[1.0, 0.0, 0.0, 0.0]], dtype=torch.float32),
+      root_link_lin_vel_b=torch.zeros(1, 3, dtype=torch.float32),
+      root_link_lin_vel_w=torch.zeros(1, 3, dtype=torch.float32),
+      projected_gravity_b=torch.zeros(1, 3, dtype=torch.float32),
+      heading_w=torch.tensor([torch.pi], dtype=torch.float32),
+      site_pos_w=torch.tensor([[[3.4, 0.0, 0.0]]], dtype=torch.float32),
+    )
+  )
+  env.scene = _Scene(
+    torch.zeros(1, 3, dtype=torch.float32),
+    {
+      "ball": ball,
+      "robot": robot,
+      "racket_ball_contact": racket_sensor,
+      "ball_net_contact": net_sensor,
+    },
+  )
+  cfg = RewardTermCfg(
+    func=continuous_recovery_ready_event,
+    weight=1.0,
+    params={
+      "racket_sensor_name": "racket_ball_contact",
+      "net_sensor_name": "ball_net_contact",
+      "ball_cfg": SceneEntityCfg("ball"),
+      "racket_cfg": SimpleNamespace(site_ids=torch.tensor([0])),
+      "robot_cfg": SceneEntityCfg("robot"),
+      "target_x": 3.4,
+      "target_y": 0.0,
+      "target_heading": torch.pi,
+      "racket_target_b": (0.0, 0.0, 0.0),
+    },
+  )
+  reward = continuous_recovery_ready_event(cfg, env)
+  reward._state.phase[:] = PHASE_RECOVERY
+  reward._state._last_step = env.common_step_counter
+
+  first = reward(env, **cfg.params)
+  second = reward(env, **cfg.params)
+
+  assert first.item() == 1.0
+  assert second.item() == 0.0
+  assert reward._state.episode_recovery_ready_count[0] == 1
+
+
+def test_continuous_recovery_timer_has_minimum_ready_time() -> None:
+  env, _, _, _ = _make_continuous_env()
+  state = _make_continuous_state(env)
+  env_ids = torch.tensor([0])
+  state.phase[:] = PHASE_RECOVERY
+
+  state.start_recovery(env_ids, recovery_time_range=(3.0, 5.0), min_recovery_time=1.0)
+
+  assert state.recovery_min_steps_left[0] == 50
+  assert state.recovery_steps_left[0] >= state.recovery_min_steps_left[0]
+  state.step_recovery(state.in_recovery)
+  assert state.recovery_min_steps_left[0] == 49
 
 
 def test_post_hit_x_progress_requires_racket_hit() -> None:

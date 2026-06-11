@@ -1,0 +1,430 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>bones-seed / SOMA-BVH Raw Motion Data Reference</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --text: #202124;
+      --muted: #5f6368;
+      --line: #d9dde5;
+      --panel: #f7f8fa;
+      --accent: #315efb;
+      --warn: #8a5a00;
+      --warn-bg: #fff7df;
+      --ok-bg: #eef7f0;
+    }
+    body {
+      margin: 32px auto;
+      max-width: 1120px;
+      padding: 0 20px 48px;
+      color: var(--text);
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.55;
+      background: white;
+    }
+    h1, h2, h3 {
+      line-height: 1.2;
+    }
+    h1 {
+      margin-bottom: 8px;
+      font-size: 2rem;
+    }
+    h2 {
+      margin-top: 36px;
+      border-bottom: 1px solid var(--line);
+      padding-bottom: 6px;
+    }
+    h3 {
+      margin-top: 24px;
+    }
+    code {
+      background: #f2f4f7;
+      border-radius: 4px;
+      padding: 1px 4px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 0.95em;
+    }
+    pre {
+      overflow-x: auto;
+      background: #f2f4f7;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 12px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 0.92rem;
+    }
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      margin: 12px 0 20px;
+      font-size: 0.95rem;
+    }
+    th, td {
+      border: 1px solid var(--line);
+      padding: 8px 10px;
+      text-align: left;
+      vertical-align: top;
+    }
+    th {
+      background: var(--panel);
+    }
+    .lead {
+      color: var(--muted);
+      font-size: 1.04rem;
+      margin-top: 0;
+    }
+    .note {
+      border-left: 4px solid var(--accent);
+      background: #f5f7ff;
+      padding: 10px 12px;
+      margin: 14px 0;
+    }
+    .warn {
+      border-left: 4px solid var(--warn);
+      background: var(--warn-bg);
+      color: #4d3600;
+      padding: 10px 12px;
+      margin: 14px 0;
+    }
+    .ok {
+      border-left: 4px solid #16833a;
+      background: var(--ok-bg);
+      padding: 10px 12px;
+      margin: 14px 0;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 12px;
+      margin: 16px 0;
+    }
+    .card {
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 12px;
+      background: #fff;
+    }
+    .card h3 {
+      margin-top: 0;
+      margin-bottom: 8px;
+      font-size: 1rem;
+    }
+    .muted {
+      color: var(--muted);
+    }
+  </style>
+</head>
+<body>
+  <h1>原始 bones-seed / SOMA-BVH 动作数据格式参考</h1>
+  <p class="lead">
+    本页记录当前工作区中可见的 bones-seed/SOMA-BVH 原始动作数据约定。
+    重点是 <code>/home/universe/workspace/magicbot-mimic/data/raw/*.pkl</code>
+    这批 BVH 派生文件的实际 schema，以及它和 mjlab tracking 所需
+    CSV/NPZ 格式之间的关系。
+  </p>
+
+  <div class="note">
+    <strong>结论先行：</strong>这些文件不是纯文本 BVH，也不是 mjlab 可直接训练的
+    <code>motion.npz</code>。它们是经过 SOMA/BVH 人体动作处理和机器人重定向后的
+    <strong>robot generalized-coordinate motion cache</strong>：包含 root 位姿、
+    31 个机器人关节角、局部 body 位置缓存和 body 名称顺序。
+  </div>
+
+  <h2>1. 数据层级</h2>
+  <p>
+    当前能观察到的链路可以理解为：
+  </p>
+  <pre><code>source BVH / SOMA human motion
+  -> retarget to MagicBot-style robot skeleton
+  -> raw PKL cache in data/raw/*.pkl
+  -> flatten to CSV: [root_pos | root_quat | dof_pos]
+  -> csv_to_npz replay through simulator forward kinematics
+  -> final motion.npz for tracking tasks</code></pre>
+
+  <p>
+    文件名如 <code>360_003.bvh_zjw.pkl</code> 保留了原始 BVH 动作名和采集/处理者后缀。
+    但本地文件本身已经是 pickle 容器，不再是 BVH 的 <code>HIERARCHY</code> /
+    <code>MOTION</code> 文本结构。
+  </p>
+
+  <h2>2. 已观察文件</h2>
+  <p>
+    所有本地 raw pickle 都有相同的 key 集合、相同的 body 顺序、相同的源帧率
+    <code>120.000048</code>，并且每个数值数组均为 finite。
+  </p>
+  <table>
+    <thead>
+      <tr>
+        <th>文件</th>
+        <th>帧数 T</th>
+        <th>约持续时间</th>
+        <th>备注</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr><td><code>360_003.bvh_zjw.pkl</code></td><td>2273</td><td>18.93 s</td><td>BVH 派生动作</td></tr>
+      <tr><td><code>air_flare_a_002.bvh_zjw.pkl</code></td><td>2014</td><td>16.78 s</td><td>BVH 派生动作</td></tr>
+      <tr><td><code>boxing_zhuanshenhouchuai_004.bvh_hdh.pkl</code></td><td>1411</td><td>11.75 s</td><td>BVH 派生动作</td></tr>
+      <tr><td><code>cekongfan_013.bvh_wjl.pkl</code></td><td>1438</td><td>11.98 s</td><td>BVH 派生动作</td></tr>
+      <tr><td><code>danshoutiao_001.bvh_zjw.pkl</code></td><td>2129</td><td>17.73 s</td><td>BVH 派生动作</td></tr>
+      <tr><td><code>flare_003.bvh_zjw.pkl</code></td><td>2058</td><td>17.14 s</td><td>BVH 派生动作</td></tr>
+      <tr><td><code>lianxu_xuanzi_004.bvh_hdh.pkl</code></td><td>1614</td><td>13.44 s</td><td>BVH 派生动作</td></tr>
+      <tr><td><code>taiquan_001.bvh_hdh.pkl</code></td><td>3960</td><td>32.99 s</td><td>最长片段</td></tr>
+      <tr><td><code>walk_002.pkl</code></td><td>2213</td><td>18.43 s</td><td>文件名未保留 <code>.bvh_*</code> 后缀</td></tr>
+      <tr><td><code>xuanzizhuanti_004.bvh_hdh.pkl</code></td><td>1452</td><td>12.09 s</td><td>BVH 派生动作</td></tr>
+    </tbody>
+  </table>
+
+  <h2>3. PKL 顶层 schema</h2>
+  <p>
+    容器是 Python pickle，顶层对象是 <code>dict</code>。读取时应只对可信文件使用
+    <code>pickle.load</code>，因为 pickle 可以执行任意 Python 对象反序列化逻辑。
+  </p>
+  <table>
+    <thead>
+      <tr>
+        <th>Key</th>
+        <th>类型 / dtype</th>
+        <th>Shape</th>
+        <th>含义</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>fps</code></td>
+        <td><code>float</code></td>
+        <td>scalar</td>
+        <td>源动作帧率。当前全部为 <code>120.000048</code>，相邻帧时间间隔约 <code>1 / fps</code>。</td>
+      </tr>
+      <tr>
+        <td><code>root_pos</code></td>
+        <td><code>np.ndarray float64</code></td>
+        <td><code>[T, 3]</code></td>
+        <td>机器人 root/pelvis 在世界或源场景坐标系下的位置轨迹，单位按机器人数据约定理解为米。</td>
+      </tr>
+      <tr>
+        <td><code>root_rot</code></td>
+        <td><code>np.ndarray float64</code></td>
+        <td><code>[T, 4]</code></td>
+        <td>root/pelvis 姿态四元数。所有文件中范数约为 1。文件不显式记录分量顺序；下游 CSV converter 期望输入为 <code>xyzw</code>，再转为 MuJoCo/mjlab 的 <code>wxyz</code>。</td>
+      </tr>
+      <tr>
+        <td><code>dof_pos</code></td>
+        <td><code>np.ndarray float64</code></td>
+        <td><code>[T, 31]</code></td>
+        <td>31 个机器人关节位置，通常按弧度理解。它是 robot generalized coordinates 中的 actuated/revolute joint 部分。</td>
+      </tr>
+      <tr>
+        <td><code>local_body_pos</code></td>
+        <td><code>np.ndarray float32</code></td>
+        <td><code>[T, 32, 3]</code></td>
+        <td>按 <code>link_body_list</code> 排列的每帧 body 局部位置缓存。它不是 mjlab runtime 需要的 <code>body_pos_w</code>，也不含 body orientation / velocity。</td>
+      </tr>
+      <tr>
+        <td><code>link_body_list</code></td>
+        <td><code>list[str]</code></td>
+        <td><code>[32]</code></td>
+        <td>body/link 名称顺序。所有 raw 文件一致，是解释 <code>local_body_pos[:, i]</code> 的唯一索引契约。</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="warn">
+    <strong>四元数顺序需要显式验证。</strong>PKL 内没有 metadata 标明
+    <code>root_rot</code> 是 <code>xyzw</code> 还是 <code>wxyz</code>。
+    mjlab 当前 CSV converter 的输入约定是 <code>base_quat_xyzw</code>，内部会转成
+    <code>wxyz</code>。因此从 PKL flatten 到 CSV 前，最好用短片段渲染或与原 BVH 朝向对照确认。
+  </div>
+
+  <h2>4. 31-DoF joint 顺序</h2>
+  <p>
+    <code>dof_pos[:, j]</code> 必须按固定 joint 顺序解释。当前 raw 目录说明和
+    MagicBot Z2 检查脚本显示的 31 个关节顺序如下：
+  </p>
+  <pre><code>00 waist_yaw_joint
+01 waist_roll_joint
+02 waist_pitch_joint
+03 head_pitch_joint
+04 head_yaw_joint
+05 left_shoulder_pitch_joint
+06 left_shoulder_roll_joint
+07 left_shoulder_yaw_joint
+08 left_elbow_joint
+09 left_wrist_roll_joint
+10 left_wrist_pitch_joint
+11 left_wrist_yaw_joint
+12 right_shoulder_pitch_joint
+13 right_shoulder_roll_joint
+14 right_shoulder_yaw_joint
+15 right_elbow_joint
+16 right_wrist_roll_joint
+17 right_wrist_pitch_joint
+18 right_wrist_yaw_joint
+19 left_hip_pitch_joint
+20 left_hip_roll_joint
+21 left_hip_yaw_joint
+22 left_knee_joint
+23 right_hip_pitch_joint
+24 right_hip_roll_joint
+25 right_hip_yaw_joint
+26 right_knee_joint
+27 left_ankle_pitch_joint
+28 left_ankle_roll_joint
+29 right_ankle_pitch_joint
+30 right_ankle_roll_joint</code></pre>
+
+  <h2>5. 32-body link 顺序</h2>
+  <p>
+    <code>local_body_pos[:, i]</code> 使用下列 body 顺序。所有 10 个本地 raw 文件的
+    <code>link_body_list</code> 完全一致。
+  </p>
+  <pre><code>00 pelvis
+01 waist_yaw_link
+02 waist_roll_link
+03 torso_link
+04 head_pitch_link
+05 head_yaw_link
+06 left_shoulder_pitch_link
+07 left_shoulder_roll_link
+08 left_shoulder_yaw_link
+09 left_elbow_link
+10 left_wrist_roll_link
+11 left_wrist_pitch_link
+12 left_wrist_yaw_link
+13 right_shoulder_pitch_link
+14 right_shoulder_roll_link
+15 right_shoulder_yaw_link
+16 right_elbow_link
+17 right_wrist_roll_link
+18 right_wrist_pitch_link
+19 right_wrist_yaw_link
+20 left_hip_pitch_link
+21 left_hip_roll_link
+22 left_hip_yaw_link
+23 left_knee_link
+24 left_ankle_pitch_link
+25 left_ankle_roll_link
+26 right_hip_pitch_link
+27 right_hip_roll_link
+28 right_hip_yaw_link
+29 right_knee_link
+30 right_ankle_pitch_link
+31 right_ankle_roll_link</code></pre>
+
+  <h2>6. 与 mjlab CSV 输入的关系</h2>
+  <p>
+    mjlab 的 motion preprocessing 入口不是 PKL，而是 retargeted CSV。CSV 每一行是一帧：
+  </p>
+  <pre><code>[base_pos_x, base_pos_y, base_pos_z,
+ base_quat_x, base_quat_y, base_quat_z, base_quat_w,
+ joint_0, joint_1, ..., joint_N-1]</code></pre>
+
+  <p>
+    对这批 31-DoF raw PKL，如果四元数顺序确认是 <code>xyzw</code>，则一个候选 CSV 行为：
+  </p>
+  <pre><code>np.concatenate([root_pos[t], root_rot[t], dof_pos[t]], axis=0)
+# 3 + 4 + 31 = 38 columns per frame</code></pre>
+
+  <p>
+    然后使用 robot-specific converter 在目标机器人模型上 replay 并生成 final NPZ。
+    在 mjlab 当前 G1 converter 中，joint list 是 G1 的 29 DoF；这批 31-DoF Z2/MagicBot
+    raw 数据不能直接塞给 G1 converter，除非先完成机器人间重定向或编写对应 Z2/MagicBot converter。
+  </p>
+
+  <h2>7. 与 mjlab 最终 motion.npz 的差异</h2>
+  <p>
+    tracking runtime 读取的是 final NPZ，而不是 raw PKL。最终 NPZ 需要包含：
+  </p>
+  <table>
+    <thead>
+      <tr>
+        <th>NPZ key</th>
+        <th>Shape</th>
+        <th>说明</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr><td><code>joint_pos</code></td><td><code>[T, J]</code></td><td>完整机器人 joint position target。</td></tr>
+      <tr><td><code>joint_vel</code></td><td><code>[T, J]</code></td><td>由重采样后的 joint position 对时间求导得到。</td></tr>
+      <tr><td><code>body_pos_w</code></td><td><code>[T, B, 3]</code></td><td>世界系 body 位置，由 simulator forward kinematics 计算。</td></tr>
+      <tr><td><code>body_quat_w</code></td><td><code>[T, B, 4]</code></td><td>世界系 body 四元数，通常为 <code>wxyz</code>。</td></tr>
+      <tr><td><code>body_lin_vel_w</code></td><td><code>[T, B, 3]</code></td><td>世界系 body 线速度。</td></tr>
+      <tr><td><code>body_ang_vel_w</code></td><td><code>[T, B, 3]</code></td><td>世界系 body 角速度。</td></tr>
+      <tr><td><code>fps</code></td><td><code>[1]</code> 或 scalar-like</td><td>输出 NPZ 帧率 metadata。</td></tr>
+    </tbody>
+  </table>
+
+  <div class="warn">
+    <strong><code>local_body_pos</code> 不能替代 <code>body_pos_w</code>。</strong>
+    raw PKL 没有 body quaternion、body velocity，也没有保证使用 mjlab/MuJoCo 的
+    body traversal order。最终训练文件应通过对应机器人模型的 forward kinematics 重新生成。
+  </div>
+
+  <h2>8. 推荐转换流程</h2>
+  <ol>
+    <li>读取 PKL，检查 key、shape、finite、fps、四元数范数。</li>
+    <li>确认 <code>root_rot</code> 分量顺序。必要时对同一短片段分别按 <code>xyzw</code> / <code>wxyz</code> 渲染对比。</li>
+    <li>把 <code>root_pos | root_rot | dof_pos</code> flatten 成 CSV。</li>
+    <li>使用对应机器人模型的 <code>csv_to_npz</code> converter，设置 <code>input_fps</code> 为 raw 的 <code>fps</code>，常用 <code>output_fps=50</code>。</li>
+    <li>用 replay/play 检查生成的 <code>motion.npz</code>：root 高度、脚底穿地、左右肢体、朝向和 body order。</li>
+    <li>训练 tracking 前，确认任务 config 的 <code>motion_cmd.body_names</code> 与 NPZ body tensor 的顺序契约一致。</li>
+  </ol>
+
+  <h2>9. 快速检查脚本</h2>
+  <pre><code>from pathlib import Path
+import pickle
+import numpy as np
+
+p = Path("/home/universe/workspace/magicbot-mimic/data/raw/360_003.bvh_zjw.pkl")
+with p.open("rb") as f:
+    d = pickle.load(f)
+
+print(d.keys())
+print("fps:", d["fps"])
+for key in ("root_pos", "root_rot", "dof_pos", "local_body_pos"):
+    arr = d[key]
+    print(key, arr.dtype, arr.shape, np.isfinite(arr).all())
+
+q_norm = np.linalg.norm(d["root_rot"], axis=1)
+print("quat norm:", q_norm.min(), q_norm.max(), q_norm.mean())
+print("bodies:", len(d["link_body_list"]), d["link_body_list"][:4])</code></pre>
+
+  <h2>10. 常见错误</h2>
+  <div class="grid">
+    <div class="card">
+      <h3>把 PKL 当作 NPZ</h3>
+      <p>tracking runtime 不会读取 raw PKL。它需要 final <code>motion.npz</code> 的 body pose/velocity 字段。</p>
+    </div>
+    <div class="card">
+      <h3>四元数顺序错位</h3>
+      <p><code>xyzw</code> 和 <code>wxyz</code> 交换后，动作可能看似能播放，但朝向、角速度和身体姿态会整体错误。</p>
+    </div>
+    <div class="card">
+      <h3>机器人 DoF 不匹配</h3>
+      <p>31-DoF MagicBot/Z2 raw 数据不能直接用 29-DoF G1 converter。必须先 retarget 或换对应机器人 converter。</p>
+    </div>
+    <div class="card">
+      <h3>body order 静默错误</h3>
+      <p>body tensor 按索引读取。只要顺序错，reward 会追踪错误身体，训练通常不收敛。</p>
+    </div>
+  </div>
+
+  <h2>11. 本页依据</h2>
+  <ul>
+    <li>实际检查：<code>/home/universe/workspace/magicbot-mimic/data/raw/*.pkl</code></li>
+    <li>raw 目录笔记：<code>/home/universe/workspace/magicbot-mimic/data/raw/README.md</code></li>
+    <li>mjlab converter：<code>src/mjlab/scripts/csv_to_npz.py</code></li>
+    <li>mjlab tracking loader：<code>src/mjlab/tasks/tracking/mdp/commands.py</code></li>
+    <li>motion preprocessing 文档：<code>docs/source/training/motion_imitation.rst</code></li>
+  </ul>
+
+  <p class="muted">
+    Last updated: 2026-06-02. If future data includes literal <code>.bvh</code>
+    files or a separate <code>bones-seed</code> directory, add that raw hierarchy and
+    channel order here before writing conversion code.
+  </p>
+</body>
+</html>

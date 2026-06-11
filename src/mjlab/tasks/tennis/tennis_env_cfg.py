@@ -117,12 +117,15 @@ NET_X = 0.0
 COURT_OUT_X_LIMITS = (-COURT_HALF_LENGTH - 1.0, BASELINE_SELF_X + 1.0)
 COURT_OUT_Y_LIMITS = (-COURT_HALF_WIDTH - 0.5, COURT_HALF_WIDTH + 0.5)
 COURT_OUT_Z_LIMITS = (0.02, 3.0)
+CONTINUOUS_OUT_Z_LIMITS = (COURT_OUT_Z_LIMITS[0], 15.0)
+CONTINUOUS_FEED_MAX_APEX_Z = 3.95
 OPPONENT_LANDING_MARGIN = 0.0
 CONTINUOUS_RALLY_SUCCESSFUL_RETURNS = 8
 CONTINUOUS_RALLY_INITIAL_SUCCESSFUL_RETURNS = 2
 CONTINUOUS_RECOVERY_INITIAL_TIME_RANGE = (3.0, 5.0)
 CONTINUOUS_RECOVERY_MID_TIME_RANGE = (1.0, 2.0)
 CONTINUOUS_RECOVERY_FINAL_TIME_RANGE = (0.3, 0.5)
+CONTINUOUS_RECOVERY_MIN_READY_TIME = 1.0
 CONTINUOUS_RECOVERY_STEPS = 40
 CONTINUOUS_RALLY_LENGTH_STAGE_STEPS = (0, 10000 * 24, 25000 * 24)
 
@@ -838,7 +841,7 @@ def make_tennis_continuous_env_cfg(
   landing_y_limits = (-cw - OPPONENT_LANDING_MARGIN, cw + OPPONENT_LANDING_MARGIN)
   court_out_x_limits = (-cl - 1.0, cl + 1.0)
   court_out_y_limits = (-cw - 0.5, cw + 0.5)
-  continuous_z_limits = (COURT_OUT_Z_LIMITS[0], 4.0)
+  continuous_z_limits = CONTINUOUS_OUT_Z_LIMITS
   continuous_params = {
     "racket_sensor_name": _RACKET_BALL_SENSOR,
     "net_sensor_name": _BALL_NET_SENSOR,
@@ -876,7 +879,7 @@ def make_tennis_continuous_env_cfg(
     net_clearance=0.25,
     ball_radius=BALL_RADIUS,
     net_half_thickness=NET_THICKNESS_HALF,
-    max_apex_z=continuous_z_limits[1] - 0.05,
+    max_apex_z=CONTINUOUS_FEED_MAX_APEX_Z,
   )
 
   ball_net_sensor = ContactSensorCfg(
@@ -963,27 +966,35 @@ def make_tennis_continuous_env_cfg(
     weight=2000.0,
     params={"term_names": ("continuous_rally_complete",)},
   )
+  recovery_params = {
+    **dict(continuous_params),
+    "racket_cfg": _RACKET_CFG,
+    "robot_cfg": _ROBOT_CFG,
+    "target_x": robot_reset_x_center,
+    "target_y": 0.0,
+    "target_heading": ROBOT_RESET_YAW,
+    "move_speed_scale": 0.8,
+  }
   cfg.rewards["continuous_recovery_ready_pose"] = RewardTermCfg(
     func=mdp.continuous_recovery_ready_pose_state,
     weight=20.0,
-    params={
-      **dict(continuous_params),
-      "racket_cfg": _RACKET_CFG,
-      "robot_cfg": _ROBOT_CFG,
-      "target_x": robot_reset_x_center,
-      "target_y": 0.0,
-      "target_heading": ROBOT_RESET_YAW,
-      "move_speed_scale": 0.8,
-    },
+    params=dict(recovery_params),
+  )
+  cfg.rewards["continuous_recovery_ready_event"] = RewardTermCfg(
+    func=mdp.continuous_recovery_ready_event,
+    weight=200.0,
+    params=dict(recovery_params),
   )
   cfg.rewards["advance_continuous_rally_ball"] = RewardTermCfg(
     func=mdp.advance_continuous_rally_ball,
     weight=1.0e-9,
     params={
       **dict(continuous_params),
+      **dict(recovery_params),
       "provider_cfg": opponent_provider_cfg,
       "max_successful_returns": initial_successful_returns,
       "recovery_time_range": CONTINUOUS_RECOVERY_INITIAL_TIME_RANGE,
+      "min_recovery_time": CONTINUOUS_RECOVERY_MIN_READY_TIME,
     },
   )
   cfg.rewards.pop("respawn_successful_continuous_rally_ball", None)
@@ -1021,8 +1032,58 @@ def make_tennis_continuous_env_cfg(
     reduce="last",
     params=dict(continuous_params),
   )
+  cfg.metrics["invalid_feed_net_count"] = MetricsTermCfg(
+    func=mdp.continuous_invalid_feed_net_count_metric,
+    reduce="last",
+    params=dict(continuous_params),
+  )
+  cfg.metrics["invalid_feed_out_count"] = MetricsTermCfg(
+    func=mdp.continuous_invalid_feed_out_count_metric,
+    reduce="last",
+    params=dict(continuous_params),
+  )
+  cfg.metrics["invalid_feed_opponent_bounce_count"] = MetricsTermCfg(
+    func=mdp.continuous_invalid_feed_opponent_bounce_count_metric,
+    reduce="last",
+    params=dict(continuous_params),
+  )
   cfg.metrics["continuous_fault_count"] = MetricsTermCfg(
     func=mdp.continuous_fault_count_metric,
+    reduce="last",
+    params=dict(continuous_params),
+  )
+  cfg.metrics["fault_incoming_bounce_count"] = MetricsTermCfg(
+    func=mdp.continuous_fault_incoming_bounce_count_metric,
+    reduce="last",
+    params=dict(continuous_params),
+  )
+  cfg.metrics["fault_return_bounce_out_count"] = MetricsTermCfg(
+    func=mdp.continuous_fault_return_bounce_out_count_metric,
+    reduce="last",
+    params=dict(continuous_params),
+  )
+  cfg.metrics["fault_return_out_count"] = MetricsTermCfg(
+    func=mdp.continuous_fault_return_out_count_metric,
+    reduce="last",
+    params=dict(continuous_params),
+  )
+  cfg.metrics["fault_net_contact_count"] = MetricsTermCfg(
+    func=mdp.continuous_fault_net_contact_count_metric,
+    reduce="last",
+    params=dict(continuous_params),
+  )
+  cfg.metrics["fault_extra_racket_count"] = MetricsTermCfg(
+    func=mdp.continuous_fault_extra_racket_count_metric,
+    reduce="last",
+    params=dict(continuous_params),
+  )
+  cfg.metrics["fault_low_net_cross_count"] = MetricsTermCfg(
+    func=mdp.continuous_fault_low_net_cross_count_metric,
+    reduce="last",
+    params=dict(continuous_params),
+  )
+  cfg.metrics["recovery_ready_count"] = MetricsTermCfg(
+    func=mdp.continuous_recovery_ready_count_metric,
     reduce="last",
     params=dict(continuous_params),
   )

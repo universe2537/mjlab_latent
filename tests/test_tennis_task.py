@@ -34,8 +34,11 @@ from mjlab.tasks.tennis.rl.runner import (
 from mjlab.tasks.tennis.tennis_env_cfg import (
   BALL_SPAWN_X_RANGE,
   BALL_SPAWN_Z_RANGE,
+  CONTINUOUS_FEED_MAX_APEX_Z,
+  CONTINUOUS_OUT_Z_LIMITS,
   CONTINUOUS_RALLY_INITIAL_SUCCESSFUL_RETURNS,
   CONTINUOUS_RECOVERY_INITIAL_TIME_RANGE,
+  CONTINUOUS_RECOVERY_MIN_READY_TIME,
   COURT_HALF_LENGTH,
   COURT_HALF_WIDTH,
   DEFAULT_COURT_SIZE,
@@ -545,13 +548,24 @@ def test_tennis_continuous_respawns_until_eight_successful_returns() -> None:
   assert "landing_in_bounds_event" in cfg.rewards
   assert "continuous_rally_complete_bonus" in cfg.rewards
   assert "continuous_recovery_ready_pose" in cfg.rewards
+  assert "continuous_recovery_ready_event" in cfg.rewards
   assert "advance_continuous_rally_ball" in cfg.rewards
   assert "respawn_successful_continuous_rally_ball" not in cfg.rewards
   assert "continuous_success_ratio" in cfg.metrics
   assert "in_recovery_rate" in cfg.metrics
   assert "net_contact_count" in cfg.metrics
   assert "invalid_feed_count" in cfg.metrics
+  assert "invalid_feed_net_count" in cfg.metrics
+  assert "invalid_feed_out_count" in cfg.metrics
+  assert "invalid_feed_opponent_bounce_count" in cfg.metrics
   assert "continuous_fault_count" in cfg.metrics
+  assert "fault_incoming_bounce_count" in cfg.metrics
+  assert "fault_return_bounce_out_count" in cfg.metrics
+  assert "fault_return_out_count" in cfg.metrics
+  assert "fault_net_contact_count" in cfg.metrics
+  assert "fault_extra_racket_count" in cfg.metrics
+  assert "fault_low_net_cross_count" in cfg.metrics
+  assert "recovery_ready_count" in cfg.metrics
   assert cfg.metrics["continuous_success_ratio"].reduce == "last"
   assert cfg.metrics["in_recovery_rate"].reduce == "mean"
   assert (
@@ -569,6 +583,7 @@ def test_tennis_continuous_respawns_until_eight_successful_returns() -> None:
   )
   assert cfg.rewards["approach_point"].params["net_sensor_name"] == "ball_net_contact"
   assert cfg.rewards["continuous_recovery_ready_pose"].weight == 20.0
+  assert cfg.rewards["continuous_recovery_ready_event"].weight == 200.0
   assert cfg.rewards["advance_continuous_rally_ball"].weight == 1.0e-9
 
   assert "ball_out_of_bounds" not in cfg.terminations
@@ -589,6 +604,11 @@ def test_tennis_continuous_respawns_until_eight_successful_returns() -> None:
     == CONTINUOUS_RALLY_INITIAL_SUCCESSFUL_RETURNS
   )
   assert respawn_params["recovery_time_range"] == CONTINUOUS_RECOVERY_INITIAL_TIME_RANGE
+  assert respawn_params["min_recovery_time"] == CONTINUOUS_RECOVERY_MIN_READY_TIME
+  assert (
+    respawn_params["target_x"]
+    == cfg.rewards["continuous_recovery_ready_pose"].params["target_x"]
+  )
   assert (
     respawn_params["provider_cfg"] is cfg.events["reset_ball"].params["provider_cfg"]
   )
@@ -596,6 +616,10 @@ def test_tennis_continuous_respawns_until_eight_successful_returns() -> None:
     provider_cfg.max_apex_z
     < cfg.terminations["continuous_ball_fault"].params["z_limits"][1]
   )
+  assert cfg.terminations["continuous_ball_fault"].params["z_limits"] == (
+    CONTINUOUS_OUT_Z_LIMITS
+  )
+  assert provider_cfg.max_apex_z == CONTINUOUS_FEED_MAX_APEX_Z
 
   curriculum_params = cfg.curriculum["ball_target_region"].params
   assert curriculum_params["success_term_name"] == "continuous_rally_complete"
