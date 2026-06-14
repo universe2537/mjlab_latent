@@ -341,6 +341,48 @@ class landing_in_bounds_event(TennisHitTrackerTerm):
     return self.tracker.landing_in_bounds_edge.float()
 
 
+class post_hit_low_arc_quality_reward(TennisHitTrackerTerm):
+  """Reward short hit-to-landing time after a valid over-net return.
+
+  This auxiliary quality term is gated by the existing hit, net-crossing, and
+  in-bounds first landing logic.  It targets vertical flight quality, not
+  horizontal landing depth: z(t) = z0 + vz0 * t - 0.5 * g * t^2.
+  """
+
+  def __init__(self, cfg: RewardTermCfg, env: ManagerBasedRlEnv):
+    super().__init__(cfg, env)
+
+  def __call__(
+    self,
+    env: ManagerBasedRlEnv,
+    sensor_name: str,
+    ball_cfg: SceneEntityCfg = _BALL_CFG,
+    force_threshold: float = 1.0,
+    ground_z: float = 0.06,
+    net_x: float = 0.0,
+    landing_x_limits: tuple[float, float] | None = None,
+    landing_y_limits: tuple[float, float] | None = None,
+    fast_landing_t_min: float = 0.35,
+    fast_landing_t_max: float = 1.20,
+    require_in_bounds: bool = True,
+  ) -> torch.Tensor:
+    del (
+      env,
+      sensor_name,
+      ball_cfg,
+      force_threshold,
+      ground_z,
+      net_x,
+      landing_x_limits,
+      landing_y_limits,
+    )
+    return self.tracker.fast_landing_score(
+      t_min=fast_landing_t_min,
+      t_max=fast_landing_t_max,
+      require_in_bounds=require_in_bounds,
+    )
+
+
 class respawn_successful_continuous_rally_ball(TennisHitTrackerTerm):
   """连续接球中成功回球后延迟重新发球，并开始下一小回合。"""
 

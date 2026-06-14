@@ -128,6 +128,9 @@ CONTINUOUS_RECOVERY_FINAL_TIME_RANGE = (0.3, 0.5)
 CONTINUOUS_RECOVERY_MIN_READY_TIME = 1.0
 CONTINUOUS_RECOVERY_STEPS = 40
 CONTINUOUS_RALLY_LENGTH_STAGE_STEPS = (0, 10000 * 24, 25000 * 24)
+FAST_LANDING_T_MIN = 0.35
+FAST_LANDING_T_MAX = 1.20
+FAST_LANDING_WEIGHT = 0.05
 
 # ---------------------------------------------------------------------------
 # 冻结低层解码器的状态项（必须与蒸馏检查点一致）。
@@ -207,6 +210,7 @@ def _apply_court_geometry(cfg: "TennisLatentEnvCfg") -> None:
   for term_name in (
     "crossed_net_event",
     "landing_in_bounds_event",
+    "post_hit_low_arc_quality_reward",
     "landing_in_bounds_after_hit",
     "second_contact",
     "continuous_rally_failure",
@@ -223,6 +227,7 @@ def _apply_court_geometry(cfg: "TennisLatentEnvCfg") -> None:
     "continuous_landing_in_bounds_event",
     "continuous_post_hit_x_progress",
     "continuous_post_hit_ball_velocity_direction",
+    "continuous_post_hit_low_arc_quality_reward",
   ):
     term_cfg = cfg.rewards.get(term_name) or cfg.terminations.get(term_name)
     if term_cfg is None:
@@ -683,6 +688,36 @@ def make_tennis_latent_env_cfg(
         "landing_y_limits": None,
       },
     ),
+    "first_bounce_after_hit_count": MetricsTermCfg(
+      func=mdp.first_bounce_after_hit_count_metric,
+      reduce="last",
+      params=dict(tracker_params),
+    ),
+    "fast_landing_reward_mean": MetricsTermCfg(
+      func=mdp.fast_landing_reward_mean_metric,
+      reduce="last",
+      params=dict(tracker_params),
+    ),
+    "time_to_landing_mean": MetricsTermCfg(
+      func=mdp.time_to_landing_mean_metric,
+      reduce="last",
+      params=dict(tracker_params),
+    ),
+    "time_to_landing_min": MetricsTermCfg(
+      func=mdp.time_to_landing_min_metric,
+      reduce="last",
+      params=dict(tracker_params),
+    ),
+    "time_to_landing_max": MetricsTermCfg(
+      func=mdp.time_to_landing_max_metric,
+      reduce="last",
+      params=dict(tracker_params),
+    ),
+    "time_to_landing_valid_count": MetricsTermCfg(
+      func=mdp.time_to_landing_valid_count_metric,
+      reduce="last",
+      params=dict(tracker_params),
+    ),
   }
 
   cfg = TennisLatentEnvCfg(
@@ -798,6 +833,16 @@ def make_tennis_latent_cross_env_cfg(
     func=mdp.landing_in_bounds_event,
     weight=1000.0,
     params=dict(tracker_params),
+  )
+  cfg.rewards["post_hit_low_arc_quality_reward"] = RewardTermCfg(
+    func=mdp.post_hit_low_arc_quality_reward,
+    weight=FAST_LANDING_WEIGHT,
+    params={
+      **dict(tracker_params),
+      "fast_landing_t_min": FAST_LANDING_T_MIN,
+      "fast_landing_t_max": FAST_LANDING_T_MAX,
+      "require_in_bounds": True,
+    },
   )
 
   cfg.terminations.pop("first_racket_hit", None)
@@ -945,6 +990,15 @@ def make_tennis_continuous_env_cfg(
   cfg.rewards["crossed_net_event"].params = dict(continuous_params)
   cfg.rewards["landing_in_bounds_event"].func = mdp.continuous_landing_in_bounds_event
   cfg.rewards["landing_in_bounds_event"].params = dict(continuous_params)
+  cfg.rewards[
+    "post_hit_low_arc_quality_reward"
+  ].func = mdp.continuous_post_hit_low_arc_quality_reward
+  cfg.rewards["post_hit_low_arc_quality_reward"].params = {
+    **dict(continuous_params),
+    "fast_landing_t_min": FAST_LANDING_T_MIN,
+    "fast_landing_t_max": FAST_LANDING_T_MAX,
+    "require_in_bounds": True,
+  }
 
   cfg.terminations.pop("ball_out_of_bounds", None)
   cfg.terminations.pop("landing_in_bounds_after_hit", None)
@@ -1010,6 +1064,24 @@ def make_tennis_continuous_env_cfg(
     "successful_return_count"
   ].func = mdp.continuous_successful_return_count_metric
   cfg.metrics["successful_return_count"].params = dict(continuous_params)
+  cfg.metrics[
+    "first_bounce_after_hit_count"
+  ].func = mdp.continuous_first_bounce_after_hit_count_metric
+  cfg.metrics["first_bounce_after_hit_count"].params = dict(continuous_params)
+  cfg.metrics[
+    "fast_landing_reward_mean"
+  ].func = mdp.continuous_fast_landing_reward_mean_metric
+  cfg.metrics["fast_landing_reward_mean"].params = dict(continuous_params)
+  cfg.metrics["time_to_landing_mean"].func = mdp.continuous_time_to_landing_mean_metric
+  cfg.metrics["time_to_landing_mean"].params = dict(continuous_params)
+  cfg.metrics["time_to_landing_min"].func = mdp.continuous_time_to_landing_min_metric
+  cfg.metrics["time_to_landing_min"].params = dict(continuous_params)
+  cfg.metrics["time_to_landing_max"].func = mdp.continuous_time_to_landing_max_metric
+  cfg.metrics["time_to_landing_max"].params = dict(continuous_params)
+  cfg.metrics[
+    "time_to_landing_valid_count"
+  ].func = mdp.continuous_time_to_landing_valid_count_metric
+  cfg.metrics["time_to_landing_valid_count"].params = dict(continuous_params)
   cfg.metrics["continuous_success_ratio"] = MetricsTermCfg(
     func=mdp.continuous_success_ratio_metric_state,
     reduce="last",

@@ -404,9 +404,23 @@ def test_tennis_cross_rewards_and_terminations_target_landing() -> None:
   assert cfg.rewards["crossed_net_event"].weight == 500.0
   assert "landing_in_bounds_event" in cfg.rewards
   assert cfg.rewards["landing_in_bounds_event"].weight == 1000.0
+  assert "post_hit_low_arc_quality_reward" in cfg.rewards
+  assert cfg.rewards["post_hit_low_arc_quality_reward"].weight == 0.05
+  assert (
+    cfg.rewards["post_hit_low_arc_quality_reward"].params["fast_landing_t_min"] == 0.35
+  )
+  assert (
+    cfg.rewards["post_hit_low_arc_quality_reward"].params["fast_landing_t_max"] == 1.20
+  )
   assert cfg.metrics["crossed_net_count"].params["landing_x_limits"][1] == 0.0
   assert cfg.metrics["landing_in_bounds_count"].params["landing_y_limits"][0] < 0.0
   assert cfg.metrics["successful_return_count"].params["landing_y_limits"][1] > 0.0
+  assert "first_bounce_after_hit_count" in cfg.metrics
+  assert "fast_landing_reward_mean" in cfg.metrics
+  assert "time_to_landing_mean" in cfg.metrics
+  assert "time_to_landing_min" in cfg.metrics
+  assert "time_to_landing_max" in cfg.metrics
+  assert "time_to_landing_valid_count" in cfg.metrics
 
   assert "first_racket_hit" not in cfg.terminations
   assert "second_contact" in cfg.terminations
@@ -431,6 +445,7 @@ def test_tennis_cross_lab_rewards_bias_toward_post_hit_return() -> None:
   assert cfg.rewards["post_hit_ball_velocity_direction"].weight == 50.0
   assert cfg.rewards["crossed_net_event"].weight == 700.0
   assert cfg.rewards["landing_in_bounds_event"].weight == 1500.0
+  assert cfg.rewards["post_hit_low_arc_quality_reward"].weight == 0.05
 
 
 def test_tennis_wrist_lab_checkpoint_action_head_migration() -> None:
@@ -551,6 +566,14 @@ def test_tennis_continuous_respawns_until_eight_successful_returns() -> None:
   assert "continuous_recovery_ready_event" in cfg.rewards
   assert "advance_continuous_rally_ball" in cfg.rewards
   assert "respawn_successful_continuous_rally_ball" not in cfg.rewards
+  assert cfg.rewards["post_hit_low_arc_quality_reward"].weight == 0.05
+  assert (
+    cfg.rewards["post_hit_low_arc_quality_reward"].params["racket_sensor_name"]
+    == "racket_ball_contact"
+  )
+  assert cfg.rewards["post_hit_low_arc_quality_reward"].params["net_sensor_name"] == (
+    "ball_net_contact"
+  )
   assert "continuous_success_ratio" in cfg.metrics
   assert "in_recovery_rate" in cfg.metrics
   assert "net_contact_count" in cfg.metrics
@@ -566,6 +589,9 @@ def test_tennis_continuous_respawns_until_eight_successful_returns() -> None:
   assert "fault_extra_racket_count" in cfg.metrics
   assert "fault_low_net_cross_count" in cfg.metrics
   assert "recovery_ready_count" in cfg.metrics
+  assert "first_bounce_after_hit_count" in cfg.metrics
+  assert "fast_landing_reward_mean" in cfg.metrics
+  assert "time_to_landing_valid_count" in cfg.metrics
   assert cfg.metrics["continuous_success_ratio"].reduce == "last"
   assert cfg.metrics["in_recovery_rate"].reduce == "mean"
   assert (

@@ -66,18 +66,32 @@ class TennisHitTracker:
     self.episode_bounce_count = zeros_long()
     self.episode_crossed_net_count = zeros_long()
     self.episode_landing_in_bounds_count = zeros_long()
+    self.episode_first_bounce_after_hit_count = zeros_long()
+    self.episode_fast_landing_reward_count = zeros_long()
+    self.episode_time_to_landing_count = zeros_long()
+    self.episode_time_to_landing_sum = zeros_float()
+    self.episode_time_to_landing_min = torch.full((num_envs,), torch.inf, device=device)
+    self.episode_time_to_landing_max = zeros_float()
+    self.episode_fast_landing_score_sum = zeros_float()
 
     self.racket_hit_edge = zeros_bool()
     self.bounce_edge = zeros_bool()
     self.crossed_net_edge = zeros_bool()
     self.landing_in_bounds_edge = zeros_bool()
+    self.first_bounce_after_hit_edge = zeros_bool()
 
     self.has_racket_hit = zeros_bool()
     self.has_crossed_net = zeros_bool()
     self.has_landed_in_bounds = zeros_bool()
+    self.has_first_bounce_after_hit = zeros_bool()
+    self.has_rewarded_fast_landing = zeros_bool()
 
     self.recovery_steps_left = zeros_long()
     self.recovery_steps_total = zeros_long()
+    self.hit_step = zeros_long()
+    self.first_bounce_after_hit_step = zeros_long()
+    self.time_to_landing = zeros_float()
+    self.last_fast_landing_score = zeros_float()
 
     self._prev_contact = zeros_bool()
     self._prev_vz = zeros_float()
@@ -92,6 +106,13 @@ class TennisHitTracker:
     self.episode_bounce_count[env_ids] = 0
     self.episode_crossed_net_count[env_ids] = 0
     self.episode_landing_in_bounds_count[env_ids] = 0
+    self.episode_first_bounce_after_hit_count[env_ids] = 0
+    self.episode_fast_landing_reward_count[env_ids] = 0
+    self.episode_time_to_landing_count[env_ids] = 0
+    self.episode_time_to_landing_sum[env_ids] = 0.0
+    self.episode_time_to_landing_min[env_ids] = torch.inf
+    self.episode_time_to_landing_max[env_ids] = 0.0
+    self.episode_fast_landing_score_sum[env_ids] = 0.0
     self.reset_rally(env_ids)
     self._last_step = -1
 
@@ -105,11 +126,18 @@ class TennisHitTracker:
     self.bounce_edge[env_ids] = False
     self.crossed_net_edge[env_ids] = False
     self.landing_in_bounds_edge[env_ids] = False
+    self.first_bounce_after_hit_edge[env_ids] = False
     self.has_racket_hit[env_ids] = False
     self.has_crossed_net[env_ids] = False
     self.has_landed_in_bounds[env_ids] = False
+    self.has_first_bounce_after_hit[env_ids] = False
+    self.has_rewarded_fast_landing[env_ids] = False
     self.recovery_steps_left[env_ids] = 0
     self.recovery_steps_total[env_ids] = 0
+    self.hit_step[env_ids] = 0
+    self.first_bounce_after_hit_step[env_ids] = 0
+    self.time_to_landing[env_ids] = 0.0
+    self.last_fast_landing_score[env_ids] = 0.0
     self._prev_contact[env_ids] = False
     self._prev_vz[env_ids] = 0.0
     self._prev_x[env_ids] = 0.0
@@ -169,11 +197,19 @@ class TennisHitTracker:
       & landing_in_bounds
       & ~self.has_landed_in_bounds
     )
+    first_bounce_after_hit_edge = (
+      bounce_edge & has_hit_now & has_crossed_now & ~self.has_first_bounce_after_hit
+    )
+    time_to_landing = torch.clamp(
+      torch.full_like(self.hit_step, step) - self.hit_step,
+      min=0,
+    ).float() * float(self._env.step_dt)
 
     self.racket_hit_edge[:] = racket_hit_edge
     self.bounce_edge[:] = bounce_edge
     self.crossed_net_edge[:] = crossed_net_edge
     self.landing_in_bounds_edge[:] = landing_in_bounds_edge
+    self.first_bounce_after_hit_edge[:] = first_bounce_after_hit_edge
     self.racket_hit_count += racket_hit_edge.long()
     self.bounce_count += bounce_edge.long()
     self.successful_return_count += landing_in_bounds_edge.long()
@@ -181,9 +217,30 @@ class TennisHitTracker:
     self.episode_bounce_count += bounce_edge.long()
     self.episode_crossed_net_count += crossed_net_edge.long()
     self.episode_landing_in_bounds_count += landing_in_bounds_edge.long()
+    self.episode_first_bounce_after_hit_count += first_bounce_after_hit_edge.long()
     self.has_racket_hit |= racket_hit_edge
     self.has_crossed_net |= crossed_net_edge
     self.has_landed_in_bounds |= landing_in_bounds_edge
+    self.has_first_bounce_after_hit |= first_bounce_after_hit_edge
+    self.hit_step[racket_hit_edge] = step
+    self.first_bounce_after_hit_step[first_bounce_after_hit_edge] = step
+    self.time_to_landing[first_bounce_after_hit_edge] = time_to_landing[
+      first_bounce_after_hit_edge
+    ]
+    self.episode_time_to_landing_count += first_bounce_after_hit_edge.long()
+    self.episode_time_to_landing_sum += torch.where(
+      first_bounce_after_hit_edge, time_to_landing, torch.zeros_like(time_to_landing)
+    )
+    self.episode_time_to_landing_min = torch.where(
+      first_bounce_after_hit_edge,
+      torch.minimum(self.episode_time_to_landing_min, time_to_landing),
+      self.episode_time_to_landing_min,
+    )
+    self.episode_time_to_landing_max = torch.where(
+      first_bounce_after_hit_edge,
+      torch.maximum(self.episode_time_to_landing_max, time_to_landing),
+      self.episode_time_to_landing_max,
+    )
 
     self._prev_contact[:] = contact_now
     self._prev_vz[:] = ball_vz
@@ -225,6 +282,38 @@ class TennisHitTracker:
     ready = active_mask & (self.recovery_steps_left <= 0)
     self.recovery_steps_left[ready] = 0
     return ready
+
+  def fast_landing_score(
+    self,
+    *,
+    t_min: float,
+    t_max: float,
+    require_in_bounds: bool = True,
+  ) -> torch.Tensor:
+    """Score short post-hit flight time once the returned ball lands.
+
+    The hit-to-first-landing time is mostly vertical motion:
+    z(t) = z0 + vz0 * t - 0.5 * g * t^2.  This score rewards low-arc returns
+    after a valid hit and net crossing; it is not a horizontal landing-depth
+    reward.
+    """
+    if t_max <= t_min:
+      raise ValueError("t_max must be greater than t_min.")
+    landing_edge = (
+      self.landing_in_bounds_edge
+      if require_in_bounds
+      else self.first_bounce_after_hit_edge
+    )
+    active = landing_edge & ~self.has_rewarded_fast_landing
+    score = (float(t_max) - self.time_to_landing) / (float(t_max) - float(t_min))
+    score = torch.clamp(score, min=0.0, max=1.0)
+    score = torch.where(active, score, torch.zeros_like(score))
+    if torch.any(active):
+      self.has_rewarded_fast_landing |= active
+      self.last_fast_landing_score[active] = score[active]
+      self.episode_fast_landing_reward_count += active.long()
+      self.episode_fast_landing_score_sum += score
+    return score
 
 
 def get_tennis_hit_tracker(

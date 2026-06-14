@@ -1,5 +1,7 @@
 wandb/
+wandb
 logs/
+logs
 onnx/
 videos/
 __pycache__/

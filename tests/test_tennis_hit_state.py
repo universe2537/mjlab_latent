@@ -20,6 +20,7 @@ from mjlab.tasks.tennis.mdp.hit_state import TennisHitTracker
 from mjlab.tasks.tennis.mdp.observations import ball_predicted_hit_point_b
 from mjlab.tasks.tennis.mdp.rewards import (
   post_hit_ball_velocity_direction,
+  post_hit_low_arc_quality_reward,
   post_hit_x_progress,
 )
 
@@ -48,6 +49,7 @@ def _make_env() -> tuple[Any, Any, Any]:
     num_envs=1,
     device="cpu",
     common_step_counter=0,
+    step_dt=0.02,
     scene=_Scene(
       torch.zeros(1, 3, dtype=torch.float32),
       {
@@ -206,9 +208,32 @@ def _make_velocity_reward(env: Any) -> post_hit_ball_velocity_direction:
   return post_hit_ball_velocity_direction(cfg, env)
 
 
+def _make_low_arc_reward(env: Any) -> post_hit_low_arc_quality_reward:
+  params = _low_arc_params()
+  cfg = RewardTermCfg(
+    func=post_hit_low_arc_quality_reward,
+    weight=1.0,
+    params=params,
+  )
+  return post_hit_low_arc_quality_reward(cfg, env)
+
+
+def _low_arc_params() -> dict[str, Any]:
+  params = {
+    **_progress_params(),
+    "fast_landing_t_min": 0.02,
+    "fast_landing_t_max": 0.10,
+    "require_in_bounds": True,
+  }
+  params.pop("max_progress")
+  return params
+
+
 def test_tennis_hit_tracker_marks_in_bounds_landing_success() -> None:
   env, ball, sensor = _make_env()
   tracker = _make_tracker(env)
+  env._tennis_hit_tracker = tracker
+  reward = _make_low_arc_reward(env)
 
   tracker.update()
   assert not tracker.racket_hit_edge[0]
@@ -235,11 +260,19 @@ def test_tennis_hit_tracker_marks_in_bounds_landing_success() -> None:
   tracker.update()
   assert tracker.bounce_edge[0]
   assert tracker.landing_in_bounds_edge[0]
+  assert tracker.first_bounce_after_hit_edge[0]
+  assert tracker.time_to_landing[0] == torch.tensor(0.04)
+  score = reward(cast(Any, env), **_low_arc_params())
+  assert torch.allclose(score, torch.tensor([0.75]))
+  assert reward(cast(Any, env), **_low_arc_params())[0] == 0.0
   assert tracker.has_landed_in_bounds[0]
   assert tracker.successful_return_count[0] == 1
   assert tracker.episode_racket_hit_count[0] == 1
   assert tracker.episode_crossed_net_count[0] == 1
   assert tracker.episode_landing_in_bounds_count[0] == 1
+  assert tracker.episode_first_bounce_after_hit_count[0] == 1
+  assert tracker.episode_fast_landing_reward_count[0] == 1
+  assert torch.allclose(tracker.episode_fast_landing_score_sum, torch.tensor([0.75]))
 
   tracker.reset_rally(torch.tensor([0]))
   assert tracker.successful_return_count[0] == 1
@@ -249,12 +282,14 @@ def test_tennis_hit_tracker_marks_in_bounds_landing_success() -> None:
   assert not tracker.has_racket_hit[0]
   assert not tracker.has_crossed_net[0]
   assert not tracker.has_landed_in_bounds[0]
+  assert not tracker.has_rewarded_fast_landing[0]
 
   tracker.reset(torch.tensor([0]))
   assert tracker.successful_return_count[0] == 0
   assert tracker.episode_racket_hit_count[0] == 0
   assert tracker.episode_crossed_net_count[0] == 0
   assert tracker.episode_landing_in_bounds_count[0] == 0
+  assert tracker.episode_fast_landing_reward_count[0] == 0
 
 
 def test_tennis_hit_tracker_rejects_out_of_bounds_landing() -> None:
@@ -354,7 +389,15 @@ def test_continuous_ball_state_counts_successful_air_return() -> None:
   ball.data.root_link_lin_vel_w[:] = torch.tensor([[-2.0, 0.0, 1.0]])
   state.update()
   assert state.successful_return_edge[0]
+  assert state.first_bounce_after_hit_edge[0]
+  assert torch.allclose(state.time_to_landing, torch.tensor([0.04]))
+  score = state.fast_landing_score(t_min=0.02, t_max=0.10)
+  assert torch.allclose(score, torch.tensor([0.75]))
+  assert state.fast_landing_score(t_min=0.02, t_max=0.10)[0] == 0.0
   assert state.successful_return_count[0] == 1
+  assert state.episode_first_bounce_after_hit_count[0] == 1
+  assert state.episode_fast_landing_reward_count[0] == 1
+  assert torch.allclose(state.episode_fast_landing_score_sum, torch.tensor([0.75]))
   assert state.phase[0] == PHASE_RECOVERY
   assert not state.fault_edge[0]
 
