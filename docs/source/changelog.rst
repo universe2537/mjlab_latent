@@ -8,6 +8,11 @@ Upcoming version (not yet released)
 Added
 ^^^^^
 
+- Added ``Mjlab-Pingpong-Hit-Unitree-G1`` and
+  ``Mjlab-Pingpong-Return-Unitree-G1`` table-tennis tasks for the
+  racket-equipped G1. The v1 tasks use programmatic table, net, ball, and
+  paddle collision geometry, reuse the frozen tennis latent decoder, and
+  track legal single-return events through a dedicated pingpong rally state.
 - Added ``Mjlab-Velocity-Stairs-Unitree-Go1``, a Go1 velocity task with a
   mixed ascending/descending pyramid-stair curriculum whose peak height grows
   to the robot's nominal body height, along with stair-specific reward shaping

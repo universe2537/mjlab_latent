@@ -47,6 +47,100 @@
     commands, failures, or next steps change.
   </p>
 
+  <h2>2026-06-20 Pingpong V1 Task</h2>
+  <ul>
+    <li>
+      Added a new table-tennis task family under <code>src/mjlab/tasks/pingpong</code>.
+      Registered task IDs are <code>Mjlab-Pingpong-Hit-Unitree-G1</code> and
+      <code>Mjlab-Pingpong-Return-Unitree-G1</code>.
+    </li>
+    <li>
+      V1 uses programmatic MuJoCo geometry for the table, net, ball, and
+      a small paddle collision proxy. The G1 config reuses the existing
+      G1-with-racket XML through a spec wrapper that renames and shrinks the
+      racket collision/site to <code>pingpong_paddle_collision</code> and
+      <code>pingpong_paddle_center</code>, leaving the shared tennis XML
+      untouched.
+    </li>
+    <li>
+      The task still uses the frozen tennis latent decoder checkpoint:
+      <code>logs/rsl_rl/g1_distillation/distill_cloud_unitree_racket_tennis_2026-05-12_09-35-14/model_30000.pt</code>.
+      <code>Hit</code> terminates on the first legal post-bounce paddle contact;
+      <code>Return</code> adds post-hit shaping and succeeds when the ball clears
+      the net and bounces on the opponent table.
+    </li>
+    <li>
+      Verified checks:
+      <code>uv run pytest tests/test_pingpong_state.py tests/test_pingpong_task.py -q</code>,
+      <code>uv run ty check src/mjlab/tasks/pingpong tests/test_pingpong_task.py tests/test_pingpong_state.py</code>,
+      and
+      <code>uv run ruff check src/mjlab/tasks/pingpong tests/test_pingpong_task.py tests/test_pingpong_state.py</code>.
+    </li>
+    <li>
+      Version 1 marker: the 8192-env hit run
+      <code>logs/rsl_rl/g1_pingpong_latent_hit/pingpong_hit_8192env_gpu2_4_2026-06-21_23-07-11</code>
+      reached the "chase and hit the ball" milestone. At iteration
+      <code>19210/33000</code>, curriculum was at stage <code>5</code>,
+      <code>paddle_hit_count</code> was about <code>0.62</code>, and curriculum
+      success rate was about <code>0.61</code>. Latest saved checkpoint observed:
+      <code>model_19000.pt</code>. Main caveat: <code>Mean action std</code> had
+      risen to about <code>694</code>, so future runs should lower entropy or
+      otherwise constrain exploration before treating this as a stable policy.
+    </li>
+  </ul>
+
+  <h2>2026-06-18 Cross Sim2Sim Export</h2>
+  <ul>
+    <li>
+      Added <code>sim2sim.md</code> as the dedicated Cross sim2sim contract. It
+      records the verified <code>model_59998.pt</code> checkpoint, 127-dimensional
+      actor observation layout, 29-joint order, ball history ordering, predicted
+      hit-point convention, and low-level joint target semantics.
+    </li>
+    <li>
+      Verified render for <code>Mjlab-Tennis-Cross-Unitree-G1</code> with
+      <code>logs/rsl_rl/g1_tennis_latent_cross/tennis_cross_from_hit_2026-05-21_15-21-12/model_59998.pt</code>.
+      Output video:
+      <code>logs/rsl_rl/g1_tennis_latent_cross/sim2sim_check_model_59998_2026-06-18/videos/play/rl-video-step-0.mp4</code>.
+      Runtime logs confirmed actor obs <code>(127,)</code>, actor MLP input
+      <code>127</code>, and 16-dimensional high-level latent action.
+    </li>
+    <li>
+      Exported ONNX:
+      <code>logs/rsl_rl/g1_tennis_latent_cross/sim2sim_check_model_59998_2026-06-18/model_59998_sim2sim.onnx</code>.
+      It takes <code>obs[1,127]</code> and returns <code>latent_actions[1,16]</code>
+      plus <code>joint_actions[1,29]</code>. <code>onnx.checker</code> passed, and
+      ONNX Runtime matched the PyTorch export wrapper on a real reset observation
+      with max absolute diffs <code>0.0078125</code> for latent actions and
+      <code>0.001708984375</code> for joint actions.
+    </li>
+  </ul>
+
+  <h2>2026-06-17 Agent Playbook Refresh</h2>
+  <ul>
+    <li>
+      <code>AGENTS.md</code> was rewritten as a repository-specific Chinese
+      collaboration playbook. It now combines the general AI-agent workflow
+      rules with this fork's concrete task registry, training/play CLI behavior,
+      resume precedence, project memory files, Tennis/Tracking/Distillation
+      caveats, validation commands, and workspace-protection rules.
+    </li>
+    <li>
+      Future agents should read <code>AGENTS.md</code> first, then use
+      <code>summary.html</code> for concise current memory and
+      <code>experiment.html</code> for historical Tennis experiment context.
+      Treat <code>command.md</code> as a user-owned local command notebook and
+      do not modify or commit it unless asked.
+    </li>
+    <li>
+      The refresh was based on current source files under
+      <code>src/mjlab/tasks</code>, CLI entry points in
+      <code>src/mjlab/scripts</code>, tests, <code>pyproject.toml</code>,
+      <code>Makefile</code>, changelog, and existing experiment memory.
+      Source/config still outrank memory files when they disagree.
+    </li>
+  </ul>
+
   <h2>2026-05-28 Continuous Tennis Redesign</h2>
   <ul>
     <li>
