@@ -18,18 +18,6 @@ uv run train Mjlab-Pingpong-Hit-Unitree-G1 \
   --agent.run-name pingpong_hit_8192env_gpu2_4 --agent.resume True --agent.load-checkpoint-file logs/rsl_rl/g1_pingpong_latent_hit/pingpong_hit_4096env_gpu2_4_2026-06-20_19-52-48/model_3000.pt
 ```
 
-Detached tmux resume:
-
-```sh
-tmux new-session -d -s pingpang 'cd /home/universe/workspace/mjlab_latent && source .venv/bin/activate && WANDB_MODE=offline uv run train Mjlab-Pingpong-Hit-Unitree-G1 --env.scene.num-envs 8192 --gpu-ids "[2,4]" --agent.max-iterations 30000 --agent.run-name pingpong_hit_8192env_gpu2_4_resume --agent.resume True --agent.load-checkpoint-file logs/rsl_rl/g1_pingpong_latent_hit/pingpong_hit_4096env_gpu2_4_2026-06-20_19-52-48/model_3000.pt'
-```
-
-```sh
-tmux attach -t pingpang
-tmux capture-pane -pt pingpang -S -120
-tmux kill-session -t pingpang
-```
-
 Resume the interrupted run from the latest saved checkpoint:
 
 ```sh
@@ -46,7 +34,7 @@ uv run train Mjlab-Pingpong-Hit-Unitree-G1 \
 
 ```sh
 uv run play Mjlab-Pingpong-Hit-Unitree-G1 \
-  --checkpoint-file logs/rsl_rl/g1_pingpong_latent_hit/pingpong_hit_8192env_gpu2_4_2026-06-21_23-07-11/model_19000.pt \
+  --checkpoint-file logs/rsl_rl/g1_pingpong_latent_hit/pingpong_hit_v3_collision_10240env_gpu1_2_from15500_2026-06-23_17-00-15/model_0.pt \
   --viewer viser
 ```
 

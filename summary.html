@@ -47,6 +47,136 @@
     commands, failures, or next steps change.
   </p>
 
+  <h2>2026-06-23 Pingpong V3 Training</h2>
+  <ul>
+    <li>
+      Active v3 training is running in tmux session <code>pingpang_v3</code> on
+      GPU <code>[1,2]</code> with <code>10240</code> envs. Run name:
+      <code>pingpong_hit_v3_collision_10240env_gpu1_2_from15500</code>. Output:
+      <code>logs/rsl_rl/g1_pingpong_latent_hit/pingpong_hit_v3_collision_10240env_gpu1_2_from15500_2026-06-23_17-00-15</code>.
+    </li>
+    <li>
+      It warm-starts from
+      <code>logs/rsl_rl/g1_pingpong_latent_hit/pingpong_hit_v2_8192env_gpu2_1_from23000_2026-06-22_20-36-48/model_15500.pt</code>,
+      resets resume progress, and keeps entropy coef <code>0.003</code>.
+      Startup wrote <code>params/env.yaml</code>, <code>params/agent.yaml</code>,
+      TensorBoard event, <code>model_0.pt</code>, and ONNX.
+    </li>
+    <li>
+      Failed attempts before the active run: <code>16384</code> envs on
+      GPU <code>[1,3,4,7]</code> OOMed during Warp CUDA graph creation, and
+      <code>10240</code> envs on GPU <code>[1,2,3,4]</code> OOMed during Warp
+      CUDA graph launch because GPUs 3/4 were already heavily occupied.
+    </li>
+  </ul>
+
+  <h2>2026-06-23 Ball-Sport Geometry and Pingpong Feeds</h2>
+  <ul>
+    <li>
+      Pingpong provider semantics were corrected after the earlier
+      <code>edge_second_bounce</code> interpretation proved wrong. The feeder
+      now generates generic first-bounce table-tennis feeds: sample a table
+      spawn point on the opponent side, sample the first bounce on the robot
+      side, compute per-sample net-clearance <code>vz_min</code>, sample upward
+      <code>vz</code>, and solve <code>vx/vy</code>.
+    </li>
+    <li>
+      Geometry is now scene-driven through the sport-agnostic
+      <code>BallSportGeometry</code> / <code>resolve_ball_sport_geometry</code>
+      helper. It resolves opponent/self half bounds, net plane/top, ball
+      radius, optional bounce/landing plane, and contact metadata from
+      <code>env.scene</code> and <code>env.sim.model</code>. Pingpong provider
+      logic no longer imports table half-length/width or net height constants.
+    </li>
+    <li>
+      Long-ball behavior is a profile constraint, not provider identity.
+      The default Pingpong Hit profile uses relative ranges
+      (<code>target_x_range_mode="self_baseline_margin"</code>,
+      <code>target_y_range_mode="field_fraction"</code>) and
+      <code>TrajectoryCheckCfg</code> to require net clearance, robot-side
+      first bounce, baseline edge crossing, and predicted second bounce outside
+      the self half.
+    </li>
+    <li>
+      <code>ball_predicted_edge_hit_point_b</code> now uses the same scene
+      geometry and predicts the post-bounce trajectory's intersection with the
+      robot-side baseline plane, not a second table-bounce point.
+    </li>
+    <li>
+      Deployment-facing actor observation semantics: Pingpong
+      <code>ball_pos_window</code> is now a 10-frame history of ball-center
+      position in robot-base frame via <code>ball_position_b</code>, not
+      ball-to-paddle displacement. The predicted hit point remains
+      robot-base-frame <code>(x, y, z, t)</code>.
+    </li>
+    <li>
+      Pingpong ball/table contact was calibrated with local ignored
+      <code>contact_test</code> experiments. Best set:
+      <code>stable_088_low_friction</code>, output
+      <code>contact_test/results/2026-06-23_16-51-41</code>, videos under
+      <code>videos/</code>. Metrics: mean <code>e_z ~= 0.901</code>,
+      mean horizontal retention <code>~= 0.937</code>. Main scene now uses
+      ball/table friction <code>(0.04, 0.002, 0.0001)</code>,
+      <code>solref=(0.002, 0.50)</code>,
+      <code>solimp=(0.93, 0.98, 0.001)</code>; provider/observation
+      post-bounce scales are <code>horizontal=0.94</code>,
+      <code>vertical=0.90</code>.
+    </li>
+    <li>
+      Verified:
+      <code>uv run pytest tests/test_ball_sport_geometry.py tests/test_pingpong_provider.py tests/test_pingpong_observations.py tests/test_pingpong_task.py tests/test_pingpong_state.py -q</code>,
+      <code>uv run ruff check src/mjlab/tasks/ball_sports src/mjlab/tasks/pingpong tests/test_ball_sport_geometry.py tests/test_pingpong_provider.py tests/test_pingpong_task.py tests/test_pingpong_state.py tests/test_pingpong_observations.py</code>,
+      and
+      <code>uv run ty check src/mjlab/tasks/ball_sports src/mjlab/tasks/pingpong tests/test_ball_sport_geometry.py tests/test_pingpong_provider.py tests/test_pingpong_task.py tests/test_pingpong_state.py tests/test_pingpong_observations.py</code>.
+    </li>
+  </ul>
+
+  <h2>2026-06-22 Pingpong V2 Geometry and Edge Feeds</h2>
+  <ul>
+    <li>
+      Default Pingpong Hit/Return now use a smaller table-tennis paddle in the
+      G1 spec wrapper. The pingpong wrapper renames and scales the
+      <code>tennis_racket</code> visual mesh to
+      <code>pingpong_paddle_visual</code>, sets
+      <code>pingpong_paddle_collision</code> radius to <code>0.065</code>, and
+      aligns <code>pingpong_paddle_center</code> to the scaled paddle. The
+      shared tennis XML remains untouched.
+    </li>
+    <li>
+      Added <code>robot_table_contact</code> contact sensing plus
+      <code>robot_table_contact</code> reward penalty and
+      <code>robot_table_contact_count</code> metric. Table contact is penalized
+      but does not terminate episodes.
+    </li>
+    <li>
+      Superseded on 2026-06-23: the temporary
+      <code>edge_second_bounce</code> feeder was replaced with a scene-driven
+      first-bounce provider plus configurable long-ball trajectory checks.
+      Actor and critic <code>predicted_hit_point</code> still use
+      <code>ball_predicted_edge_hit_point_b</code>, preserving the existing
+      <code>(x, y, z, t)</code> observation shape.
+    </li>
+    <li>
+      Verified:
+      <code>uv run pytest tests/test_pingpong_state.py tests/test_pingpong_task.py tests/test_pingpong_observations.py -q</code>,
+      <code>uv run ruff check src/mjlab/tasks/pingpong tests/test_pingpong_state.py tests/test_pingpong_task.py tests/test_pingpong_observations.py</code>,
+      and
+      <code>uv run ty check src/mjlab/tasks/pingpong tests/test_pingpong_task.py tests/test_pingpong_state.py tests/test_pingpong_observations.py</code>.
+    </li>
+    <li>
+      V2 training was launched in tmux session <code>pingpang_v2</code> on GPU
+      <code>[2,1]</code> with run name
+      <code>pingpong_hit_v2_8192env_gpu2_1_from23000</code>. It warm-starts from
+      <code>logs/rsl_rl/g1_pingpong_latent_hit/pingpong_hit_8192env_gpu2_4_2026-06-21_23-07-11/model_23000.pt</code>,
+      resets optimizer/iteration/env progress, uses entropy coef
+      <code>0.003</code>, and logs offline under
+      <code>logs/rsl_rl/g1_pingpong_latent_hit/pingpong_hit_v2_8192env_gpu2_1_from23000_2026-06-22_20-36-48</code>.
+      Early iteration 2 showed <code>paddle_hit_count ~= 0.13</code> and
+      <code>robot_table_contact_count ~= 2.89</code>; action std remained high
+      at about <code>842</code> because it was loaded from the V1 checkpoint.
+    </li>
+  </ul>
+
   <h2>2026-06-20 Pingpong V1 Task</h2>
   <ul>
     <li>

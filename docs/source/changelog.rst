@@ -76,6 +76,18 @@ Added
 Changed
 ^^^^^^^
 
+- Updated the default Pingpong Hit/Return tasks to use a scaled table-tennis
+  paddle visual/collision proxy, penalize robot-table contacts without
+  terminating episodes, and generate scene-driven first-bounce feeds through a
+  generic ball-sport geometry abstraction. The current long-ball profile
+  targets robot-side baseline edge crossings instead of a second table bounce.
+- Updated the Pingpong actor ``ball_pos_window`` observation to use a
+  10-frame history of ball-center position in the robot base frame, matching
+  the intended deployment signal.
+- Calibrated Pingpong ball/table contact with local no-spin drop and oblique
+  bounce experiments, then updated ball/table contact parameters and
+  post-bounce prediction scales to better match a realistic table-tennis
+  rebound.
 - Bumped ``mujoco`` to 3.8 and ``mujoco-warp`` to 3.8.0. The ``multiccd``
   enable flag was removed in mujoco 3.8 (it became default-on), so configs
   that listed ``"multiccd"`` in ``MujocoCfg.enableflags`` need to drop it.

@@ -17,7 +17,10 @@ from mjlab.scene import SceneCfg
 from mjlab.sensor import ContactMatch, ContactSensorCfg
 from mjlab.sim import MujocoCfg, SimulationCfg
 from mjlab.tasks.pingpong import mdp
-from mjlab.tasks.pingpong.mdp.ball_providers import TableTennisFeederCfg
+from mjlab.tasks.pingpong.mdp.ball_providers import (
+  TableTennisFeederCfg,
+  TrajectoryCheckCfg,
+)
 from mjlab.tasks.pingpong.scene import (
   BALL_CENTER_TABLE_Z,
   NET_TOP_Z,
@@ -38,15 +41,18 @@ _BALL_CFG = SceneEntityCfg("ball")
 _TABLE_CFG = SceneEntityCfg("table")
 _PADDLE_BALL_SENSOR = "paddle_ball_contact"
 _BALL_NET_SENSOR = "pingpong_ball_net_contact"
+_ROBOT_TABLE_SENSOR = "robot_table_contact"
 
 ROBOT_RESET_X_RANGE = (TABLE_HALF_LENGTH + 0.36, TABLE_HALF_LENGTH + 0.58)
 ROBOT_RESET_Y_RANGE = (-0.18, 0.18)
 ROBOT_RESET_YAW = math.pi
 
-BALL_TARGET_INITIAL_X_RANGE = (0.58, 0.72)
-BALL_TARGET_INITIAL_Y_RANGE = (-0.10, 0.10)
-BALL_TARGET_X_RANGE = (0.25, TABLE_HALF_LENGTH - 0.18)
-BALL_TARGET_Y_RANGE = (-TABLE_HALF_WIDTH * 0.70, TABLE_HALF_WIDTH * 0.70)
+# Provider target x ranges are robot-side baseline margins when
+# target_x_range_mode="self_baseline_margin"; y ranges are half-field fractions.
+BALL_TARGET_INITIAL_X_RANGE = (0.30, 0.12)
+BALL_TARGET_INITIAL_Y_RANGE = (-0.13, 0.13)
+BALL_TARGET_X_RANGE = (0.50, 0.12)
+BALL_TARGET_Y_RANGE = (-0.70, 0.70)
 BALL_TARGET_CURRICULUM_SUCCESS_THRESHOLD = 0.75
 BALL_TARGET_CURRICULUM_WINDOW = 50
 BALL_TARGET_CURRICULUM_STAGES = 6
@@ -93,15 +99,28 @@ def _state_params() -> dict[str, object]:
 def _ball_provider_cfg() -> TableTennisFeederCfg:
   return TableTennisFeederCfg(
     ball_cfg=_BALL_CFG,
-    spawn_x_range=(-1.18, -0.28),
-    spawn_y_range=(-TABLE_HALF_WIDTH * 0.55, TABLE_HALF_WIDTH * 0.55),
-    spawn_z_range=(1.05, 1.35),
+    spawn_x_range=(0.20, 0.20),
+    spawn_x_range_mode="opponent_side_margin",
+    spawn_y_range=(-0.55, 0.55),
+    spawn_y_range_mode="field_fraction",
     target_x_range=BALL_TARGET_INITIAL_X_RANGE,
+    target_x_range_mode="self_baseline_margin",
     target_y_range=BALL_TARGET_INITIAL_Y_RANGE,
-    flight_time_range=(0.55, 0.85),
-    target_z=BALL_CENTER_TABLE_Z,
-    net_top_z=NET_TOP_Z,
-    net_clearance=0.06,
+    target_y_range_mode="field_fraction",
+    vz_std=0.35,
+    vz_max=3.4,
+    post_bounce_horizontal_scale=0.94,
+    post_bounce_vertical_scale=0.90,
+    check=TrajectoryCheckCfg(
+      require_edge_crossing=True,
+      require_second_bounce_outside_self_half=True,
+      net_clearance=0.06,
+      edge_clearance=0.02,
+      second_bounce_outside_margin=0.06,
+      flight_time_range=(0.32, 0.75),
+      vx_range=(2.0, 8.0),
+      vy_abs_max=2.0,
+    ),
   )
 
 
@@ -135,9 +154,8 @@ def make_pingpong_latent_env_cfg() -> ManagerBasedRlEnvCfg:
   }
   actor_terms = dict(proprio_actor)
   actor_terms["ball_pos_window"] = ObservationTermCfg(
-    func=mdp.racket_to_ball_b,
+    func=mdp.ball_position_b,
     params={
-      "racket_cfg": _PADDLE_CFG,
       "ball_cfg": _BALL_CFG,
       "robot_cfg": _ROBOT_CFG,
     },
@@ -146,7 +164,7 @@ def make_pingpong_latent_env_cfg() -> ManagerBasedRlEnvCfg:
     flatten_history_dim=True,
   )
   actor_terms["predicted_hit_point"] = ObservationTermCfg(
-    func=mdp.ball_predicted_hit_point_b,
+    func=mdp.ball_predicted_edge_hit_point_b,
     params={
       "ball_cfg": _BALL_CFG,
       "robot_cfg": _ROBOT_CFG,
@@ -187,7 +205,7 @@ def make_pingpong_latent_env_cfg() -> ManagerBasedRlEnvCfg:
         },
       ),
       "ball_predicted_hit_point": ObservationTermCfg(
-        func=mdp.ball_predicted_hit_point_b,
+        func=mdp.ball_predicted_edge_hit_point_b,
         params={
           "ball_cfg": _BALL_CFG,
           "robot_cfg": _ROBOT_CFG,
@@ -285,6 +303,19 @@ def make_pingpong_latent_env_cfg() -> ManagerBasedRlEnvCfg:
     num_slots=1,
     history_length=4,
   )
+  robot_table_sensor = ContactSensorCfg(
+    name=_ROBOT_TABLE_SENSOR,
+    primary=ContactMatch(mode="subtree", pattern="pelvis", entity="robot"),
+    secondary=ContactMatch(
+      mode="geom",
+      pattern=r"pingpong_(table_top_collision|net_collision)",
+      entity="table",
+    ),
+    fields=("found", "force"),
+    reduce="none",
+    num_slots=8,
+    history_length=4,
+  )
   state_params = _state_params()
   rewards = {
     "self_table_bounce_event": RewardTermCfg(
@@ -339,6 +370,15 @@ def make_pingpong_latent_env_cfg() -> ManagerBasedRlEnvCfg:
       func=mdp.low_level_action_rate_l2,
       weight=-0.02,
       params={"action_name": "latent_joint_pos"},
+    ),
+    "robot_table_contact": RewardTermCfg(
+      func=mdp.robot_table_contact_penalty,
+      weight=-5.0,
+      params={
+        "sensor_name": _ROBOT_TABLE_SENSOR,
+        "force_threshold": 5.0,
+        "max_count": 4.0,
+      },
     ),
     "fall_penalty": RewardTermCfg(
       func=mdp.termination_terms_any,
@@ -397,6 +437,14 @@ def make_pingpong_latent_env_cfg() -> ManagerBasedRlEnvCfg:
       reduce="last",
       params=dict(state_params),
     ),
+    "robot_table_contact_count": MetricsTermCfg(
+      func=mdp.robot_table_contact_count_metric,
+      reduce="last",
+      params={
+        "sensor_name": _ROBOT_TABLE_SENSOR,
+        "force_threshold": 5.0,
+      },
+    ),
   }
   curriculum = {
     "ball_target_region": CurriculumTermCfg(
@@ -421,7 +469,7 @@ def make_pingpong_latent_env_cfg() -> ManagerBasedRlEnvCfg:
         "ball": get_pingpong_ball_cfg(),
         "table": get_pingpong_table_cfg(),
       },
-      sensors=(paddle_ball_sensor, ball_net_sensor),
+      sensors=(paddle_ball_sensor, ball_net_sensor, robot_table_sensor),
       num_envs=1,
       env_spacing=5.0,
       extent=3.0,

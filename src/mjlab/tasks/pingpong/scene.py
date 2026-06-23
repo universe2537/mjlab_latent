@@ -45,9 +45,9 @@ def get_pingpong_ball_spec() -> mujoco.MjSpec:
     condim=3,
   )
   geom.material = "pingpong_ball_mat"
-  geom.friction[:] = (0.15, 0.005, 0.0001)
-  geom.solref[:] = (0.002, 0.7)
-  geom.solimp[:3] = (0.9, 0.95, 0.001)
+  geom.friction[:] = (0.04, 0.002, 0.0001)
+  geom.solref[:] = (0.002, 0.50)
+  geom.solimp[:3] = (0.93, 0.98, 0.001)
 
   body.add_site(
     name="pingpong_ball_center",
@@ -105,9 +105,9 @@ def get_pingpong_table_spec() -> mujoco.MjSpec:
     material="pingpong_table_blue",
     collidable=True,
   )
-  top.friction[:] = (0.45, 0.005, 0.0001)
-  top.solref[:] = (0.003, 0.8)
-  top.solimp[:3] = (0.9, 0.95, 0.001)
+  top.friction[:] = (0.04, 0.002, 0.0001)
+  top.solref[:] = (0.002, 0.50)
+  top.solimp[:3] = (0.93, 0.98, 0.001)
 
   # White outline and center line, visual only.
   add_box(

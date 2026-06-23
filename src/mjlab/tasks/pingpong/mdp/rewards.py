@@ -20,6 +20,40 @@ _PADDLE_CFG = SceneEntityCfg("robot", site_names=("pingpong_paddle_center",))
 _BALL_CFG = SceneEntityCfg("ball")
 
 
+def _contact_substep_count(
+  env: ManagerBasedRlEnv,
+  sensor_name: str,
+  force_threshold: float,
+  max_count: float | None = None,
+) -> torch.Tensor:
+  sensor = env.scene[sensor_name]
+  data = sensor.data
+  if data.force_history is not None:
+    force_mag = torch.linalg.vector_norm(data.force_history, dim=-1)
+    hit = (force_mag > force_threshold).any(dim=1)
+    count = hit.sum(dim=-1).float()
+  elif data.force is not None:
+    force_mag = torch.linalg.vector_norm(data.force, dim=-1)
+    count = (force_mag > force_threshold).any(dim=1).float()
+  elif data.found is not None:
+    count = (data.found > 0).any(dim=1).float()
+  else:
+    raise ValueError(f"Contact sensor {sensor_name!r} must expose force or found.")
+  if max_count is not None:
+    count = torch.clamp(count, max=max_count)
+  return count
+
+
+def robot_table_contact_penalty(
+  env: ManagerBasedRlEnv,
+  sensor_name: str,
+  force_threshold: float = 5.0,
+  max_count: float = 4.0,
+) -> torch.Tensor:
+  """Penalty signal for robot or paddle contacts with the table/net."""
+  return _contact_substep_count(env, sensor_name, force_threshold, max_count)
+
+
 class paddle_to_ball_after_bounce_dense(PingpongRallyStateTerm):
   """Reward keeping the paddle near the ball after the legal self-table bounce."""
 
@@ -229,5 +263,6 @@ __all__ = [
   "paddle_towards_ball_velocity",
   "post_hit_ball_velocity_direction",
   "post_hit_x_progress",
+  "robot_table_contact_penalty",
   "self_table_bounce_event",
 ]

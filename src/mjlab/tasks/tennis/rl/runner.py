@@ -171,11 +171,13 @@ class _OnnxTennisLatentModel(nn.Module):
     self,
     actor,
     decoder_action: FrozenDecoderLatentJointPositionAction,
+    clip_actions: float | None = None,
   ) -> None:
     super().__init__()
     self.policy = actor.as_onnx(verbose=False)
     self.decoder = copy.deepcopy(decoder_action.decoder_model).to("cpu")
     self.decoder.eval()
+    self.clip_actions = clip_actions
     self.register_buffer("state_indices", decoder_action.state_indices.to("cpu"))
     self.latent_dim = decoder_action.cfg.latent_dim
     self.use_latent_action_barrier = decoder_action.cfg.use_latent_action_barrier
@@ -197,6 +199,10 @@ class _OnnxTennisLatentModel(nn.Module):
 
   def forward(self, obs: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
     high_level_action = self.policy(obs)
+    if self.clip_actions is not None:
+      high_level_action = torch.clamp(
+        high_level_action, -self.clip_actions, self.clip_actions
+      )
     raw_latent = high_level_action[:, : self.latent_dim]
     state_indices = self.state_indices
     assert isinstance(state_indices, torch.Tensor)
@@ -275,7 +281,11 @@ class TennisLatentOnPolicyRunner(MjlabOnPolicyRunner):
   ) -> None:
     """Export the high-level policy together with the frozen decoder."""
     os.makedirs(path, exist_ok=True)
-    model = _OnnxTennisLatentModel(self.alg.get_policy(), self._decoder_action())
+    model = _OnnxTennisLatentModel(
+      self.alg.get_policy(),
+      self._decoder_action(),
+      clip_actions=self.cfg.get("clip_actions"),
+    )
     model.to("cpu")
     model.eval()
     obs = torch.zeros(1, model.policy.input_size)

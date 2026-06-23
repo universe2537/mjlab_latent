@@ -54,6 +54,18 @@ def racket_to_ball_b(
   return quat_apply_inverse(robot.data.root_link_quat_w, delta_w)
 
 
+def ball_position_b(
+  env: ManagerBasedRlEnv,
+  ball_cfg: SceneEntityCfg = _BALL_CFG,
+  robot_cfg: SceneEntityCfg = _ROBOT_CFG,
+) -> torch.Tensor:
+  """球心位置，以机器人基座坐标系表示。"""
+  robot: Entity = env.scene[robot_cfg.name]
+  ball: Entity = env.scene[ball_cfg.name]
+  delta_w = ball.data.root_link_pos_w - robot.data.root_link_pos_w
+  return quat_apply_inverse(robot.data.root_link_quat_w, delta_w)
+
+
 def ball_velocity_b(
   env: ManagerBasedRlEnv,
   ball_cfg: SceneEntityCfg = _BALL_CFG,

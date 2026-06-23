@@ -1,5 +1,8 @@
+.codex/
 wandb/
+wandb
 logs/
+logs
 onnx/
 videos/
 __pycache__/
@@ -13,6 +16,7 @@ artifacts/
 .venv/
 render_robots.py
 benchmark_results/
+/contact_test/
 
 # Documentation outputs.
 **/_build/*
