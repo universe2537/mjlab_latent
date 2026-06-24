@@ -45,7 +45,7 @@ class PlayConfig:
   video_height: int | None = None
   video_width: int | None = None
   camera: int | str | None = None
-  viewer: Literal["auto", "native", "viser"] = "auto"
+  viewer: Literal["auto", "native", "viser", "none"] = "auto"
   no_terminations: bool = False
   """Disable all termination conditions (useful for viewing motions with dummy agents)."""
   log_root: str = "logs/rsl_rl"
@@ -291,6 +291,20 @@ def run_play(task_id: str, cfg: PlayConfig):
     del has_display
   else:
     resolved_viewer = cfg.viewer
+
+  if resolved_viewer == "none":
+    if not cfg.video:
+      raise ValueError("`--viewer none` is only supported with `--video True`.")
+    print(f"[INFO] Running headless video loop for {cfg.video_length} steps")
+    try:
+      for _ in range(cfg.video_length):
+        with torch.no_grad():
+          obs = env.get_observations()
+          actions = policy(obs)
+          env.step(actions)
+    finally:
+      env.close()
+    return
 
   if resolved_viewer == "native":
     NativeMujocoViewer(env, policy).run()

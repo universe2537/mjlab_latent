@@ -715,6 +715,20 @@ run config 交叉验证。
 
 只读分析、路径检查、简单日志查看、启动教程默认不写。
 
+### 16.4 记录边界
+
+不要把所有小改动都写入项目记忆。以下修改默认只改目标文件，不额外更新
+`summary.html`、`VIBE_CODING_LOG.md` 或 `docs/source/changelog.rst`：
+
+- 纯文字、注释、命令笔记、协作规范或本地说明的小幅修正。
+- 不改变代码行为、训练配置、评测流程、数据契约或实验产物的小改动。
+- 用户明确说“不用记录”的整理性修改。
+
+以下情况仍然必须记录：影响训练/评测/部署行为，改变任务语义或 observation /
+reward / termination / provider 契约，新增或迁移实验资产，产生重要经验教训，
+或用户明确要求记录。若不确定，优先在最终回复中说明判断，而不是机械更新多个
+记忆文件。
+
 建议格式：
 
 ```md
@@ -773,6 +787,19 @@ Tennis 特别注意：
 ## 18. 长任务与 GPU 规则
 
 适用于训练、评测、渲染、数据批量转换、下载或上传。
+
+长时间训练默认优先使用 `tmux` 挂起，尤其是用户明确要求“启动训练”、
+“挂起任务”或“detach”时。推荐形式：
+
+```sh
+tmux new-session -d -s <session_name> -c /home/universe/workspace/mjlab_latent \
+  '<env vars> uv run train <TASK_ID> <overrides>'
+```
+
+启动后必须记录 session 名、task ID、GPU、run name、输出目录或日志查看方式。
+停止训练优先使用温和方式，例如 `tmux send-keys -t <session_name> C-c`；不要用
+`kill -9`，除非进程无法正常退出且用户确认。若 sandbox 无法访问 host tmux
+socket，需要按授权流程申请执行 `tmux`，用户明确允许后可以继续启动。
 
 启动前说明：
 

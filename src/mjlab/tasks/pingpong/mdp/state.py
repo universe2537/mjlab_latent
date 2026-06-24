@@ -33,6 +33,7 @@ FAULT_RETURN_OUT_OF_PLAY = 4
 FAULT_NET_CONTACT = 5
 FAULT_LOW_NET_CROSS = 6
 FAULT_INCOMING_MISS = 7
+FAULT_ILLEGAL_BODY_BALL_CONTACT = 8
 
 _DEFAULT_BALL_CFG = SceneEntityCfg("ball")
 _PINGPONG_RALLY_STATE_ATTR = "_pingpong_rally_state"
@@ -64,6 +65,7 @@ class PingpongRallyState:
     paddle_sensor_name: str,
     net_sensor_name: str,
     ball_cfg: SceneEntityCfg,
+    body_ball_sensor_name: str | None = None,
     force_threshold: float = 1.0,
     table_z: float = BALL_CENTER_TABLE_Z,
     net_x: float = NET_X,
@@ -79,6 +81,7 @@ class PingpongRallyState:
     self._env = env
     self.paddle_sensor_name = paddle_sensor_name
     self.net_sensor_name = net_sensor_name
+    self.body_ball_sensor_name = body_ball_sensor_name
     self.ball_cfg = ball_cfg
     self.force_threshold = force_threshold
     self.table_z = table_z
@@ -178,6 +181,12 @@ class PingpongRallyState:
     net_contact_now = _sensor_contact_now(
       self._env, self.net_sensor_name, self.force_threshold
     )
+    if self.body_ball_sensor_name is None:
+      body_ball_contact_now = torch.zeros_like(paddle_contact_now)
+    else:
+      body_ball_contact_now = _sensor_contact_now(
+        self._env, self.body_ball_sensor_name, self.force_threshold
+      )
     paddle_contact_edge = paddle_contact_now & ~self._prev_paddle_contact
     net_contact_edge = net_contact_now & ~self._prev_net_contact
     bounce_edge = (
@@ -190,8 +199,10 @@ class PingpongRallyState:
     on_opponent_table = self._in_box(ball_x, ball_y, self.opponent_x_limits)
 
     self_bounce_edge = bounce_edge & on_self_table & ~self.has_self_bounce
+    illegal_body_ball_contact = body_ball_contact_now
     legal_paddle_edge = (
       paddle_contact_edge & self.has_self_bounce & ~self.has_paddle_hit
+      & ~illegal_body_ball_contact
     )
     illegal_pre_bounce_hit = paddle_contact_edge & ~self.has_self_bounce
     extra_paddle_contact = paddle_contact_edge & self.has_paddle_hit
@@ -227,6 +238,7 @@ class PingpongRallyState:
       | return_out
       | return_net_contact
       | low_net_cross
+      | illegal_body_ball_contact
     )
 
     self._clear_step_edges()
@@ -260,6 +272,7 @@ class PingpongRallyState:
       return_net_contact,
       low_net_cross,
       incoming_miss,
+      illegal_body_ball_contact,
     )
     self.fault_reason[fault_edge] = fault_reason[fault_edge]
 
@@ -312,6 +325,7 @@ class PingpongRallyState:
     return_net_contact: torch.Tensor,
     low_net_cross: torch.Tensor,
     incoming_miss: torch.Tensor,
+    illegal_body_ball_contact: torch.Tensor,
   ) -> torch.Tensor:
     reason = torch.full_like(self.fault_reason, FAULT_NONE)
     reason = torch.where(
@@ -349,6 +363,11 @@ class PingpongRallyState:
       torch.full_like(reason, FAULT_INCOMING_MISS),
       reason,
     )
+    reason = torch.where(
+      illegal_body_ball_contact,
+      torch.full_like(reason, FAULT_ILLEGAL_BODY_BALL_CONTACT),
+      reason,
+    )
     return reason
 
 
@@ -358,6 +377,7 @@ def get_pingpong_rally_state(
   paddle_sensor_name: str,
   net_sensor_name: str,
   ball_cfg: SceneEntityCfg = _DEFAULT_BALL_CFG,
+  body_ball_sensor_name: str | None = None,
   force_threshold: float = 1.0,
   table_z: float = BALL_CENTER_TABLE_Z,
   net_x: float = NET_X,
@@ -378,6 +398,7 @@ def get_pingpong_rally_state(
     paddle_sensor_name=paddle_sensor_name,
     net_sensor_name=net_sensor_name,
     ball_cfg=ball_cfg,
+    body_ball_sensor_name=body_ball_sensor_name,
     force_threshold=force_threshold,
     table_z=table_z,
     net_x=net_x,
@@ -403,6 +424,7 @@ class PingpongRallyStateTerm:
       paddle_sensor_name=cfg.params["paddle_sensor_name"],
       net_sensor_name=cfg.params["net_sensor_name"],
       ball_cfg=cfg.params.get("ball_cfg", _DEFAULT_BALL_CFG),
+      body_ball_sensor_name=cfg.params.get("body_ball_sensor_name"),
       force_threshold=float(cfg.params.get("force_threshold", 1.0)),
       table_z=float(cfg.params.get("table_z", BALL_CENTER_TABLE_Z)),
       net_x=float(cfg.params.get("net_x", NET_X)),
@@ -431,6 +453,7 @@ class PingpongRallyStateTerm:
 
 __all__ = [
   "FAULT_EXTRA_PADDLE_CONTACT",
+  "FAULT_ILLEGAL_BODY_BALL_CONTACT",
   "FAULT_ILLEGAL_PRE_BOUNCE_HIT",
   "FAULT_INCOMING_MISS",
   "FAULT_LOW_NET_CROSS",

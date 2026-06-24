@@ -13,6 +13,10 @@ Added
   racket-equipped G1. The v1 tasks use programmatic table, net, ball, and
   paddle collision geometry, reuse the frozen tennis latent decoder, and
   track legal single-return events through a dedicated pingpong rally state.
+- Added a separate Pingpong paddle-handle collision cylinder for the
+  racket-equipped G1. The handle participates in robot-table and robot-ball
+  physics, while paddle-hit scoring remains restricted to the paddle-face
+  collision proxy.
 - Added ``Mjlab-Velocity-Stairs-Unitree-Go1``, a Go1 velocity task with a
   mixed ascending/descending pyramid-stair curriculum whose peak height grows
   to the robot's nominal body height, along with stair-specific reward shaping
@@ -81,6 +85,10 @@ Changed
   terminating episodes, and generate scene-driven first-bounce feeds through a
   generic ball-sport geometry abstraction. The current long-ball profile
   targets robot-side baseline edge crossings instead of a second table bounce.
+- Updated Pingpong Hit reward/fault semantics to discourage body-assisted ball
+  trapping: non-paddle robot-ball contact now faults the rally and receives a
+  modest penalty, while Hit uses a much larger sparse paddle-hit reward and
+  lower dense approach shaping.
 - Updated the Pingpong actor ``ball_pos_window`` observation to use a
   10-frame history of ball-center position in the robot base frame, matching
   the intended deployment signal.

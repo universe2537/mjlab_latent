@@ -47,11 +47,128 @@
     commands, failures, or next steps change.
   </p>
 
+  <h2>2026-06-24 Pingpong Clean V3 Restart</h2>
+  <ul>
+    <li>
+      Version naming was cleaned up: the previous V3, V3-collision, and V4
+      scratch experiment names should be treated as legacy V2-family records.
+      The clean mainline run is named
+      <code>pingpong_hit_v3_clean_contact_scratch_10240env_gpu1_2</code>.
+    </li>
+    <li>
+      Target launch parameters match the latest scratch setup:
+      <code>10240</code> envs, physical GPU <code>[1,2]</code>,
+      <code>30000</code> max iterations, <code>WANDB_MODE=offline</code>, and
+      <code>--agent.resume False</code>. Original tmux session:
+      <code>pingpang_v3_clean_10240</code>.
+    </li>
+    <li>
+      Host process check found no active pingpong train/tmux session. A stale
+      <code>play ... --viewer viser</code> process using the old V4 checkpoint
+      was stopped to free GPU resources. TensorBoard was left running.
+    </li>
+    <li>
+      The clean V3 run was started on 2026-06-24 at 11:35 CST. Output:
+      <code>logs/rsl_rl/g1_pingpong_latent_hit/pingpong_hit_v3_clean_contact_scratch_10240env_gpu1_2_2026-06-24_11-35-28</code>.
+      Startup produced <code>params/env.yaml</code>,
+      <code>params/agent.yaml</code>, a TensorBoard event file,
+      <code>model_0.pt</code>, ONNX export, and torchrunx logs.
+    </li>
+    <li>
+      The clean V3 run was stopped on 2026-06-24 at about 15:53 CST. Latest
+      checkpoint before stopping:
+      <code>logs/rsl_rl/g1_pingpong_latent_hit/pingpong_hit_v3_clean_contact_scratch_10240env_gpu1_2_2026-06-24_11-35-28/model_3500.pt</code>.
+    </li>
+    <li>
+      Active continuation is now tmux session
+      <code>pingpang_v3_collision</code>, run name <code>v3_collision</code>,
+      launched with the same <code>10240</code> envs, GPU <code>[1,2]</code>,
+      and <code>30000</code> max iterations, resuming from the clean V3
+      <code>model_3500.pt</code>. Output:
+      <code>logs/rsl_rl/g1_pingpong_latent_hit/v3_collision_2026-06-24_15-53-52</code>.
+    </li>
+  </ul>
+
+  <h2>2026-06-24 Pingpong Paddle Handle Collision</h2>
+  <ul>
+    <li>
+      The G1 pingpong paddle now has a separate
+      <code>pingpong_paddle_handle_collision</code> cylinder below the paddle
+      face. It is collidable (<code>contype=1</code>,
+      <code>conaffinity=1</code>) and therefore participates in table and ball
+      physics.
+    </li>
+    <li>
+      Scoring remains restricted to the face geom
+      <code>pingpong_paddle_collision</code>: <code>paddle_ball_contact</code>
+      still matches only that geom. The handle is not excluded from
+      <code>robot_ball_contact</code>, so handle-ball contact is treated as a
+      non-paddle robot-ball contact rather than a valid hit.
+    </li>
+    <li>
+      Formal-model visualization:
+      <code>contact_test/pingpong_paddle_formal_handle_collision_2026-06-24.png</code>.
+      The old clean V3 tmux training was stopped, and the active
+      <code>v3_collision</code> continuation was launched after this edit, so it
+      uses the new handle collision geometry.
+    </li>
+  </ul>
+
+  <h2>2026-06-24 Pingpong V4 Scratch Training and MuJoCo Video</h2>
+  <ul>
+    <li>
+      V3 training was stopped on 2026-06-24 around 00:05 CST via tmux
+      <code>C-c</code>. The last checkpoint observed before stopping was
+      <code>logs/rsl_rl/g1_pingpong_latent_hit/pingpong_hit_v3_collision_10240env_gpu1_2_from15500_2026-06-23_17-00-15/model_5500.pt</code>.
+    </li>
+    <li>
+      A high-resolution MuJoCo offscreen video was saved from
+      <code>model_5500.pt</code> with
+      <code>MUJOCO_GL=egl uv run play Mjlab-Pingpong-Hit-Unitree-G1 --checkpoint-file .../model_5500.pt --video True --video-length 2000 --video-height 1080 --video-width 1920 --num-envs 1 --device cuda:1 --viewer none</code>.
+      Output:
+      <code>logs/rsl_rl/g1_pingpong_latent_hit/pingpong_hit_v3_collision_10240env_gpu1_2_from15500_2026-06-23_17-00-15/videos/play/rl-video-step-0.mp4</code>.
+      The file is an MP4 of about <code>15M</code>. System
+      <code>ffprobe/ffmpeg</code> is not installed, so metadata was checked via
+      a simple MP4 box parser; track dimensions are <code>1920x1080</code>.
+    </li>
+    <li>
+      <code>src/mjlab/scripts/play.py</code> now supports
+      <code>--viewer none</code> for headless video capture. This keeps the
+      existing <code>VideoRecorder</code> and MuJoCo <code>rgb_array</code>
+      path, but skips both native and viser interactive viewers.
+    </li>
+    <li>
+      Superseded scratch attempt:
+      <code>pingpang_v4_scratch</code> used <code>8192</code> envs and was
+      stopped around iteration <code>370/30000</code> because the intended scale
+      is <code>512*20 = 10240</code> envs. Output remains at
+      <code>logs/rsl_rl/g1_pingpong_latent_hit/pingpong_hit_v4_contact_scratch_8192env_gpu1_2_2026-06-24_00-11-43</code>.
+    </li>
+    <li>
+      The 10240-env scratch training was started in tmux session
+      <code>pingpang_v4_scratch_10240</code> on physical GPU <code>[1,2]</code>.
+      After the later version cleanup, this run is treated as a legacy
+      V2-family comparison record. Command:
+      <code>WANDB_MODE=offline uv run train Mjlab-Pingpong-Hit-Unitree-G1 --env.scene.num-envs 10240 --gpu-ids "[1,2]" --agent.max-iterations 30000 --agent.run-name pingpong_hit_v4_contact_scratch_10240env_gpu1_2 --agent.resume False</code>.
+      Output:
+      <code>logs/rsl_rl/g1_pingpong_latent_hit/pingpong_hit_v4_contact_scratch_10240env_gpu1_2_2026-06-24_00-35-24</code>.
+    </li>
+    <li>
+      Resolved config confirms <code>num_envs: 10240</code>,
+      <code>resume: false</code>, and <code>max_iterations: 30000</code>.
+      Early health check at iteration <code>10/30000</code>: about
+      <code>128k</code> steps/s, <code>paddle_hit_count ~= 0.065</code>,
+      <code>self_table_bounce_count ~= 1.0</code>, and physical GPU
+      <code>1/2</code> around <code>90-95%</code> utilization.
+    </li>
+  </ul>
+
   <h2>2026-06-23 Pingpong V3 Training</h2>
   <ul>
     <li>
-      Active v3 training is running in tmux session <code>pingpang_v3</code> on
-      GPU <code>[1,2]</code> with <code>10240</code> envs. Run name:
+      V3 training previously ran in tmux session <code>pingpang_v3</code> on
+      GPU <code>[1,2]</code> with <code>10240</code> envs, and was stopped on
+      2026-06-24 after saving checkpoint <code>model_5500.pt</code>. Run name:
       <code>pingpong_hit_v3_collision_10240env_gpu1_2_from15500</code>. Output:
       <code>logs/rsl_rl/g1_pingpong_latent_hit/pingpong_hit_v3_collision_10240env_gpu1_2_from15500_2026-06-23_17-00-15</code>.
     </li>
@@ -451,6 +568,23 @@
     <li><code>uv run ty check src/mjlab/tasks/tennis/mdp/sonic_actions.py tests/test_tennis_task.py</code></li>
     <li><code>uv run train Mjlab-Tennis-Hit-SONIC-Encoder-Unitree-G1 --env.scene.num_envs 4096 --gpu-ids [7]</code></li>
     <li><code>uv run train Mjlab-Tennis-Cross-SONIC-Encoder-Unitree-G1 --env.scene.num_envs 4096 --gpu-ids [7]</code></li>
+  </ul>
+
+  <h2>Pingpong Reward Hacking Notes</h2>
+  <ul>
+    <li>
+      Pingpong Hit now treats non-paddle robot-ball contact as an illegal
+      rally fault through <code>robot_ball_contact</code>, with the paddle
+      collision excluded from that sensor. Same-step body and paddle contact
+      faults and does not count as <code>paddle_hit_event</code>.
+    </li>
+    <li>
+      Hit uses <code>paddle_hit_event.weight=2000.0</code>,
+      <code>approach_ball.weight=5.0</code>, and
+      <code>paddle_towards_ball.weight=2.0</code>. The body-ball penalty is
+      <code>-50.0</code>, about one order larger than table contact, and no
+      separate <code>robot_ball_contact_count</code> metric was added.
+    </li>
   </ul>
 
   <h2>Next Steps</h2>

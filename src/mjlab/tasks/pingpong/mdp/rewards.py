@@ -54,6 +54,16 @@ def robot_table_contact_penalty(
   return _contact_substep_count(env, sensor_name, force_threshold, max_count)
 
 
+def robot_ball_contact_penalty(
+  env: ManagerBasedRlEnv,
+  sensor_name: str,
+  force_threshold: float = 0.05,
+  max_count: float = 4.0,
+) -> torch.Tensor:
+  """Penalty signal for non-paddle robot contacts with the ball."""
+  return _contact_substep_count(env, sensor_name, force_threshold, max_count)
+
+
 class paddle_to_ball_after_bounce_dense(PingpongRallyStateTerm):
   """Reward keeping the paddle near the ball after the legal self-table bounce."""
 
@@ -69,6 +79,7 @@ class paddle_to_ball_after_bounce_dense(PingpongRallyStateTerm):
     paddle_cfg: SceneEntityCfg = _PADDLE_CFG,
     ball_cfg: SceneEntityCfg = _BALL_CFG,
     robot_cfg: SceneEntityCfg = _ROBOT_CFG,
+    body_ball_sensor_name: str | None = None,
     force_threshold: float = 1.0,
     table_z: float = 0.78,
     net_x: float = 0.0,
@@ -84,6 +95,7 @@ class paddle_to_ball_after_bounce_dense(PingpongRallyStateTerm):
     del (
       paddle_sensor_name,
       net_sensor_name,
+      body_ball_sensor_name,
       force_threshold,
       table_z,
       net_x,
@@ -118,6 +130,7 @@ class paddle_towards_ball_velocity(PingpongRallyStateTerm):
     paddle_cfg: SceneEntityCfg = _PADDLE_CFG,
     ball_cfg: SceneEntityCfg = _BALL_CFG,
     robot_cfg: SceneEntityCfg = _ROBOT_CFG,
+    body_ball_sensor_name: str | None = None,
     speed_scale: float = 2.0,
     distance_std: float = 0.55,
     force_threshold: float = 1.0,
@@ -135,6 +148,7 @@ class paddle_towards_ball_velocity(PingpongRallyStateTerm):
     del (
       paddle_sensor_name,
       net_sensor_name,
+      body_ball_sensor_name,
       force_threshold,
       table_z,
       net_x,
@@ -263,6 +277,7 @@ __all__ = [
   "paddle_towards_ball_velocity",
   "post_hit_ball_velocity_direction",
   "post_hit_x_progress",
+  "robot_ball_contact_penalty",
   "robot_table_contact_penalty",
   "self_table_bounce_event",
 ]

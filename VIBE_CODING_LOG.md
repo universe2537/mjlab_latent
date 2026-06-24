@@ -160,3 +160,114 @@ tennis latent decoder，不新增 motion data 或重新训练 distillation decod
 - `uv run pytest tests/test_pingpong_provider.py tests/test_pingpong_observations.py tests/test_pingpong_task.py tests/test_pingpong_state.py -q`
 - `uv run ruff check src/mjlab/tasks/pingpong tests/test_pingpong_provider.py tests/test_pingpong_observations.py tests/test_pingpong_task.py tests/test_pingpong_state.py`
 - `uv run ty check src/mjlab/tasks/pingpong tests/test_pingpong_provider.py tests/test_pingpong_observations.py tests/test_pingpong_task.py tests/test_pingpong_state.py`
+
+## 2026-06-24 00:05 - 停止 V3、保存 MuJoCo 视频、启动 V4 scratch
+
+### 目标
+
+终结当前 pingpong V3 训练，使用 MuJoCo offscreen 而不是 viser 保存高分辨率视频，
+然后基于当前 contact 参数从头启动一个新的训练。
+
+### 实现记录
+
+- 通过 `tmux send-keys -t pingpang_v3 C-c` 温和停止 V3 训练；停止前最新 checkpoint 为
+  `logs/rsl_rl/g1_pingpong_latent_hit/pingpong_hit_v3_collision_10240env_gpu1_2_from15500_2026-06-23_17-00-15/model_5500.pt`。
+- 停止旧的 `play ... --viewer viser` 进程，避免误用 viser 或占用 GPU。
+- `play.py` 新增 `--viewer none`，用于 headless video capture：加载 trained policy 后直接跑
+  policy/env step loop，让现有 `VideoRecorder` 通过 MuJoCo `rgb_array` 保存视频，不打开 native
+  viewer 或 viser。
+- 使用 GPU 1 生成 1920x1080、2000 step 视频：
+  `logs/rsl_rl/g1_pingpong_latent_hit/pingpong_hit_v3_collision_10240env_gpu1_2_from15500_2026-06-23_17-00-15/videos/play/rl-video-step-0.mp4`。
+  文件大小约 15M；机器无 `ffprobe/ffmpeg` 和 `cv2`，使用 `file/stat` 与纯 MP4 box 解析确认
+  视频轨道尺寸为 1920x1080。
+- 从头启动 V4 scratch 训练，tmux session 为 `pingpang_v4_scratch`：
+  `WANDB_MODE=offline uv run train Mjlab-Pingpong-Hit-Unitree-G1 --env.scene.num-envs 8192 --gpu-ids "[1,2]" --agent.max-iterations 30000 --agent.run-name pingpong_hit_v4_contact_scratch_8192env_gpu1_2 --agent.resume False`。
+- 输出目录：
+  `logs/rsl_rl/g1_pingpong_latent_hit/pingpong_hit_v4_contact_scratch_8192env_gpu1_2_2026-06-24_00-11-43`。
+
+### 验证
+
+- `uv run ruff check src/mjlab/scripts/play.py`
+- `uv run ty check src/mjlab/scripts/play.py`
+- V4 在 iteration `14/30000` 时正常运行，约 `121k` steps/s，`paddle_hit_count ~= 0.08`，
+  `self_table_bounce_count ~= 1.0`，`robot_table_contact_count ~= 0.0`，物理 GPU 1/2 均有训练负载。
+
+### 2026-06-24 00:35 调整
+
+- 用户指出环境数应为 `512*20=10240`；停止原 `8192` env 会话
+  `pingpang_v4_scratch`，停止前约 iteration `370/30000`。
+- 重新从头启动 `10240` env scratch 会话 `pingpang_v4_scratch_10240`：
+  `WANDB_MODE=offline uv run train Mjlab-Pingpong-Hit-Unitree-G1 --env.scene.num-envs 10240 --gpu-ids "[1,2]" --agent.max-iterations 30000 --agent.run-name pingpong_hit_v4_contact_scratch_10240env_gpu1_2 --agent.resume False`。
+- 输出目录：
+  `logs/rsl_rl/g1_pingpong_latent_hit/pingpong_hit_v4_contact_scratch_10240env_gpu1_2_2026-06-24_00-35-24`。
+- Resolved config 确认 `num_envs: 10240`、`resume: false`、`max_iterations: 30000`；
+  iteration `10/30000` 时约 `128k` steps/s，物理 GPU 1/2 正常负载。
+
+## 2026-06-24 - Pingpong Reward Hacking 修正
+
+### 目标
+
+修正 Hit 训练中机器人用手/身体把球夹到球拍附近、反复吃接近奖励或辅助触发击球的 reward hacking。
+
+### 实现记录
+
+- Hit 任务将 `paddle_hit_event` 权重从 `100.0` 提高到 `2000.0`；在当前 `dt=0.02`
+  下单次合法击球约为 `+40`。
+- Hit dense shaping 降低为 `approach_ball=5.0`、`paddle_towards_ball=2.0`，Return
+  仍保留自己的 `paddle_hit_event=25.0`，避免 Return 目标退化为只追求首次碰球。
+- 新增 `robot_ball_contact` sensor：机器人碰撞几何为 primary，排除
+  `pingpong_paddle_collision`，球为 secondary，`history_length=4`。
+- `PingpongRallyState` 增加 `FAULT_ILLEGAL_BODY_BALL_CONTACT`，任意非球拍
+  robot-ball 接触会触发 fault；同一步身体和球拍都碰球时 fault 优先，不计合法 hit。
+- 新增 `robot_ball_contact` penalty，权重 `-50.0`，不新增单独 metric；主要诊断仍看
+  `fault_count`、fault reason 和视频。
+
+### 验证
+
+- `UV_CACHE_DIR=/tmp/uv-cache FORCE_CPU=1 uv run pytest tests/test_pingpong_state.py tests/test_pingpong_task.py -q`
+- `UV_CACHE_DIR=/tmp/uv-cache uv run ruff check src/mjlab/tasks/pingpong tests/test_pingpong_state.py tests/test_pingpong_task.py`
+- `UV_CACHE_DIR=/tmp/uv-cache uv run ty check src/mjlab/tasks/pingpong`
+
+## 2026-06-24 - Pingpong Paddle Handle Collision
+
+### 目标
+
+为 pingpong 球拍补充一个圆柱形拍柄碰撞体，使拍柄参与球桌/球体物理碰撞，但不参与合法击球得分。
+
+### 实现记录
+
+- 在 G1 pingpong spec wrapper 中新增 `pingpong_paddle_handle_collision`，位于
+  `pingpong_paddle_collision` 下方，沿视觉拍柄方向放置。
+- 拍柄参数：半径 `0.018m`，半长 `0.09m`；编译后 `contype=1`、
+  `conaffinity=1`。
+- `paddle_ball_contact` 仍只匹配 `pingpong_paddle_collision`；拍柄未从
+  `robot_ball_contact` 排除，因此拍柄碰球不会计为合法 hit，会按非拍面机器人碰球处理。
+- 生成正式模型确认图：
+  `contact_test/pingpong_paddle_formal_handle_collision_2026-06-24.png`。
+
+### 验证
+
+- `UV_CACHE_DIR=/tmp/uv-cache FORCE_CPU=1 uv run pytest tests/test_pingpong_task.py tests/test_pingpong_state.py -q`
+- `UV_CACHE_DIR=/tmp/uv-cache uv run ruff check src/mjlab/tasks/pingpong/config/g1/env_cfgs.py src/mjlab/tasks/pingpong/pingpong_env_cfg.py tests/test_pingpong_task.py tests/test_pingpong_state.py`
+- `UV_CACHE_DIR=/tmp/uv-cache uv run ty check src/mjlab/tasks/pingpong/config/g1/env_cfgs.py src/mjlab/tasks/pingpong/pingpong_env_cfg.py tests/test_pingpong_task.py tests/test_pingpong_state.py`
+
+## 2026-06-24 15:53 - Pingpong V3 Collision Continuation
+
+### 目标
+
+停止当前 clean V3 训练，在最新 clean V3 checkpoint 上按相同训练条件继续训练，并将新 run
+命名为 `v3_collision`。
+
+### 进展记录
+
+- 温和停止 tmux session `pingpang_v3_clean_10240`；停止前最新 checkpoint 为
+  `logs/rsl_rl/g1_pingpong_latent_hit/pingpong_hit_v3_clean_contact_scratch_10240env_gpu1_2_2026-06-24_11-35-28/model_3500.pt`。
+- 启动新 tmux session `pingpang_v3_collision`：
+  `WANDB_MODE=offline uv run train Mjlab-Pingpong-Hit-Unitree-G1 --env.scene.num-envs 10240 --gpu-ids "[1,2]" --agent.max-iterations 30000 --agent.run-name v3_collision --agent.resume True --agent.load-checkpoint-file logs/rsl_rl/g1_pingpong_latent_hit/pingpong_hit_v3_clean_contact_scratch_10240env_gpu1_2_2026-06-24_11-35-28/model_3500.pt`。
+- 输出目录：
+  `logs/rsl_rl/g1_pingpong_latent_hit/v3_collision_2026-06-24_15-53-52`。
+- Resolved config 确认 `num_envs: 10240`、`max_iterations: 30000`、
+  `run_name: v3_collision`、`resume: true`，并从 clean V3 `model_3500.pt` 载入。
+- 启动产物已生成：TensorBoard event、`model_3500.pt`、ONNX、`params/` 和
+  `torchrunx/`；GPU 1/2 已有训练负载。torchrunx 日志中只见 W&B offline 提示，未见
+  OOM/Traceback。

@@ -2,9 +2,12 @@ from typing import cast
 
 import mjlab.tasks  # noqa: F401
 from mjlab.scene import Scene
+from mjlab.sensor import ContactSensorCfg
 from mjlab.tasks.distillation.rl.config import DistillationRunnerCfg
 from mjlab.tasks.pingpong.config.g1.env_cfgs import (
   DEFAULT_DECODER_CHECKPOINT,
+  PINGPONG_PADDLE_HANDLE_HALF_LENGTH,
+  PINGPONG_PADDLE_HANDLE_RADIUS,
   PINGPONG_PADDLE_RADIUS,
   PINGPONG_PADDLE_SCALE,
   get_g1_w_pingpong_paddle_spec,
@@ -31,16 +34,22 @@ def test_pingpong_task_scene_compiles() -> None:
   scene = Scene(cfg.scene, device="cpu")
   model = scene.compile()
 
-  geom_names = {model.geom(i).name for i in range(model.ngeom)}
+  geom_by_name = {model.geom(i).name: i for i in range(model.ngeom)}
+  geom_names = set(geom_by_name)
   sensor_names = {model.sensor(i).name for i in range(model.nsensor)}
 
   assert "robot/pingpong_paddle_collision" in geom_names
+  assert "robot/pingpong_paddle_handle_collision" in geom_names
+  handle_id = geom_by_name["robot/pingpong_paddle_handle_collision"]
+  assert int(model.geom_contype[handle_id]) == 1
+  assert int(model.geom_conaffinity[handle_id]) == 1
   assert "ball/pingpong_ball" in geom_names
   assert "table/pingpong_table_top_collision" in geom_names
   assert "table/pingpong_net_collision" in geom_names
   assert any(name.startswith("paddle_ball_contact") for name in sensor_names)
   assert any(name.startswith("pingpong_ball_net_contact") for name in sensor_names)
   assert any(name.startswith("robot_table_contact") for name in sensor_names)
+  assert any(name.startswith("robot_ball_contact") for name in sensor_names)
 
 
 def test_pingpong_paddle_scales_visual_and_collision() -> None:
@@ -63,6 +72,29 @@ def test_pingpong_paddle_scales_visual_and_collision() -> None:
   collision = geom_by_name["pingpong_paddle_collision"]
   assert abs(float(collision.size[0]) - PINGPONG_PADDLE_RADIUS) < 1.0e-6
   assert float(collision.pos[2]) < 0.4
+  assert "pingpong_paddle_handle_collision" in geom_by_name
+  handle = geom_by_name["pingpong_paddle_handle_collision"]
+  assert abs(float(handle.size[0]) - PINGPONG_PADDLE_HANDLE_RADIUS) < 1.0e-6
+  handle_fromto = [float(v) for v in handle.fromto]
+  handle_length = sum(
+    (handle_fromto[i + 3] - handle_fromto[i]) ** 2 for i in range(3)
+  ) ** 0.5
+  assert abs(handle_length * 0.5 - PINGPONG_PADDLE_HANDLE_HALF_LENGTH) < 1.0e-6
+
+
+def test_pingpong_paddle_handle_collision_does_not_score() -> None:
+  cfg = load_env_cfg("Mjlab-Pingpong-Hit-Unitree-G1")
+  sensors = {sensor.name: sensor for sensor in cfg.scene.sensors}
+
+  paddle_ball = sensors["paddle_ball_contact"]
+  assert isinstance(paddle_ball, ContactSensorCfg)
+  assert paddle_ball.secondary is not None
+  assert paddle_ball.secondary.pattern == "pingpong_paddle_collision"
+
+  robot_ball = sensors["robot_ball_contact"]
+  assert isinstance(robot_ball, ContactSensorCfg)
+  assert "pingpong_paddle_collision" in robot_ball.primary.exclude
+  assert "pingpong_paddle_handle_collision" not in robot_ball.primary.exclude
 
 
 def test_pingpong_env_uses_frozen_decoder_action() -> None:
@@ -107,8 +139,14 @@ def test_pingpong_hit_and_return_success_terms() -> None:
   assert "first_paddle_hit" in hit_cfg.terminations
   assert "legal_return_success" not in hit_cfg.terminations
   assert "robot_table_contact" in hit_cfg.rewards
+  assert "robot_ball_contact" in hit_cfg.rewards
   assert "robot_table_contact_count" in hit_cfg.metrics
+  assert "robot_ball_contact_count" not in hit_cfg.metrics
   assert "robot_table_contact" not in hit_cfg.terminations
+  assert hit_cfg.rewards["approach_ball"].weight == 5.0
+  assert hit_cfg.rewards["paddle_towards_ball"].weight == 2.0
+  assert hit_cfg.rewards["paddle_hit_event"].weight == 2000.0
+  assert hit_cfg.rewards["robot_ball_contact"].weight == -50.0
   assert hit_cfg.curriculum["ball_target_region"].params["success_term_name"] == (
     "first_paddle_hit"
   )
@@ -119,7 +157,10 @@ def test_pingpong_hit_and_return_success_terms() -> None:
   assert "crossed_net_event" in return_cfg.rewards
   assert "opponent_table_bounce_event" in return_cfg.rewards
   assert "robot_table_contact" in return_cfg.rewards
+  assert "robot_ball_contact" in return_cfg.rewards
+  assert "robot_ball_contact_count" not in return_cfg.metrics
   assert "robot_table_contact" not in return_cfg.terminations
+  assert return_cfg.rewards["paddle_hit_event"].weight == 25.0
   assert return_cfg.curriculum["ball_target_region"].params["success_term_name"] == (
     "legal_return_success"
   )

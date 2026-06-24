@@ -42,6 +42,7 @@ _TABLE_CFG = SceneEntityCfg("table")
 _PADDLE_BALL_SENSOR = "paddle_ball_contact"
 _BALL_NET_SENSOR = "pingpong_ball_net_contact"
 _ROBOT_TABLE_SENSOR = "robot_table_contact"
+_ROBOT_BALL_SENSOR = "robot_ball_contact"
 
 ROBOT_RESET_X_RANGE = (TABLE_HALF_LENGTH + 0.36, TABLE_HALF_LENGTH + 0.58)
 ROBOT_RESET_Y_RANGE = (-0.18, 0.18)
@@ -81,6 +82,7 @@ def _state_params() -> dict[str, object]:
   return {
     "paddle_sensor_name": _PADDLE_BALL_SENSOR,
     "net_sensor_name": _BALL_NET_SENSOR,
+    "body_ball_sensor_name": _ROBOT_BALL_SENSOR,
     "ball_cfg": _BALL_CFG,
     "force_threshold": HIT_FORCE_THRESHOLD,
     "table_z": BALL_CENTER_TABLE_Z,
@@ -316,6 +318,20 @@ def make_pingpong_latent_env_cfg() -> ManagerBasedRlEnvCfg:
     num_slots=8,
     history_length=4,
   )
+  robot_ball_sensor = ContactSensorCfg(
+    name=_ROBOT_BALL_SENSOR,
+    primary=ContactMatch(
+      mode="geom",
+      pattern=r".*_collision",
+      entity="robot",
+      exclude=("pingpong_paddle_collision",),
+    ),
+    secondary=ContactMatch(mode="geom", pattern="pingpong_ball", entity="ball"),
+    fields=("found", "force"),
+    reduce="maxforce",
+    num_slots=1,
+    history_length=4,
+  )
   state_params = _state_params()
   rewards = {
     "self_table_bounce_event": RewardTermCfg(
@@ -325,7 +341,7 @@ def make_pingpong_latent_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
     "approach_ball": RewardTermCfg(
       func=mdp.paddle_to_ball_after_bounce_dense,
-      weight=10.0,
+      weight=5.0,
       params={
         **dict(state_params),
         "std": 0.35,
@@ -335,7 +351,7 @@ def make_pingpong_latent_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
     "paddle_towards_ball": RewardTermCfg(
       func=mdp.paddle_towards_ball_velocity,
-      weight=5.0,
+      weight=2.0,
       params={
         **dict(state_params),
         "paddle_cfg": _PADDLE_CFG,
@@ -346,7 +362,7 @@ def make_pingpong_latent_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
     "paddle_hit_event": RewardTermCfg(
       func=mdp.paddle_hit_event,
-      weight=100.0,
+      weight=2000.0,
       params=dict(state_params),
     ),
     "alive": RewardTermCfg(func=mdp.is_alive, weight=0.01),
@@ -377,6 +393,15 @@ def make_pingpong_latent_env_cfg() -> ManagerBasedRlEnvCfg:
       params={
         "sensor_name": _ROBOT_TABLE_SENSOR,
         "force_threshold": 5.0,
+        "max_count": 4.0,
+      },
+    ),
+    "robot_ball_contact": RewardTermCfg(
+      func=mdp.robot_ball_contact_penalty,
+      weight=-50.0,
+      params={
+        "sensor_name": _ROBOT_BALL_SENSOR,
+        "force_threshold": HIT_FORCE_THRESHOLD,
         "max_count": 4.0,
       },
     ),
@@ -469,7 +494,12 @@ def make_pingpong_latent_env_cfg() -> ManagerBasedRlEnvCfg:
         "ball": get_pingpong_ball_cfg(),
         "table": get_pingpong_table_cfg(),
       },
-      sensors=(paddle_ball_sensor, ball_net_sensor, robot_table_sensor),
+      sensors=(
+        paddle_ball_sensor,
+        ball_net_sensor,
+        robot_table_sensor,
+        robot_ball_sensor,
+      ),
       num_envs=1,
       env_spacing=5.0,
       extent=3.0,

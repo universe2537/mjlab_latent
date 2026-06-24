@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import mujoco
 
 from mjlab.asset_zoo.robots import G1_W_RACKET_ACTION_SCALE
@@ -23,6 +25,9 @@ from mjlab.tasks.tennis.mdp import FrozenDecoderLatentJointPositionActionCfg
 
 DEFAULT_DECODER_CHECKPOINT = "logs/rsl_rl/g1_distillation/distill_cloud_unitree_racket_tennis_2026-05-12_09-35-14/model_30000.pt"
 PINGPONG_PADDLE_RADIUS = 0.065
+PINGPONG_PADDLE_HANDLE_RADIUS = 0.018
+PINGPONG_PADDLE_HANDLE_HALF_LENGTH = 0.09
+PINGPONG_PADDLE_HANDLE_GAP = 0.002
 PINGPONG_PADDLE_SCALE = PINGPONG_PADDLE_RADIUS / 0.12
 _TENNIS_RACKET_COLLISION_POS = (0.1025, -0.004, 0.4)
 
@@ -38,6 +43,16 @@ def _find_geom(spec: mujoco.MjSpec, name: str) -> mujoco.MjsGeom:
     for geom in body.geoms:
       if geom.name == name:
         return geom
+  raise ValueError(f"Could not find geom {name!r} in G1 racket spec.")
+
+
+def _find_geom_with_body(
+  spec: mujoco.MjSpec, name: str
+) -> tuple[mujoco.MjsBody, mujoco.MjsGeom]:
+  for body in _iter_body_tree(spec.worldbody):
+    for geom in body.geoms:
+      if geom.name == name:
+        return body, geom
   raise ValueError(f"Could not find geom {name!r} in G1 racket spec.")
 
 
@@ -79,6 +94,39 @@ def _scale_from_anchor(
   )
 
 
+def _quat_to_matrix(q: Any) -> tuple[tuple[float, float, float], ...]:
+  w, x, y, z = (float(v) for v in q)
+  return (
+    (
+      1.0 - 2.0 * (y * y + z * z),
+      2.0 * (x * y - z * w),
+      2.0 * (x * z + y * w),
+    ),
+    (
+      2.0 * (x * y + z * w),
+      1.0 - 2.0 * (x * x + z * z),
+      2.0 * (y * z - x * w),
+    ),
+    (
+      2.0 * (x * z - y * w),
+      2.0 * (y * z + x * w),
+      1.0 - 2.0 * (x * x + y * y),
+    ),
+  )
+
+
+def _vec_add(
+  lhs: tuple[float, float, float], rhs: tuple[float, float, float]
+) -> tuple[float, float, float]:
+  return (lhs[0] + rhs[0], lhs[1] + rhs[1], lhs[2] + rhs[2])
+
+
+def _vec_scale(
+  vec: tuple[float, float, float], scale: float
+) -> tuple[float, float, float]:
+  return (vec[0] * scale, vec[1] * scale, vec[2] * scale)
+
+
 def get_g1_w_pingpong_paddle_spec() -> mujoco.MjSpec:
   """Reuse the held-racket G1 XML with a smaller pingpong paddle."""
   spec = get_g1_w_racket_spec()
@@ -102,12 +150,34 @@ def get_g1_w_pingpong_paddle_spec() -> mujoco.MjSpec:
     visual_anchor,
     PINGPONG_PADDLE_SCALE,
   )
-  paddle = _find_geom(spec, "tennis_racket_collision")
+  paddle_body, paddle = _find_geom_with_body(spec, "tennis_racket_collision")
   paddle.name = "pingpong_paddle_collision"
   paddle.size[0] = PINGPONG_PADDLE_RADIUS
   paddle.size[1] = 0.004
   paddle.pos[:] = paddle_center
   paddle.rgba[:] = (0.85, 0.12, 0.06, 0.35)
+
+  paddle_rot = _quat_to_matrix(paddle.quat)
+  handle_dir = (
+    paddle_rot[0][1],
+    paddle_rot[1][1],
+    paddle_rot[2][1],
+  )
+  handle_start = _vec_add(
+    paddle_center,
+    _vec_scale(handle_dir, PINGPONG_PADDLE_RADIUS + PINGPONG_PADDLE_HANDLE_GAP),
+  )
+  handle_end = _vec_add(
+    handle_start,
+    _vec_scale(handle_dir, PINGPONG_PADDLE_HANDLE_HALF_LENGTH * 2.0),
+  )
+  handle = paddle_body.add_geom(
+    name="pingpong_paddle_handle_collision",
+    type=mujoco.mjtGeom.mjGEOM_CYLINDER,
+  )
+  handle.size[0] = PINGPONG_PADDLE_HANDLE_RADIUS
+  handle.fromto[:] = (*handle_start, *handle_end)
+  handle.rgba[:] = (1.0, 0.55, 0.02, 0.45)
 
   center = _find_site(spec, "tennis_racket_center")
   center.name = "pingpong_paddle_center"

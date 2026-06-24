@@ -10,32 +10,54 @@ source .venv/bin/activate
 
 ### Train
 
-```sh
-uv run train Mjlab-Pingpong-Hit-Unitree-G1 \
-  --env.scene.num-envs 8192 \
-  --gpu-ids '[2,4]' \
-  --agent.max-iterations 30000 \
-  --agent.run-name pingpong_hit_8192env_gpu2_4 --agent.resume True --agent.load-checkpoint-file logs/rsl_rl/g1_pingpong_latent_hit/pingpong_hit_4096env_gpu2_4_2026-06-20_19-52-48/model_3000.pt
-```
-
-Resume the interrupted run from the latest saved checkpoint:
+Current active V3 collision continuation run, `512*20` envs, resumed from the
+latest clean V3 checkpoint:
 
 ```sh
-uv run train Mjlab-Pingpong-Hit-Unitree-G1 \
-  --env.scene.num-envs 8192 \
-  --gpu-ids '[2,4]' \
+tmux new-session -d -s pingpang_v3_collision \
+  -c /home/universe/workspace/mjlab_latent \
+  'WANDB_MODE=offline uv run train Mjlab-Pingpong-Hit-Unitree-G1 \
+  --env.scene.num-envs 10240 \
+  --gpu-ids "[1,2]" \
   --agent.max-iterations 30000 \
-  --agent.run-name pingpong_hit_8192env_gpu2_4_resume \
+  --agent.run-name v3_collision \
   --agent.resume True \
-  --agent.load-checkpoint-file logs/rsl_rl/g1_pingpong_latent_hit/pingpong_hit_4096env_gpu2_4_2026-06-20_19-52-48/model_3000.pt
+  --agent.load-checkpoint-file logs/rsl_rl/g1_pingpong_latent_hit/pingpong_hit_v3_clean_contact_scratch_10240env_gpu1_2_2026-06-24_11-35-28/model_3500.pt'
 ```
 
 ### Play
 
+MuJoCo offscreen video, no viser:
+
+```sh
+MUJOCO_GL=egl uv run play Mjlab-Pingpong-Hit-Unitree-G1 \
+  --checkpoint-file logs/rsl_rl/g1_pingpong_latent_hit/pingpong_hit_v3_collision_10240env_gpu1_2_from15500_2026-06-23_17-00-15/model_5500.pt \
+  --video True \
+  --video-length 2000 \
+  --video-height 1080 \
+  --video-width 1920 \
+  --num-envs 1 \
+  --device cuda:1 \
+  --viewer none
+```
+
+Video output:
+
+```text
+logs/rsl_rl/g1_pingpong_latent_hit/pingpong_hit_v3_collision_10240env_gpu1_2_from15500_2026-06-23_17-00-15/videos/play/rl-video-step-0.mp4
+```
+
+Interactive viewer:
+
 ```sh
 uv run play Mjlab-Pingpong-Hit-Unitree-G1 \
-  --checkpoint-file logs/rsl_rl/g1_pingpong_latent_hit/pingpong_hit_v3_collision_10240env_gpu1_2_from15500_2026-06-23_17-00-15/model_0.pt \
+  --checkpoint-file logs/rsl_rl/g1_pingpong_latent_hit/v3_collision_2026-06-24_15-53-52/model_4000.pt \
   --viewer viser
+
+
+MUJOCO_GL=egl uv run play Mjlab-Pingpong-Hit-Unitree-G1 \
+  --checkpoint-file logs/rsl_rl/g1_pingpong_latent_hit/v3_collision_2026-06-24_15-53-52/model_4000.pt \
+  --viewer none --video True --video-length 500 --video-height 1080 --video-width 1920 --num-envs 1 --device cuda:1
 ```
 
 ### Logs
@@ -44,10 +66,24 @@ uv run play Mjlab-Pingpong-Hit-Unitree-G1 \
 tensorboard --logdir logs/rsl_rl/g1_pingpong_latent_hit/
 ```
 
-Run:
+Useful runs:
 
 ```text
-logs/rsl_rl/g1_pingpong_latent_hit/pingpong_hit_4096env_gpu2_4_2026-06-20_19-52-48
+V3 collision active continuation:
+logs/rsl_rl/g1_pingpong_latent_hit/v3_collision_2026-06-24_15-53-52
+
+Clean V3 stopped checkpoint source:
+logs/rsl_rl/g1_pingpong_latent_hit/pingpong_hit_v3_clean_contact_scratch_10240env_gpu1_2_2026-06-24_11-35-28
+
+Legacy V2-family scratch/checkpoint-comparison runs:
+logs/rsl_rl/g1_pingpong_latent_hit/pingpong_hit_v4_contact_scratch_10240env_gpu1_2_2026-06-24_00-35-24
+
+logs/rsl_rl/g1_pingpong_latent_hit/pingpong_hit_v4_contact_scratch_8192env_gpu1_2_2026-06-24_00-11-43
+
+logs/rsl_rl/g1_pingpong_latent_hit/pingpong_hit_v3_collision_10240env_gpu1_2_from15500_2026-06-23_17-00-15
+
+V1 chase-and-hit milestone:
+logs/rsl_rl/g1_pingpong_latent_hit/pingpong_hit_8192env_gpu2_4_2026-06-21_23-07-11
 ```
 
 ## Tracking

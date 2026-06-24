@@ -5,6 +5,7 @@ import torch
 
 from mjlab.managers.scene_entity_config import SceneEntityCfg
 from mjlab.tasks.pingpong.mdp.state import (
+  FAULT_ILLEGAL_BODY_BALL_CONTACT,
   FAULT_ILLEGAL_PRE_BOUNCE_HIT,
   FAULT_RETURN_BOUNCE_OUT,
   PHASE_AFTER_SELF_BOUNCE,
@@ -21,7 +22,7 @@ class _Scene(dict):
     self.env_origins = env_origins
 
 
-def _make_env() -> tuple[Any, Any, Any, Any]:
+def _make_env() -> tuple[Any, Any, Any, Any, Any]:
   ball = SimpleNamespace(
     data=SimpleNamespace(
       root_link_pos_w=torch.tensor([[0.7, 0.0, 1.0]], dtype=torch.float32),
@@ -42,6 +43,13 @@ def _make_env() -> tuple[Any, Any, Any, Any]:
       found=torch.zeros(1, 1, dtype=torch.float32),
     )
   )
+  body_ball_sensor = SimpleNamespace(
+    data=SimpleNamespace(
+      force_history=None,
+      force=torch.zeros(1, 1, 3, dtype=torch.float32),
+      found=torch.zeros(1, 1, dtype=torch.float32),
+    )
+  )
   env = SimpleNamespace(
     num_envs=1,
     device="cpu",
@@ -52,10 +60,11 @@ def _make_env() -> tuple[Any, Any, Any, Any]:
         "ball": ball,
         "paddle_ball_contact": paddle_sensor,
         "pingpong_ball_net_contact": net_sensor,
+        "robot_ball_contact": body_ball_sensor,
       },
     ),
   )
-  return env, ball, paddle_sensor, net_sensor
+  return env, ball, paddle_sensor, net_sensor, body_ball_sensor
 
 
 def _make_state(env: Any) -> PingpongRallyState:
@@ -63,6 +72,7 @@ def _make_state(env: Any) -> PingpongRallyState:
     env,
     paddle_sensor_name="paddle_ball_contact",
     net_sensor_name="pingpong_ball_net_contact",
+    body_ball_sensor_name="robot_ball_contact",
     ball_cfg=SceneEntityCfg("ball"),
     force_threshold=1.0,
     table_z=BALL_CENTER_TABLE_Z,
@@ -78,7 +88,7 @@ def _make_state(env: Any) -> PingpongRallyState:
 
 
 def test_pingpong_state_counts_legal_single_return() -> None:
-  env, ball, paddle_sensor, _ = _make_env()
+  env, ball, paddle_sensor, _, _ = _make_env()
   state = _make_state(env)
 
   state.update()
@@ -121,7 +131,7 @@ def test_pingpong_state_counts_legal_single_return() -> None:
 
 
 def test_pingpong_state_rejects_pre_bounce_hit() -> None:
-  env, ball, paddle_sensor, _ = _make_env()
+  env, ball, paddle_sensor, _, _ = _make_env()
   state = _make_state(env)
 
   state.update()
@@ -137,7 +147,7 @@ def test_pingpong_state_rejects_pre_bounce_hit() -> None:
 
 
 def test_pingpong_state_rejects_out_of_bounds_return_bounce() -> None:
-  env, ball, paddle_sensor, _ = _make_env()
+  env, ball, paddle_sensor, _, _ = _make_env()
   state = _make_state(env)
 
   state.update()
@@ -166,3 +176,49 @@ def test_pingpong_state_rejects_out_of_bounds_return_bounce() -> None:
   assert state.fault_edge[0]
   assert state.fault_reason[0] == FAULT_RETURN_BOUNCE_OUT
   assert not state.successful_return_edge[0]
+
+
+def test_pingpong_state_rejects_body_ball_contact() -> None:
+  env, ball, _, _, body_ball_sensor = _make_env()
+  state = _make_state(env)
+
+  state.update()
+  env.common_step_counter = 1
+  ball.data.root_link_pos_w[:] = torch.tensor([[0.65, 0.0, BALL_CENTER_TABLE_Z]])
+  ball.data.root_link_lin_vel_w[:] = torch.tensor([[2.0, 0.0, 1.0]])
+  state.update()
+
+  env.common_step_counter = 2
+  body_ball_sensor.data.force[:] = 5.0
+  ball.data.root_link_pos_w[:] = torch.tensor([[0.85, 0.0, 1.05]])
+  ball.data.root_link_lin_vel_w[:] = torch.tensor([[1.0, 0.0, 0.1]])
+  state.update()
+
+  assert state.fault_edge[0]
+  assert state.fault_reason[0] == FAULT_ILLEGAL_BODY_BALL_CONTACT
+  assert not state.paddle_hit_edge[0]
+  assert state.phase[0] == PHASE_DONE
+
+
+def test_pingpong_state_body_contact_overrides_same_step_paddle_hit() -> None:
+  env, ball, paddle_sensor, _, body_ball_sensor = _make_env()
+  state = _make_state(env)
+
+  state.update()
+  env.common_step_counter = 1
+  ball.data.root_link_pos_w[:] = torch.tensor([[0.65, 0.0, BALL_CENTER_TABLE_Z]])
+  ball.data.root_link_lin_vel_w[:] = torch.tensor([[2.0, 0.0, 1.0]])
+  state.update()
+
+  env.common_step_counter = 2
+  paddle_sensor.data.force[:] = 5.0
+  body_ball_sensor.data.force[:] = 5.0
+  ball.data.root_link_pos_w[:] = torch.tensor([[0.85, 0.0, 1.05]])
+  ball.data.root_link_lin_vel_w[:] = torch.tensor([[-2.5, 0.0, 0.3]])
+  state.update()
+
+  assert state.fault_edge[0]
+  assert state.fault_reason[0] == FAULT_ILLEGAL_BODY_BALL_CONTACT
+  assert not state.paddle_hit_edge[0]
+  assert not state.has_paddle_hit[0]
+  assert state.paddle_hit_count[0] == 0
