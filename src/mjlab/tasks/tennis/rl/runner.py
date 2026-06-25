@@ -68,6 +68,27 @@ def expand_actor_action_head_for_wrist_residual(
   return True
 
 
+def reset_actor_distribution_std(
+  actor_state_dict: dict[str, torch.Tensor], std: float
+) -> bool:
+  """Overwrite loaded Gaussian std parameters in-place when present."""
+  if std <= 0.0:
+    raise ValueError(f"reset_actor_std must be positive, got {std}.")
+
+  changed = False
+  for std_key in ("distribution.std_param", "std"):
+    if std_key in actor_state_dict:
+      actor_state_dict[std_key].fill_(std)
+      changed = True
+
+  log_std = math.log(std)
+  for log_std_key in ("distribution.log_std_param", "log_std"):
+    if log_std_key in actor_state_dict:
+      actor_state_dict[log_std_key].fill_(log_std)
+      changed = True
+  return changed
+
+
 def expand_mlp_input_for_observation(
   model_state_dict: dict[str, torch.Tensor],
   *,
@@ -246,6 +267,10 @@ class TennisLatentOnPolicyRunner(MjlabOnPolicyRunner):
       train_cfg.pop("require_decoder_checkpoint", True)
     )
     self.reset_resume_progress = bool(train_cfg.pop("reset_resume_progress", False))
+    reset_actor_std = train_cfg.pop("reset_actor_std", None)
+    self.reset_actor_std = (
+      None if reset_actor_std is None else float(reset_actor_std)
+    )
     self.decoder_action_name = "latent_joint_pos"
     self._validate_decoder_checkpoint(env)
     super().__init__(env, train_cfg, log_dir, device)
@@ -374,6 +399,12 @@ class TennisLatentOnPolicyRunner(MjlabOnPolicyRunner):
     action = self._decoder_action()
     actor_sd = loaded_dict.get("actor_state_dict")
     if isinstance(actor_sd, dict):
+      if self.reset_actor_std is not None:
+        if reset_actor_distribution_std(actor_sd, self.reset_actor_std):
+          print(
+            "[INFO] Reset loaded actor distribution std to "
+            f"{self.reset_actor_std:.3f}."
+          )
       expand_mlp_input_for_observation(
         actor_sd,
         target_dim=self._target_observation_dim("actor"),

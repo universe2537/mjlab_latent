@@ -161,48 +161,6 @@ tennis latent decoder，不新增 motion data 或重新训练 distillation decod
 - `uv run ruff check src/mjlab/tasks/pingpong tests/test_pingpong_provider.py tests/test_pingpong_observations.py tests/test_pingpong_task.py tests/test_pingpong_state.py`
 - `uv run ty check src/mjlab/tasks/pingpong tests/test_pingpong_provider.py tests/test_pingpong_observations.py tests/test_pingpong_task.py tests/test_pingpong_state.py`
 
-## 2026-06-24 00:05 - 停止 V3、保存 MuJoCo 视频、启动 V4 scratch
-
-### 目标
-
-终结当前 pingpong V3 训练，使用 MuJoCo offscreen 而不是 viser 保存高分辨率视频，
-然后基于当前 contact 参数从头启动一个新的训练。
-
-### 实现记录
-
-- 通过 `tmux send-keys -t pingpang_v3 C-c` 温和停止 V3 训练；停止前最新 checkpoint 为
-  `logs/rsl_rl/g1_pingpong_latent_hit/pingpong_hit_v3_collision_10240env_gpu1_2_from15500_2026-06-23_17-00-15/model_5500.pt`。
-- 停止旧的 `play ... --viewer viser` 进程，避免误用 viser 或占用 GPU。
-- `play.py` 新增 `--viewer none`，用于 headless video capture：加载 trained policy 后直接跑
-  policy/env step loop，让现有 `VideoRecorder` 通过 MuJoCo `rgb_array` 保存视频，不打开 native
-  viewer 或 viser。
-- 使用 GPU 1 生成 1920x1080、2000 step 视频：
-  `logs/rsl_rl/g1_pingpong_latent_hit/pingpong_hit_v3_collision_10240env_gpu1_2_from15500_2026-06-23_17-00-15/videos/play/rl-video-step-0.mp4`。
-  文件大小约 15M；机器无 `ffprobe/ffmpeg` 和 `cv2`，使用 `file/stat` 与纯 MP4 box 解析确认
-  视频轨道尺寸为 1920x1080。
-- 从头启动 V4 scratch 训练，tmux session 为 `pingpang_v4_scratch`：
-  `WANDB_MODE=offline uv run train Mjlab-Pingpong-Hit-Unitree-G1 --env.scene.num-envs 8192 --gpu-ids "[1,2]" --agent.max-iterations 30000 --agent.run-name pingpong_hit_v4_contact_scratch_8192env_gpu1_2 --agent.resume False`。
-- 输出目录：
-  `logs/rsl_rl/g1_pingpong_latent_hit/pingpong_hit_v4_contact_scratch_8192env_gpu1_2_2026-06-24_00-11-43`。
-
-### 验证
-
-- `uv run ruff check src/mjlab/scripts/play.py`
-- `uv run ty check src/mjlab/scripts/play.py`
-- V4 在 iteration `14/30000` 时正常运行，约 `121k` steps/s，`paddle_hit_count ~= 0.08`，
-  `self_table_bounce_count ~= 1.0`，`robot_table_contact_count ~= 0.0`，物理 GPU 1/2 均有训练负载。
-
-### 2026-06-24 00:35 调整
-
-- 用户指出环境数应为 `512*20=10240`；停止原 `8192` env 会话
-  `pingpang_v4_scratch`，停止前约 iteration `370/30000`。
-- 重新从头启动 `10240` env scratch 会话 `pingpang_v4_scratch_10240`：
-  `WANDB_MODE=offline uv run train Mjlab-Pingpong-Hit-Unitree-G1 --env.scene.num-envs 10240 --gpu-ids "[1,2]" --agent.max-iterations 30000 --agent.run-name pingpong_hit_v4_contact_scratch_10240env_gpu1_2 --agent.resume False`。
-- 输出目录：
-  `logs/rsl_rl/g1_pingpong_latent_hit/pingpong_hit_v4_contact_scratch_10240env_gpu1_2_2026-06-24_00-35-24`。
-- Resolved config 确认 `num_envs: 10240`、`resume: false`、`max_iterations: 30000`；
-  iteration `10/30000` 时约 `128k` steps/s，物理 GPU 1/2 正常负载。
-
 ## 2026-06-24 - Pingpong Reward Hacking 修正
 
 ### 目标
@@ -228,6 +186,38 @@ tennis latent decoder，不新增 motion data 或重新训练 distillation decod
 - `UV_CACHE_DIR=/tmp/uv-cache uv run ruff check src/mjlab/tasks/pingpong tests/test_pingpong_state.py tests/test_pingpong_task.py`
 - `UV_CACHE_DIR=/tmp/uv-cache uv run ty check src/mjlab/tasks/pingpong`
 
+## 2026-06-24 - Pingpong Cross Stabilization
+
+### 目标
+
+针对 Cross warm-start 后击球阶段身体不受控的问题，保存当前可视化视频，并调低探索/动作幅度、
+增强站稳与动作平滑约束后继续训练。
+
+### 实现记录
+
+- 使用 `model_3500.pt` 保存 10 秒视频：
+  `logs/rsl_rl/g1_pingpong_latent_cross/pingpong_cross_from_v3_collision_4500_2026-06-24_17-10-59/videos/play/rl-video-step-0.mp4`。
+- `TennisLatentOnPolicyRunnerCfg` 新增 `reset_actor_std`，加载 checkpoint 时可重置
+  actor Gaussian std；当前 relaxed 版默认设为 `0.8`。
+- Cross PPO 当前调整：`entropy_coef=0.002`、`learning_rate=5e-4`、`desired_kl=0.01`、
+  `clip_actions=2.5`、`reset_actor_std=0.8`。
+- Cross reward/termination 调整：提高 latent/low-level action rate、joint acc/torque、
+  fall/upright 惩罚；加入 `flat_orientation_l2`；第一版将 post-hit dense shaping
+  降为 `post_hit_x_progress=20`、`post_hit_ball_velocity_direction=10`，当前 relaxed
+  版恢复为 `post_hit_x_progress=40`、`post_hit_ball_velocity_direction=20`；收紧
+  `bad_orientation=55deg`、`root_height=0.55`。
+- 当前 relaxed 正则项：`latent_action_rate_l2=-0.01`、`low_level_action_rate_l2=-0.02`、
+  `joint_acc_l2=-5e-6`、`joint_torques_l2=-5e-5`。
+- 旧 Cross 训练停止后落出 `model_4000.pt`；稳定版训练已按用户要求挂到 GPU
+  `[4,6]`、`16384` env，session 为 `pingpang_cross_stable_16384_gpu4_6`，输出目录：
+  `logs/rsl_rl/g1_pingpong_latent_cross/pingpong_cross_stable_from4000_16384env_gpu4_6_2026-06-24_21-21-58`。
+
+### 验证
+
+- `UV_CACHE_DIR=/tmp/uv-cache FORCE_CPU=1 uv run pytest tests/test_pingpong_task.py tests/test_pingpong_state.py -q`
+- `UV_CACHE_DIR=/tmp/uv-cache uv run ruff check src/mjlab/tasks/pingpong src/mjlab/tasks/tennis/rl tests/test_pingpong_task.py tests/test_pingpong_state.py`
+- `UV_CACHE_DIR=/tmp/uv-cache uv run ty check src/mjlab/tasks/pingpong src/mjlab/tasks/tennis/rl`
+
 ## 2026-06-24 - Pingpong Paddle Handle Collision
 
 ### 目标
@@ -240,6 +230,7 @@ tennis latent decoder，不新增 motion data 或重新训练 distillation decod
   `pingpong_paddle_collision` 下方，沿视觉拍柄方向放置。
 - 拍柄参数：半径 `0.018m`，半长 `0.09m`；编译后 `contype=1`、
   `conaffinity=1`。
+- 拍柄是纯碰撞代理，设置为 `group=3` 且 alpha 为 `0`，避免在正常可视化中显示。
 - `paddle_ball_contact` 仍只匹配 `pingpong_paddle_collision`；拍柄未从
   `robot_ball_contact` 排除，因此拍柄碰球不会计为合法 hit，会按非拍面机器人碰球处理。
 - 生成正式模型确认图：
@@ -251,23 +242,75 @@ tennis latent decoder，不新增 motion data 或重新训练 distillation decod
 - `UV_CACHE_DIR=/tmp/uv-cache uv run ruff check src/mjlab/tasks/pingpong/config/g1/env_cfgs.py src/mjlab/tasks/pingpong/pingpong_env_cfg.py tests/test_pingpong_task.py tests/test_pingpong_state.py`
 - `UV_CACHE_DIR=/tmp/uv-cache uv run ty check src/mjlab/tasks/pingpong/config/g1/env_cfgs.py src/mjlab/tasks/pingpong/pingpong_env_cfg.py tests/test_pingpong_task.py tests/test_pingpong_state.py`
 
-## 2026-06-24 15:53 - Pingpong V3 Collision Continuation
+## 2026-06-24 - Pingpong Cross Task
 
 ### 目标
 
-停止当前 clean V3 训练，在最新 clean V3 checkpoint 上按相同训练条件继续训练，并将新 run
-命名为 `v3_collision`。
+新增正式的 `Mjlab-Pingpong-Cross-Unitree-G1` 任务，目标是让机器人完成一次合法过网回球：
+己方桌面弹起后击球，球过网，并在对方桌面首次有效落点。
 
-### 进展记录
+### 实现记录
 
-- 温和停止 tmux session `pingpang_v3_clean_10240`；停止前最新 checkpoint 为
-  `logs/rsl_rl/g1_pingpong_latent_hit/pingpong_hit_v3_clean_contact_scratch_10240env_gpu1_2_2026-06-24_11-35-28/model_3500.pt`。
-- 启动新 tmux session `pingpang_v3_collision`：
-  `WANDB_MODE=offline uv run train Mjlab-Pingpong-Hit-Unitree-G1 --env.scene.num-envs 10240 --gpu-ids "[1,2]" --agent.max-iterations 30000 --agent.run-name v3_collision --agent.resume True --agent.load-checkpoint-file logs/rsl_rl/g1_pingpong_latent_hit/pingpong_hit_v3_clean_contact_scratch_10240env_gpu1_2_2026-06-24_11-35-28/model_3500.pt`。
-- 输出目录：
-  `logs/rsl_rl/g1_pingpong_latent_hit/v3_collision_2026-06-24_15-53-52`。
-- Resolved config 确认 `num_envs: 10240`、`max_iterations: 30000`、
-  `run_name: v3_collision`、`resume: true`，并从 clean V3 `model_3500.pt` 载入。
-- 启动产物已生成：TensorBoard event、`model_3500.pt`、ONNX、`params/` 和
-  `torchrunx/`；GPU 1/2 已有训练负载。torchrunx 日志中只见 W&B offline 提示，未见
-  OOM/Traceback。
+- 将现有 Return 的合法回球语义提炼为 `make_pingpong_latent_cross_env_cfg()`；
+  `make_pingpong_latent_return_env_cfg()` 保留为兼容别名。
+- 新增 G1 env wrapper、PPO runner cfg 和 task 注册：
+  `experiment_name="g1_pingpong_latent_cross"`，
+  `run_name="pingpong_cross_from_hit"`。
+- Cross 默认不硬编码本地 Hit checkpoint；训练时通过 CLI 传入当前最好 Hit checkpoint。
+- Reward/termination 沿用已验证的 Return 语义：`paddle_hit_event=25` 只作为阶段奖励，
+  `crossed_net_event=500`、`opponent_table_bounce_event=1000` 作为主要回球成功路径，
+  `legal_return_success` 作为 curriculum success term。
+
+### 验证
+
+- `UV_CACHE_DIR=/tmp/uv-cache FORCE_CPU=1 uv run pytest tests/test_pingpong_state.py tests/test_pingpong_task.py -q`
+- `UV_CACHE_DIR=/tmp/uv-cache uv run ruff check src/mjlab/tasks/pingpong tests/test_pingpong_state.py tests/test_pingpong_task.py`
+- `UV_CACHE_DIR=/tmp/uv-cache uv run ty check src/mjlab/tasks/pingpong`
+
+## 2026-06-25 - Pingpong Hit Regularization Curriculum
+
+### 目标
+
+在 Hit 任务中先完成现有落点课程，再根据 `first_paddle_hit` 成功率逐步增强
+动作平滑和稳定性正则，最终到达后续 Cross 可逐步收紧的强正则目标。
+
+### 实现记录
+
+- 新增 `success_reward_weight_curriculum`：基于 done episode 的成功率窗口推进，
+  可同时更新多个 reward term 的 `weight`。
+- `CurriculumManager` 新增只读 `get_term_state()`，供后续课程读取前置课程状态。
+- Hit 新增 `action_regularization` 课程，等待 `ball_target_region.stage == 5` 后开始统计；
+  成功率阈值 `0.80`，窗口 `50`。
+- 正则课程覆盖 `latent_action_rate_l2`、`joint_torques_l2`、`joint_acc_l2`、
+  `fall_penalty`、`flat_orientation_l2`；`low_level_action_rate_l2` 保持 `-0.02`。
+- Cross/Return 不启用该课程；当前 Cross 默认会先用更宽松的 return-first 正则学会回球。
+
+### 验证
+
+- `UV_CACHE_DIR=/tmp/uv-cache FORCE_CPU=1 uv run pytest tests/test_envs_curriculums.py tests/test_pingpong_task.py -q`
+- `UV_CACHE_DIR=/tmp/uv-cache uv run ruff check src/mjlab/envs/mdp/curriculums.py src/mjlab/managers/curriculum_manager.py src/mjlab/tasks/pingpong tests/test_envs_curriculums.py tests/test_pingpong_task.py`
+- `UV_CACHE_DIR=/tmp/uv-cache uv run ty check src/mjlab/envs/mdp src/mjlab/managers src/mjlab/tasks/pingpong`
+
+## 2026-06-25 - Pingpong Cross Return-First 松绑
+
+### 目标
+
+停止当前保守的 Cross 训练，将 Cross 默认配置改为先学习稳定合法回球，再在后续阶段考虑
+action-rate / torque / acceleration 等正则收紧。
+
+### 实现记录
+
+- 停止 tmux session `pingpang_cross_from_hit_v3_16384_gpu4_6`。
+- Cross/Return 保留 `robot_ball_contact` fault、`robot_table_contact` penalty、
+  `legal_return_success`、`crossed_net_event=500`、`opponent_table_bounce_event=1000`、
+  `post_hit_x_progress=40`、`post_hit_ball_velocity_direction=20`。
+- 新增 `CROSS_LOOSE_REGULARIZATION_WEIGHTS` 作为 Cross 默认宽松正则：
+  `latent_action_rate_l2=-0.005`、`low_level_action_rate_l2=-0.01`、
+  `joint_torques_l2=-2e-5`、`joint_acc_l2=-2e-6`、`fall_penalty=-300`、
+  `flat_orientation_l2=-0.5`。
+
+### 验证
+
+- `UV_CACHE_DIR=/tmp/uv-cache FORCE_CPU=1 uv run pytest tests/test_envs_curriculums.py tests/test_pingpong_task.py tests/test_pingpong_state.py -q`
+- `UV_CACHE_DIR=/tmp/uv-cache uv run ruff check src/mjlab/envs/mdp/curriculums.py src/mjlab/managers/curriculum_manager.py src/mjlab/tasks/pingpong src/mjlab/tasks/tennis/rl tests/test_envs_curriculums.py tests/test_pingpong_task.py tests/test_pingpong_state.py`
+- `UV_CACHE_DIR=/tmp/uv-cache uv run ty check src/mjlab/envs/mdp src/mjlab/managers src/mjlab/tasks/pingpong src/mjlab/tasks/tennis/rl`

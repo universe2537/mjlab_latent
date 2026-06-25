@@ -14,3 +14,6 @@ class TennisLatentOnPolicyRunnerCfg(RslRlOnPolicyRunnerCfg):
 
   reset_resume_progress: bool = False
   """Load policy weights while resetting iteration and environment progress."""
+
+  reset_actor_std: float | None = None
+  """When set, overwrite the loaded actor Gaussian std before warm-starting."""

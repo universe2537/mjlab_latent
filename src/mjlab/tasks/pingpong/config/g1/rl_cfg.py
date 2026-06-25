@@ -3,6 +3,7 @@
 from mjlab.rl import RslRlModelCfg, RslRlPpoAlgorithmCfg
 from mjlab.tasks.tennis.rl import TennisLatentOnPolicyRunnerCfg
 
+DEFAULT_CROSS_RESUME_CHECKPOINT = ""
 DEFAULT_RETURN_RESUME_CHECKPOINT = ""
 
 
@@ -58,21 +59,37 @@ def unitree_g1_pingpong_latent_ppo_runner_cfg(
   )
 
 
-def unitree_g1_pingpong_return_ppo_runner_cfg() -> TennisLatentOnPolicyRunnerCfg:
-  """Create PPO config for the G1 table-tennis legal-return task."""
+def unitree_g1_pingpong_cross_ppo_runner_cfg() -> TennisLatentOnPolicyRunnerCfg:
+  """Create PPO config for the G1 table-tennis over-net return task."""
   cfg = unitree_g1_pingpong_latent_ppo_runner_cfg(
-    experiment_name="g1_pingpong_latent_return",
-    run_name="pingpong_return_from_hit",
-    resume=False,
-    load_checkpoint_file=DEFAULT_RETURN_RESUME_CHECKPOINT or None,
+    experiment_name="g1_pingpong_latent_cross",
+    run_name="pingpong_cross_from_hit",
+    resume=bool(DEFAULT_CROSS_RESUME_CHECKPOINT),
+    load_checkpoint_file=DEFAULT_CROSS_RESUME_CHECKPOINT or None,
   )
-  cfg.algorithm.entropy_coef = 0.003
+  cfg.algorithm.entropy_coef = 0.002
+  cfg.algorithm.learning_rate = 5.0e-4
+  cfg.algorithm.desired_kl = 0.01
+  cfg.clip_actions = 2.5
+  cfg.reset_actor_std = 0.8
   cfg.max_iterations = 40000
   return cfg
 
 
+def unitree_g1_pingpong_return_ppo_runner_cfg() -> TennisLatentOnPolicyRunnerCfg:
+  """Create PPO config for the legacy G1 table-tennis legal-return task."""
+  cfg = unitree_g1_pingpong_cross_ppo_runner_cfg()
+  cfg.experiment_name = "g1_pingpong_latent_return"
+  cfg.run_name = "pingpong_return_from_hit"
+  cfg.resume = bool(DEFAULT_RETURN_RESUME_CHECKPOINT)
+  cfg.load_checkpoint_file = DEFAULT_RETURN_RESUME_CHECKPOINT or None
+  return cfg
+
+
 __all__ = [
+  "DEFAULT_CROSS_RESUME_CHECKPOINT",
   "DEFAULT_RETURN_RESUME_CHECKPOINT",
+  "unitree_g1_pingpong_cross_ppo_runner_cfg",
   "unitree_g1_pingpong_latent_ppo_runner_cfg",
   "unitree_g1_pingpong_return_ppo_runner_cfg",
 ]

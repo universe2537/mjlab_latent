@@ -17,6 +17,7 @@ from mjlab.asset_zoo.robots.unitree_g1_w_racket.g1_constants import (
 )
 from mjlab.entity import EntityCfg
 from mjlab.tasks.pingpong.pingpong_env_cfg import (
+  make_pingpong_latent_cross_env_cfg,
   make_pingpong_latent_env_cfg,
   make_pingpong_latent_return_env_cfg,
 )
@@ -177,7 +178,8 @@ def get_g1_w_pingpong_paddle_spec() -> mujoco.MjSpec:
   )
   handle.size[0] = PINGPONG_PADDLE_HANDLE_RADIUS
   handle.fromto[:] = (*handle_start, *handle_end)
-  handle.rgba[:] = (1.0, 0.55, 0.02, 0.45)
+  handle.group = 3
+  handle.rgba[:] = (1.0, 0.55, 0.02, 0.0)
 
   center = _find_site(spec, "tennis_racket_center")
   center.name = "pingpong_paddle_center"
@@ -229,12 +231,19 @@ def unitree_g1_pingpong_latent_return_env_cfg(play: bool = False):
   return _apply_g1_pingpong_common(cfg, play=play)
 
 
+def unitree_g1_pingpong_latent_cross_env_cfg(play: bool = False):
+  """Create G1 table-tennis over-net return task."""
+  cfg = make_pingpong_latent_cross_env_cfg()
+  return _apply_g1_pingpong_common(cfg, play=play)
+
+
 __all__ = [
   "DEFAULT_DECODER_CHECKPOINT",
   "PINGPONG_PADDLE_RADIUS",
   "PINGPONG_PADDLE_SCALE",
   "get_g1_w_pingpong_paddle_robot_cfg",
   "get_g1_w_pingpong_paddle_spec",
+  "unitree_g1_pingpong_latent_cross_env_cfg",
   "unitree_g1_pingpong_latent_hit_env_cfg",
   "unitree_g1_pingpong_latent_return_env_cfg",
 ]

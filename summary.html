@@ -47,6 +47,105 @@
     commands, failures, or next steps change.
   </p>
 
+  <h2>2026-06-25 Pingpong Hit Regularization Curriculum</h2>
+  <ul>
+    <li>
+      Pingpong Hit now keeps the existing <code>ball_target_region</code>
+      curriculum first. Only after that curriculum reaches its final stage does
+      the new <code>action_regularization</code> curriculum start counting
+      <code>first_paddle_hit</code> success.
+    </li>
+    <li>
+      The regularization curriculum advances on <code>0.80</code> success over a
+      <code>50</code>-episode done window. It progressively strengthens
+      <code>latent_action_rate_l2</code>, <code>joint_torques_l2</code>,
+      <code>joint_acc_l2</code>, <code>fall_penalty</code>, and
+      <code>flat_orientation_l2</code> toward the stricter stability target for
+      later Cross regularization. <code>low_level_action_rate_l2</code> stays
+      at <code>-0.02</code>.
+    </li>
+    <li>
+      Cross and Return do not enable this curriculum. Their current default is
+      a looser return-first profile so Cross can learn legal returns before
+      action-rate regularization is tightened.
+    </li>
+  </ul>
+
+  <h2>2026-06-25 Pingpong Cross Loosened Restart</h2>
+  <ul>
+    <li>
+      The previous Cross-from-Hit run
+      <code>pingpang_cross_from_hit_v3_16384_gpu4_6</code> was stopped because
+      the policy stayed too conservative under the stricter regularization.
+    </li>
+    <li>
+      Cross/Return now keep the anti-hacking safety terms but use looser
+      default regularization:
+      <code>latent_action_rate_l2=-0.005</code>,
+      <code>low_level_action_rate_l2=-0.01</code>,
+      <code>joint_torques_l2=-2e-5</code>,
+      <code>joint_acc_l2=-2e-6</code>,
+      <code>fall_penalty=-300</code>, and
+      <code>flat_orientation_l2=-0.5</code>.
+    </li>
+    <li>
+      The intended route is to warm-start Cross from the current Hit
+      checkpoint, first get stable <code>legal_return_success</code>, and only
+      later add/tighten Cross action regularization.
+    </li>
+  </ul>
+
+  <h2>2026-06-24 Pingpong Cross Stabilization</h2>
+  <ul>
+    <li>
+      Saved a 10-second Cross play video from
+      <code>model_3500.pt</code>:
+      <code>logs/rsl_rl/g1_pingpong_latent_cross/pingpong_cross_from_v3_collision_4500_2026-06-24_17-10-59/videos/play/rl-video-step-0.mp4</code>.
+    </li>
+    <li>
+      Cross/Return now use the relaxed PPO defaults:
+      <code>entropy_coef=0.002</code>, <code>learning_rate=5e-4</code>,
+      <code>desired_kl=0.01</code>, <code>clip_actions=2.5</code>, and
+      <code>reset_actor_std=0.8</code>.
+    </li>
+    <li>
+      Cross adds stronger stability pressure: higher action-rate, low-level
+      action-rate, joint acceleration/torque penalties, stricter fall
+      thresholds, <code>flat_orientation_l2</code>, and restored post-hit dense
+      shaping to <code>post_hit_x_progress=40</code> and
+      <code>post_hit_ball_velocity_direction=20</code>. This strict
+      regularization later proved too conservative for learning returns:
+      <code>latent_action_rate_l2=-0.01</code>,
+      <code>low_level_action_rate_l2=-0.02</code>,
+      <code>joint_acc_l2=-5e-6</code>, and
+      <code>joint_torques_l2=-5e-5</code>. Stable restart launched from
+      <code>model_4000.pt</code> with
+      <code>16384</code> envs on GPU <code>[4,6]</code>. Output:
+      <code>logs/rsl_rl/g1_pingpong_latent_cross/pingpong_cross_stable_from4000_16384env_gpu4_6_2026-06-24_21-21-58</code>.
+    </li>
+  </ul>
+
+  <h2>2026-06-24 Pingpong Cross Task</h2>
+  <ul>
+    <li>
+      <code>Mjlab-Pingpong-Cross-Unitree-G1</code> is the formal over-net
+      return task. It succeeds on <code>legal_return_success</code>: after a
+      legal paddle hit, the ball must clear the net and first bounce on the
+      opponent table.
+    </li>
+    <li>
+      The legacy <code>Mjlab-Pingpong-Return-Unitree-G1</code> remains
+      registered as a compatibility alias for the same env semantics, while
+      Cross uses experiment <code>g1_pingpong_latent_cross</code> and run name
+      <code>pingpong_cross_from_hit</code>.
+    </li>
+    <li>
+      Cross does not hardcode a local Hit checkpoint. Start Cross training from
+      the current best Hit checkpoint with CLI
+      <code>--agent.resume True --agent.load-checkpoint-file &lt;hit_model.pt&gt;</code>.
+    </li>
+  </ul>
+
   <h2>2026-06-24 Pingpong Clean V3 Restart</h2>
   <ul>
     <li>
@@ -96,7 +195,8 @@
       <code>pingpong_paddle_handle_collision</code> cylinder below the paddle
       face. It is collidable (<code>contype=1</code>,
       <code>conaffinity=1</code>) and therefore participates in table and ball
-      physics.
+      physics, but renders invisible with <code>geom_group=3</code> and
+      alpha <code>0</code>.
     </li>
     <li>
       Scoring remains restricted to the face geom

@@ -73,6 +73,12 @@ class CurriculumManager(ManagerBase):
       raise ValueError(f"Term '{term_name}' not found in active terms.")
     return self._term_cfgs[self._term_names.index(term_name)]
 
+  def get_term_state(self, term_name: str) -> Any:
+    """Return the latest state logged by a curriculum term."""
+    if term_name not in self._term_names:
+      raise ValueError(f"Term '{term_name}' not found in active terms.")
+    return self._curriculum_state[term_name]
+
   def get_active_iterable_terms(
     self, env_idx: int
   ) -> Sequence[tuple[str, Sequence[float]]]:
@@ -147,6 +153,10 @@ class NullCurriculumManager:
     self, env_idx: int
   ) -> Sequence[tuple[str, Sequence[float]]]:
     return []
+
+  def get_term_state(self, term_name: str) -> Any:
+    del term_name
+    return None
 
   def reset(self, env_ids: torch.Tensor | None = None) -> dict[str, float]:
     return {}

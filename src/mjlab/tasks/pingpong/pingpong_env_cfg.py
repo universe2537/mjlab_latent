@@ -57,6 +57,46 @@ BALL_TARGET_Y_RANGE = (-0.70, 0.70)
 BALL_TARGET_CURRICULUM_SUCCESS_THRESHOLD = 0.75
 BALL_TARGET_CURRICULUM_WINDOW = 50
 BALL_TARGET_CURRICULUM_STAGES = 6
+ACTION_REGULARIZATION_CURRICULUM_SUCCESS_THRESHOLD = 0.80
+ACTION_REGULARIZATION_CURRICULUM_WINDOW = 50
+ACTION_REGULARIZATION_CURRICULUM_STAGE_WEIGHTS = (
+  {
+    "latent_action_rate_l2": -0.005,
+    "joint_torques_l2": -2.0e-5,
+    "joint_acc_l2": -2.0e-6,
+    "fall_penalty": -200.0,
+    "flat_orientation_l2": 0.0,
+  },
+  {
+    "latent_action_rate_l2": -0.0065,
+    "joint_torques_l2": -3.0e-5,
+    "joint_acc_l2": -3.0e-6,
+    "fall_penalty": -300.0,
+    "flat_orientation_l2": -0.7,
+  },
+  {
+    "latent_action_rate_l2": -0.008,
+    "joint_torques_l2": -4.0e-5,
+    "joint_acc_l2": -4.0e-6,
+    "fall_penalty": -400.0,
+    "flat_orientation_l2": -1.3,
+  },
+  {
+    "latent_action_rate_l2": -0.01,
+    "joint_torques_l2": -5.0e-5,
+    "joint_acc_l2": -5.0e-6,
+    "fall_penalty": -500.0,
+    "flat_orientation_l2": -2.0,
+  },
+)
+CROSS_LOOSE_REGULARIZATION_WEIGHTS = {
+  "latent_action_rate_l2": -0.005,
+  "low_level_action_rate_l2": -0.01,
+  "joint_torques_l2": -2.0e-5,
+  "joint_acc_l2": -2.0e-6,
+  "fall_penalty": -300.0,
+  "flat_orientation_l2": -0.5,
+}
 
 OUT_X_LIMITS = (-TABLE_HALF_LENGTH - 0.75, TABLE_HALF_LENGTH + 1.10)
 OUT_Y_LIMITS = (-TABLE_HALF_WIDTH - 0.50, TABLE_HALF_WIDTH + 0.50)
@@ -410,6 +450,11 @@ def make_pingpong_latent_env_cfg() -> ManagerBasedRlEnvCfg:
       weight=-200.0,
       params={"term_names": ("bad_orientation", "root_height")},
     ),
+    "flat_orientation_l2": RewardTermCfg(
+      func=mdp.flat_orientation_l2,
+      weight=0.0,
+      params={"asset_cfg": _ROBOT_CFG},
+    ),
   }
   terminations = {
     "time_out": TerminationTermCfg(func=mdp.time_out, time_out=True),
@@ -485,7 +530,19 @@ def make_pingpong_latent_env_cfg() -> ManagerBasedRlEnvCfg:
         "success_window": BALL_TARGET_CURRICULUM_WINDOW,
         "num_stages": BALL_TARGET_CURRICULUM_STAGES,
       },
-    )
+    ),
+    "action_regularization": CurriculumTermCfg(
+      func=mdp.success_reward_weight_curriculum,
+      params={
+        "success_term_name": "first_paddle_hit",
+        "success_threshold": ACTION_REGULARIZATION_CURRICULUM_SUCCESS_THRESHOLD,
+        "success_window": ACTION_REGULARIZATION_CURRICULUM_WINDOW,
+        "stage_weights": ACTION_REGULARIZATION_CURRICULUM_STAGE_WEIGHTS,
+        "prerequisite_curriculum_name": "ball_target_region",
+        "prerequisite_stage_key": "stage",
+        "prerequisite_min_stage": float(BALL_TARGET_CURRICULUM_STAGES - 1),
+      },
+    ),
   }
   return ManagerBasedRlEnvCfg(
     scene=SceneCfg(
@@ -538,13 +595,15 @@ def make_pingpong_latent_env_cfg() -> ManagerBasedRlEnvCfg:
   )
 
 
-def make_pingpong_latent_return_env_cfg() -> ManagerBasedRlEnvCfg:
-  """Create the legal single-return table-tennis task."""
+def make_pingpong_latent_cross_env_cfg() -> ManagerBasedRlEnvCfg:
+  """Create the legal over-net table-tennis return task."""
   cfg = make_pingpong_latent_env_cfg()
   state_params = _state_params()
   cfg.rewards["approach_ball"].weight = 5.0
   cfg.rewards["paddle_towards_ball"].weight = 2.0
   cfg.rewards["paddle_hit_event"].weight = 25.0
+  for reward_name, reward_weight in CROSS_LOOSE_REGULARIZATION_WEIGHTS.items():
+    cfg.rewards[reward_name].weight = reward_weight
   cfg.rewards["post_hit_x_progress"] = RewardTermCfg(
     func=mdp.post_hit_x_progress,
     weight=40.0,
@@ -574,16 +633,27 @@ def make_pingpong_latent_return_env_cfg() -> ManagerBasedRlEnvCfg:
     func=mdp.legal_return_success,
     params=dict(state_params),
   )
+  cfg.terminations["bad_orientation"].params["limit_angle"] = math.radians(55.0)
+  cfg.terminations["root_height"].params["minimum_height"] = 0.55
   cfg.curriculum["ball_target_region"].params["success_term_name"] = (
     "legal_return_success"
   )
+  cfg.curriculum.pop("action_regularization", None)
   return cfg
+
+
+def make_pingpong_latent_return_env_cfg() -> ManagerBasedRlEnvCfg:
+  """Create the legacy legal-return alias for the pingpong Cross task."""
+  return make_pingpong_latent_cross_env_cfg()
 
 
 __all__ = [
   "BALL_TARGET_X_RANGE",
   "BALL_TARGET_Y_RANGE",
+  "CROSS_LOOSE_REGULARIZATION_WEIGHTS",
   "DECODER_STATE_TERMS",
+  "ACTION_REGULARIZATION_CURRICULUM_STAGE_WEIGHTS",
+  "make_pingpong_latent_cross_env_cfg",
   "make_pingpong_latent_env_cfg",
   "make_pingpong_latent_return_env_cfg",
 ]

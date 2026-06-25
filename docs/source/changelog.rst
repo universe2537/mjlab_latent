@@ -13,10 +13,14 @@ Added
   racket-equipped G1. The v1 tasks use programmatic table, net, ball, and
   paddle collision geometry, reuse the frozen tennis latent decoder, and
   track legal single-return events through a dedicated pingpong rally state.
+- Added ``Mjlab-Pingpong-Cross-Unitree-G1`` as the named table-tennis
+  over-net return task. It succeeds when a legal paddle hit crosses the net
+  and first lands on the opponent table; the older Return task remains as a
+  compatibility alias.
 - Added a separate Pingpong paddle-handle collision cylinder for the
   racket-equipped G1. The handle participates in robot-table and robot-ball
-  physics, while paddle-hit scoring remains restricted to the paddle-face
-  collision proxy.
+  physics but renders invisible, while paddle-hit scoring remains restricted
+  to the paddle-face collision proxy.
 - Added ``Mjlab-Velocity-Stairs-Unitree-Go1``, a Go1 velocity task with a
   mixed ascending/descending pyramid-stair curriculum whose peak height grows
   to the robot's nominal body height, along with stair-specific reward shaping
@@ -80,6 +84,11 @@ Added
 Changed
 ^^^^^^^
 
+- Added a success-rate-gated Pingpong Hit regularization curriculum: after the
+  existing serve-target curriculum reaches its final stage, Hit progressively
+  strengthens latent action-rate, torque, acceleration, fall, and upright
+  penalties toward the stricter stability target intended for later Cross
+  regularization.
 - Updated the default Pingpong Hit/Return tasks to use a scaled table-tennis
   paddle visual/collision proxy, penalize robot-table contacts without
   terminating episodes, and generate scene-driven first-bounce feeds through a
@@ -89,6 +98,11 @@ Changed
   trapping: non-paddle robot-ball contact now faults the rally and receives a
   modest penalty, while Hit uses a much larger sparse paddle-hit reward and
   lower dense approach shaping.
+- Updated Pingpong Cross stabilization settings: warm-starts can reset loaded
+  actor Gaussian std, Cross uses lower entropy/KL/action clipping, keeps the
+  stronger post-hit return rewards, and now starts from looser action-rate,
+  acceleration, torque, fall, and upright penalties so it can first learn
+  stable legal returns before later action regularization is tightened.
 - Updated the Pingpong actor ``ball_pos_window`` observation to use a
   10-frame history of ball-center position in the robot base frame, matching
   the intended deployment signal.

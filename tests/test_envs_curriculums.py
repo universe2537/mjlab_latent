@@ -5,7 +5,11 @@ from unittest.mock import Mock
 import pytest
 import torch
 
-from mjlab.envs.mdp.curriculums import reward_curriculum, termination_curriculum
+from mjlab.envs.mdp.curriculums import (
+  reward_curriculum,
+  success_reward_weight_curriculum,
+  termination_curriculum,
+)
 from mjlab.managers.curriculum_manager import CurriculumTermCfg
 from mjlab.managers.reward_manager import RewardTermCfg
 from mjlab.managers.termination_manager import TerminationTermCfg
@@ -65,6 +69,37 @@ def _make_termination_env(step_counter, term_cfg):
   env.common_step_counter = step_counter
   env.termination_manager.get_term_cfg.return_value = term_cfg
   return env
+
+
+def _make_success_reward_env(
+  reward_cfgs,
+  dones,
+  successes,
+  prerequisite_state=None,
+):
+  env = Mock()
+  env.device = torch.device("cpu")
+  env.reward_manager.get_term_cfg.side_effect = lambda name: reward_cfgs[name]
+  env.termination_manager.dones = torch.tensor(dones, dtype=torch.bool)
+  env.termination_manager.get_term.return_value = torch.tensor(
+    successes, dtype=torch.bool
+  )
+  env.curriculum_manager.get_term_state.return_value = prerequisite_state
+  return env
+
+
+def _build_success_reward(env, stage_weights, **overrides):
+  params = {
+    "success_term_name": "success",
+    "success_threshold": 0.8,
+    "success_window": 50,
+    "stage_weights": stage_weights,
+    **overrides,
+  }
+  cfg = CurriculumTermCfg(func=success_reward_weight_curriculum, params=params)
+  instance = success_reward_weight_curriculum(cfg, env)
+  env_ids = torch.arange(env.termination_manager.dones.shape[0])
+  return instance(env, env_ids=env_ids, **params)
 
 
 # Reward: weight
@@ -273,3 +308,112 @@ def test_termination_log_keys():
   assert "threshold" in result
   assert result["threshold"].item() == pytest.approx(500.0)
   assert "weight" not in result  # No weight for termination.
+
+
+# Success-driven reward weights
+
+
+def test_success_reward_waits_for_prerequisite():
+  reward_cfgs = {"a": _make_reward_cfg(), "b": _make_reward_cfg()}
+  env = _make_success_reward_env(
+    reward_cfgs,
+    dones=[True] * 50,
+    successes=[True] * 50,
+    prerequisite_state={"stage": torch.tensor(4.0)},
+  )
+  result = _build_success_reward(
+    env,
+    [
+      {"a": -1.0, "b": -2.0},
+      {"a": -3.0, "b": -4.0},
+    ],
+    prerequisite_curriculum_name="target",
+    prerequisite_stage_key="stage",
+    prerequisite_min_stage=5.0,
+  )
+
+  assert result["waiting_for_prerequisite"].item() == pytest.approx(1.0)
+  assert result["stage"].item() == pytest.approx(0.0)
+  assert result["success_rate"].item() == pytest.approx(0.0)
+  assert reward_cfgs["a"].weight == pytest.approx(-1.0)
+  assert reward_cfgs["b"].weight == pytest.approx(-2.0)
+
+
+def test_success_reward_keeps_stage_before_window_fills():
+  reward_cfgs = {"a": _make_reward_cfg()}
+  env = _make_success_reward_env(
+    reward_cfgs,
+    dones=[True] * 10,
+    successes=[True] * 10,
+  )
+  result = _build_success_reward(env, [{"a": -1.0}, {"a": -2.0}])
+
+  assert result["waiting_for_prerequisite"].item() == pytest.approx(0.0)
+  assert result["stage"].item() == pytest.approx(0.0)
+  assert result["success_rate"].item() == pytest.approx(1.0)
+  assert reward_cfgs["a"].weight == pytest.approx(-1.0)
+
+
+def test_success_reward_advances_after_threshold():
+  reward_cfgs = {"a": _make_reward_cfg()}
+  env = _make_success_reward_env(
+    reward_cfgs,
+    dones=[True] * 50,
+    successes=[True] * 40 + [False] * 10,
+  )
+  result = _build_success_reward(env, [{"a": -1.0}, {"a": -2.0}])
+
+  assert result["stage"].item() == pytest.approx(1.0)
+  assert result["success_rate"].item() == pytest.approx(0.0)
+  assert reward_cfgs["a"].weight == pytest.approx(-2.0)
+
+
+def test_success_reward_updates_multiple_rewards_together():
+  reward_cfgs = {
+    "latent": _make_reward_cfg(),
+    "torques": _make_reward_cfg(),
+    "acc": _make_reward_cfg(),
+  }
+  env = _make_success_reward_env(
+    reward_cfgs,
+    dones=[True] * 50,
+    successes=[True] * 50,
+  )
+  result = _build_success_reward(
+    env,
+    [
+      {"latent": -0.005, "torques": -2e-5, "acc": -2e-6},
+      {"latent": -0.01, "torques": -5e-5, "acc": -5e-6},
+    ],
+  )
+
+  assert result["stage"].item() == pytest.approx(1.0)
+  assert result["latent_weight"].item() == pytest.approx(-0.01)
+  assert result["torques_weight"].item() == pytest.approx(-5e-5)
+  assert result["acc_weight"].item() == pytest.approx(-5e-6)
+
+
+def test_success_reward_final_stage_does_not_overflow():
+  reward_cfgs = {"a": _make_reward_cfg()}
+  env = _make_success_reward_env(
+    reward_cfgs,
+    dones=[True] * 50,
+    successes=[True] * 50,
+  )
+  params = {
+    "success_term_name": "success",
+    "success_threshold": 0.8,
+    "success_window": 50,
+    "stage_weights": [{"a": -1.0}, {"a": -2.0}],
+  }
+  cfg = CurriculumTermCfg(func=success_reward_weight_curriculum, params=params)
+  instance = success_reward_weight_curriculum(cfg, env)
+  env_ids = torch.arange(50)
+
+  first = instance(env, env_ids=env_ids, **params)
+  second = instance(env, env_ids=env_ids, **params)
+
+  assert first["stage"].item() == pytest.approx(1.0)
+  assert second["stage"].item() == pytest.approx(1.0)
+  assert second["success_rate"].item() == pytest.approx(1.0)
+  assert reward_cfgs["a"].weight == pytest.approx(-2.0)

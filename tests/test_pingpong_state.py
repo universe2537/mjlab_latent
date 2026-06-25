@@ -7,6 +7,7 @@ from mjlab.managers.scene_entity_config import SceneEntityCfg
 from mjlab.tasks.pingpong.mdp.state import (
   FAULT_ILLEGAL_BODY_BALL_CONTACT,
   FAULT_ILLEGAL_PRE_BOUNCE_HIT,
+  FAULT_LOW_NET_CROSS,
   FAULT_RETURN_BOUNCE_OUT,
   PHASE_AFTER_SELF_BOUNCE,
   PHASE_DONE,
@@ -175,6 +176,34 @@ def test_pingpong_state_rejects_out_of_bounds_return_bounce() -> None:
 
   assert state.fault_edge[0]
   assert state.fault_reason[0] == FAULT_RETURN_BOUNCE_OUT
+  assert not state.successful_return_edge[0]
+
+
+def test_pingpong_state_rejects_low_net_return_crossing() -> None:
+  env, ball, paddle_sensor, _, _ = _make_env()
+  state = _make_state(env)
+
+  state.update()
+  env.common_step_counter = 1
+  ball.data.root_link_pos_w[:] = torch.tensor([[0.65, 0.0, BALL_CENTER_TABLE_Z]])
+  ball.data.root_link_lin_vel_w[:] = torch.tensor([[2.0, 0.0, 1.0]])
+  state.update()
+
+  env.common_step_counter = 2
+  paddle_sensor.data.force[:] = 5.0
+  ball.data.root_link_pos_w[:] = torch.tensor([[0.85, 0.0, 1.05]])
+  ball.data.root_link_lin_vel_w[:] = torch.tensor([[-2.5, 0.0, 0.3]])
+  state.update()
+
+  env.common_step_counter = 3
+  paddle_sensor.data.force.zero_()
+  ball.data.root_link_pos_w[:] = torch.tensor([[-0.1, 0.0, NET_TOP_Z - 0.01]])
+  ball.data.root_link_lin_vel_w[:] = torch.tensor([[-2.0, 0.0, -0.5]])
+  state.update()
+
+  assert state.fault_edge[0]
+  assert state.fault_reason[0] == FAULT_LOW_NET_CROSS
+  assert not state.crossed_net_edge[0]
   assert not state.successful_return_edge[0]
 
 

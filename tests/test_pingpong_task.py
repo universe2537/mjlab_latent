@@ -1,5 +1,7 @@
 from typing import cast
 
+import torch
+
 import mjlab.tasks  # noqa: F401
 from mjlab.scene import Scene
 from mjlab.sensor import ContactSensorCfg
@@ -12,44 +14,57 @@ from mjlab.tasks.pingpong.config.g1.env_cfgs import (
   PINGPONG_PADDLE_SCALE,
   get_g1_w_pingpong_paddle_spec,
 )
-from mjlab.tasks.pingpong.config.g1.rl_cfg import DEFAULT_RETURN_RESUME_CHECKPOINT
+from mjlab.tasks.pingpong.config.g1.rl_cfg import (
+  DEFAULT_CROSS_RESUME_CHECKPOINT,
+  DEFAULT_RETURN_RESUME_CHECKPOINT,
+)
 from mjlab.tasks.pingpong.mdp.ball_providers import TableTennisFeederCfg
 from mjlab.tasks.pingpong.pingpong_env_cfg import (
+  ACTION_REGULARIZATION_CURRICULUM_STAGE_WEIGHTS,
   BALL_TARGET_X_RANGE,
   BALL_TARGET_Y_RANGE,
+  CROSS_LOOSE_REGULARIZATION_WEIGHTS,
   DECODER_STATE_TERMS,
 )
 from mjlab.tasks.registry import list_tasks, load_env_cfg, load_rl_cfg
 from mjlab.tasks.tennis.mdp import FrozenDecoderLatentJointPositionActionCfg
 from mjlab.tasks.tennis.rl import TennisLatentOnPolicyRunnerCfg
+from mjlab.tasks.tennis.rl.runner import reset_actor_distribution_std
 
 
 def test_pingpong_tasks_registered() -> None:
   assert "Mjlab-Pingpong-Hit-Unitree-G1" in list_tasks()
+  assert "Mjlab-Pingpong-Cross-Unitree-G1" in list_tasks()
   assert "Mjlab-Pingpong-Return-Unitree-G1" in list_tasks()
 
 
 def test_pingpong_task_scene_compiles() -> None:
-  cfg = load_env_cfg("Mjlab-Pingpong-Hit-Unitree-G1")
-  scene = Scene(cfg.scene, device="cpu")
-  model = scene.compile()
+  for task_id in (
+    "Mjlab-Pingpong-Hit-Unitree-G1",
+    "Mjlab-Pingpong-Cross-Unitree-G1",
+  ):
+    cfg = load_env_cfg(task_id)
+    scene = Scene(cfg.scene, device="cpu")
+    model = scene.compile()
 
-  geom_by_name = {model.geom(i).name: i for i in range(model.ngeom)}
-  geom_names = set(geom_by_name)
-  sensor_names = {model.sensor(i).name for i in range(model.nsensor)}
+    geom_by_name = {model.geom(i).name: i for i in range(model.ngeom)}
+    geom_names = set(geom_by_name)
+    sensor_names = {model.sensor(i).name for i in range(model.nsensor)}
 
-  assert "robot/pingpong_paddle_collision" in geom_names
-  assert "robot/pingpong_paddle_handle_collision" in geom_names
-  handle_id = geom_by_name["robot/pingpong_paddle_handle_collision"]
-  assert int(model.geom_contype[handle_id]) == 1
-  assert int(model.geom_conaffinity[handle_id]) == 1
-  assert "ball/pingpong_ball" in geom_names
-  assert "table/pingpong_table_top_collision" in geom_names
-  assert "table/pingpong_net_collision" in geom_names
-  assert any(name.startswith("paddle_ball_contact") for name in sensor_names)
-  assert any(name.startswith("pingpong_ball_net_contact") for name in sensor_names)
-  assert any(name.startswith("robot_table_contact") for name in sensor_names)
-  assert any(name.startswith("robot_ball_contact") for name in sensor_names)
+    assert "robot/pingpong_paddle_collision" in geom_names
+    assert "robot/pingpong_paddle_handle_collision" in geom_names
+    handle_id = geom_by_name["robot/pingpong_paddle_handle_collision"]
+    assert int(model.geom_contype[handle_id]) == 1
+    assert int(model.geom_conaffinity[handle_id]) == 1
+    assert int(model.geom_group[handle_id]) == 3
+    assert float(model.geom_rgba[handle_id, 3]) == 0.0
+    assert "ball/pingpong_ball" in geom_names
+    assert "table/pingpong_table_top_collision" in geom_names
+    assert "table/pingpong_net_collision" in geom_names
+    assert any(name.startswith("paddle_ball_contact") for name in sensor_names)
+    assert any(name.startswith("pingpong_ball_net_contact") for name in sensor_names)
+    assert any(name.startswith("robot_table_contact") for name in sensor_names)
+    assert any(name.startswith("robot_ball_contact") for name in sensor_names)
 
 
 def test_pingpong_paddle_scales_visual_and_collision() -> None:
@@ -75,6 +90,8 @@ def test_pingpong_paddle_scales_visual_and_collision() -> None:
   assert "pingpong_paddle_handle_collision" in geom_by_name
   handle = geom_by_name["pingpong_paddle_handle_collision"]
   assert abs(float(handle.size[0]) - PINGPONG_PADDLE_HANDLE_RADIUS) < 1.0e-6
+  assert int(handle.group) == 3
+  assert float(handle.rgba[3]) == 0.0
   handle_fromto = [float(v) for v in handle.fromto]
   handle_length = sum(
     (handle_fromto[i + 3] - handle_fromto[i]) ** 2 for i in range(3)
@@ -122,6 +139,21 @@ def test_pingpong_rl_configs_load() -> None:
   assert hit_cfg.resume is False
   assert hit_cfg.require_decoder_checkpoint is True
 
+  cross_cfg = cast(
+    TennisLatentOnPolicyRunnerCfg,
+    load_rl_cfg("Mjlab-Pingpong-Cross-Unitree-G1"),
+  )
+  assert cross_cfg.experiment_name == "g1_pingpong_latent_cross"
+  assert cross_cfg.run_name == "pingpong_cross_from_hit"
+  assert cross_cfg.resume is bool(DEFAULT_CROSS_RESUME_CHECKPOINT)
+  assert cross_cfg.load_checkpoint_file == (DEFAULT_CROSS_RESUME_CHECKPOINT or None)
+  assert cross_cfg.algorithm.entropy_coef == 0.002
+  assert cross_cfg.algorithm.learning_rate == 5.0e-4
+  assert cross_cfg.algorithm.desired_kl == 0.01
+  assert cross_cfg.clip_actions == 2.5
+  assert cross_cfg.reset_actor_std == 0.8
+  assert cross_cfg.max_iterations == 40000
+
   return_cfg = cast(
     TennisLatentOnPolicyRunnerCfg,
     load_rl_cfg("Mjlab-Pingpong-Return-Unitree-G1"),
@@ -130,11 +162,15 @@ def test_pingpong_rl_configs_load() -> None:
   assert return_cfg.run_name == "pingpong_return_from_hit"
   assert return_cfg.resume is False
   assert return_cfg.load_checkpoint_file == (DEFAULT_RETURN_RESUME_CHECKPOINT or None)
-  assert return_cfg.algorithm.entropy_coef == 0.003
+  assert return_cfg.algorithm.entropy_coef == 0.002
+  assert return_cfg.algorithm.learning_rate == 5.0e-4
+  assert return_cfg.algorithm.desired_kl == 0.01
+  assert return_cfg.clip_actions == 2.5
+  assert return_cfg.reset_actor_std == 0.8
   assert return_cfg.max_iterations == 40000
 
 
-def test_pingpong_hit_and_return_success_terms() -> None:
+def test_pingpong_hit_and_cross_success_terms() -> None:
   hit_cfg = load_env_cfg("Mjlab-Pingpong-Hit-Unitree-G1")
   assert "first_paddle_hit" in hit_cfg.terminations
   assert "legal_return_success" not in hit_cfg.terminations
@@ -147,23 +183,67 @@ def test_pingpong_hit_and_return_success_terms() -> None:
   assert hit_cfg.rewards["paddle_towards_ball"].weight == 2.0
   assert hit_cfg.rewards["paddle_hit_event"].weight == 2000.0
   assert hit_cfg.rewards["robot_ball_contact"].weight == -50.0
+  assert hit_cfg.rewards["joint_torques_l2"].weight == -2.0e-5
+  assert hit_cfg.rewards["joint_acc_l2"].weight == -2.0e-6
+  assert hit_cfg.rewards["latent_action_rate_l2"].weight == -0.005
+  assert hit_cfg.rewards["low_level_action_rate_l2"].weight == -0.02
+  assert hit_cfg.rewards["fall_penalty"].weight == -200.0
+  assert hit_cfg.rewards["flat_orientation_l2"].weight == 0.0
   assert hit_cfg.curriculum["ball_target_region"].params["success_term_name"] == (
     "first_paddle_hit"
   )
+  assert list(hit_cfg.curriculum) == ["ball_target_region", "action_regularization"]
+  action_curriculum = hit_cfg.curriculum["action_regularization"]
+  assert action_curriculum.params["success_term_name"] == "first_paddle_hit"
+  assert action_curriculum.params["success_threshold"] == 0.8
+  assert action_curriculum.params["success_window"] == 50
+  assert action_curriculum.params["prerequisite_curriculum_name"] == (
+    "ball_target_region"
+  )
+  assert action_curriculum.params["prerequisite_stage_key"] == "stage"
+  assert action_curriculum.params["prerequisite_min_stage"] == 5.0
+  assert action_curriculum.params["stage_weights"][0] == (
+    ACTION_REGULARIZATION_CURRICULUM_STAGE_WEIGHTS[0]
+  )
 
+  cross_cfg = load_env_cfg("Mjlab-Pingpong-Cross-Unitree-G1")
+  assert "first_paddle_hit" not in cross_cfg.terminations
+  assert "legal_return_success" in cross_cfg.terminations
+  assert "crossed_net_event" in cross_cfg.rewards
+  assert cross_cfg.rewards["crossed_net_event"].weight == 500.0
+  assert "opponent_table_bounce_event" in cross_cfg.rewards
+  assert cross_cfg.rewards["opponent_table_bounce_event"].weight == 1000.0
+  assert "post_hit_x_progress" in cross_cfg.rewards
+  assert cross_cfg.rewards["post_hit_x_progress"].weight == 40.0
+  assert "post_hit_ball_velocity_direction" in cross_cfg.rewards
+  assert cross_cfg.rewards["post_hit_ball_velocity_direction"].weight == 20.0
+  assert "robot_table_contact" in cross_cfg.rewards
+  assert "robot_ball_contact" in cross_cfg.rewards
+  for reward_name, loose_weight in CROSS_LOOSE_REGULARIZATION_WEIGHTS.items():
+    assert cross_cfg.rewards[reward_name].weight == loose_weight
+  assert "robot_ball_contact_count" not in cross_cfg.metrics
+  assert "robot_table_contact" not in cross_cfg.terminations
+  assert cross_cfg.terminations["bad_orientation"].params["limit_angle"] < 1.0
+  assert cross_cfg.terminations["root_height"].params["minimum_height"] == 0.55
+  assert cross_cfg.rewards["approach_ball"].weight == 5.0
+  assert cross_cfg.rewards["paddle_towards_ball"].weight == 2.0
+  assert cross_cfg.rewards["paddle_hit_event"].weight == 25.0
+  assert cross_cfg.curriculum["ball_target_region"].params["success_term_name"] == (
+    "legal_return_success"
+  )
+  assert "action_regularization" not in cross_cfg.curriculum
+
+
+def test_pingpong_return_alias_matches_cross_success_terms() -> None:
+  cross_cfg = load_env_cfg("Mjlab-Pingpong-Cross-Unitree-G1")
   return_cfg = load_env_cfg("Mjlab-Pingpong-Return-Unitree-G1")
-  assert "first_paddle_hit" not in return_cfg.terminations
-  assert "legal_return_success" in return_cfg.terminations
-  assert "crossed_net_event" in return_cfg.rewards
-  assert "opponent_table_bounce_event" in return_cfg.rewards
-  assert "robot_table_contact" in return_cfg.rewards
-  assert "robot_ball_contact" in return_cfg.rewards
-  assert "robot_ball_contact_count" not in return_cfg.metrics
-  assert "robot_table_contact" not in return_cfg.terminations
-  assert return_cfg.rewards["paddle_hit_event"].weight == 25.0
+
+  assert set(return_cfg.terminations) == set(cross_cfg.terminations)
+  assert set(return_cfg.rewards) == set(cross_cfg.rewards)
   assert return_cfg.curriculum["ball_target_region"].params["success_term_name"] == (
     "legal_return_success"
   )
+  assert "action_regularization" not in return_cfg.curriculum
 
 
 def test_pingpong_feeder_curriculum_ranges() -> None:
@@ -197,3 +277,19 @@ def test_pingpong_predicted_hit_point_uses_edge_target() -> None:
   assert critic_term.func.__name__ == "ball_predicted_edge_hit_point_b"
   assert "edge_x" not in actor_term.params
   assert "edge_x" not in critic_term.params
+
+
+def test_reset_actor_distribution_std_updates_loaded_checkpoint_state() -> None:
+  actor_state_dict = {
+    "distribution.std_param": torch.full((16,), 12.0),
+    "distribution.log_std_param": torch.full((16,), 4.0),
+  }
+
+  assert reset_actor_distribution_std(actor_state_dict, 0.5)
+  assert torch.allclose(
+    actor_state_dict["distribution.std_param"], torch.full((16,), 0.5)
+  )
+  assert torch.allclose(
+    actor_state_dict["distribution.log_std_param"],
+    torch.full((16,), torch.log(torch.tensor(0.5)).item()),
+  )
