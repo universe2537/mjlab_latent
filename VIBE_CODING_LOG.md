@@ -314,3 +314,24 @@ action-rate / torque / acceleration 等正则收紧。
 - `UV_CACHE_DIR=/tmp/uv-cache FORCE_CPU=1 uv run pytest tests/test_envs_curriculums.py tests/test_pingpong_task.py tests/test_pingpong_state.py -q`
 - `UV_CACHE_DIR=/tmp/uv-cache uv run ruff check src/mjlab/envs/mdp/curriculums.py src/mjlab/managers/curriculum_manager.py src/mjlab/tasks/pingpong src/mjlab/tasks/tennis/rl tests/test_envs_curriculums.py tests/test_pingpong_task.py tests/test_pingpong_state.py`
 - `UV_CACHE_DIR=/tmp/uv-cache uv run ty check src/mjlab/envs/mdp src/mjlab/managers src/mjlab/tasks/pingpong src/mjlab/tasks/tennis/rl`
+
+## 2026-06-25 - Pingpong Cross Dense Reward Retune
+
+### 目标
+
+根据当前 Cross loose run 的 reward 分布，降低压制挥拍和偶发身体碰球的负项，
+同时增强击球后过网方向的 dense shaping。
+
+### 实现记录
+
+- Cross `joint_acc_l2` 从 `-2e-6` 降到 `-1e-6`，减少击球后加速动作惩罚。
+- Cross/Return 单独将 `robot_ball_contact` reward penalty 从 `-50` 降到 `-25`；
+  Hit 仍保持 `-50`，身体碰球 fault 终止也保留。
+- Cross `post_hit_x_progress` 从 `40` 提到 `80`。
+- Cross `post_hit_ball_velocity_direction` 从 `20` 提到 `60`。
+
+### 验证
+
+- `UV_CACHE_DIR=/tmp/uv-cache FORCE_CPU=1 uv run pytest tests/test_pingpong_task.py tests/test_pingpong_state.py -q`
+- `UV_CACHE_DIR=/tmp/uv-cache uv run ruff check src/mjlab/tasks/pingpong tests/test_pingpong_task.py tests/test_pingpong_state.py`
+- `UV_CACHE_DIR=/tmp/uv-cache uv run ty check src/mjlab/tasks/pingpong`

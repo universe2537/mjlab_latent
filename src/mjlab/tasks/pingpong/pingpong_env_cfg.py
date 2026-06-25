@@ -93,10 +93,13 @@ CROSS_LOOSE_REGULARIZATION_WEIGHTS = {
   "latent_action_rate_l2": -0.005,
   "low_level_action_rate_l2": -0.01,
   "joint_torques_l2": -2.0e-5,
-  "joint_acc_l2": -2.0e-6,
+  "joint_acc_l2": -1.0e-6,
   "fall_penalty": -300.0,
   "flat_orientation_l2": -0.5,
 }
+CROSS_ROBOT_BALL_CONTACT_WEIGHT = -25.0
+CROSS_POST_HIT_X_PROGRESS_WEIGHT = 80.0
+CROSS_POST_HIT_BALL_VELOCITY_DIRECTION_WEIGHT = 60.0
 
 OUT_X_LIMITS = (-TABLE_HALF_LENGTH - 0.75, TABLE_HALF_LENGTH + 1.10)
 OUT_Y_LIMITS = (-TABLE_HALF_WIDTH - 0.50, TABLE_HALF_WIDTH + 0.50)
@@ -604,14 +607,15 @@ def make_pingpong_latent_cross_env_cfg() -> ManagerBasedRlEnvCfg:
   cfg.rewards["paddle_hit_event"].weight = 25.0
   for reward_name, reward_weight in CROSS_LOOSE_REGULARIZATION_WEIGHTS.items():
     cfg.rewards[reward_name].weight = reward_weight
+  cfg.rewards["robot_ball_contact"].weight = CROSS_ROBOT_BALL_CONTACT_WEIGHT
   cfg.rewards["post_hit_x_progress"] = RewardTermCfg(
     func=mdp.post_hit_x_progress,
-    weight=40.0,
+    weight=CROSS_POST_HIT_X_PROGRESS_WEIGHT,
     params={**dict(state_params), "max_progress": 0.04},
   )
   cfg.rewards["post_hit_ball_velocity_direction"] = RewardTermCfg(
     func=mdp.post_hit_ball_velocity_direction,
-    weight=20.0,
+    weight=CROSS_POST_HIT_BALL_VELOCITY_DIRECTION_WEIGHT,
     params={
       **dict(state_params),
       "x_speed_scale": 2.5,
@@ -651,6 +655,9 @@ __all__ = [
   "BALL_TARGET_X_RANGE",
   "BALL_TARGET_Y_RANGE",
   "CROSS_LOOSE_REGULARIZATION_WEIGHTS",
+  "CROSS_POST_HIT_BALL_VELOCITY_DIRECTION_WEIGHT",
+  "CROSS_POST_HIT_X_PROGRESS_WEIGHT",
+  "CROSS_ROBOT_BALL_CONTACT_WEIGHT",
   "DECODER_STATE_TERMS",
   "ACTION_REGULARIZATION_CURRICULUM_STAGE_WEIGHTS",
   "make_pingpong_latent_cross_env_cfg",

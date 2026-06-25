@@ -74,6 +74,14 @@
   <h2>2026-06-25 Pingpong Cross Loosened Restart</h2>
   <ul>
     <li>
+      Follow-up reward-balance change after inspecting the active run: Cross now
+      reduces <code>joint_acc_l2</code> from <code>-2e-6</code> to
+      <code>-1e-6</code>, overrides <code>robot_ball_contact</code> to
+      <code>-25</code> for Cross/Return only, and strengthens post-hit shaping
+      to <code>post_hit_x_progress=80</code> and
+      <code>post_hit_ball_velocity_direction=60</code>.
+    </li>
+    <li>
       The previous Cross-from-Hit run
       <code>pingpang_cross_from_hit_v3_16384_gpu4_6</code> was stopped because
       the policy stayed too conservative under the stricter regularization.
@@ -84,7 +92,7 @@
       <code>latent_action_rate_l2=-0.005</code>,
       <code>low_level_action_rate_l2=-0.01</code>,
       <code>joint_torques_l2=-2e-5</code>,
-      <code>joint_acc_l2=-2e-6</code>,
+      <code>joint_acc_l2=-1e-6</code>,
       <code>fall_penalty=-300</code>, and
       <code>flat_orientation_l2=-0.5</code>.
     </li>

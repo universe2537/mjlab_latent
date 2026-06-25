@@ -102,7 +102,10 @@ Changed
   actor Gaussian std, Cross uses lower entropy/KL/action clipping, keeps the
   stronger post-hit return rewards, and now starts from looser action-rate,
   acceleration, torque, fall, and upright penalties so it can first learn
-  stable legal returns before later action regularization is tightened.
+  stable legal returns before later action regularization is tightened. The
+  current Cross reward balance further reduces joint-acceleration and
+  non-paddle robot-ball contact penalties while increasing post-hit progress
+  and velocity-direction shaping to make over-net return attempts less sparse.
 - Updated the Pingpong actor ``ball_pos_window`` observation to use a
   10-frame history of ball-center position in the robot base frame, matching
   the intended deployment signal.

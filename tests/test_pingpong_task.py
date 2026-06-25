@@ -24,6 +24,9 @@ from mjlab.tasks.pingpong.pingpong_env_cfg import (
   BALL_TARGET_X_RANGE,
   BALL_TARGET_Y_RANGE,
   CROSS_LOOSE_REGULARIZATION_WEIGHTS,
+  CROSS_POST_HIT_BALL_VELOCITY_DIRECTION_WEIGHT,
+  CROSS_POST_HIT_X_PROGRESS_WEIGHT,
+  CROSS_ROBOT_BALL_CONTACT_WEIGHT,
   DECODER_STATE_TERMS,
 )
 from mjlab.tasks.registry import list_tasks, load_env_cfg, load_rl_cfg
@@ -214,11 +217,21 @@ def test_pingpong_hit_and_cross_success_terms() -> None:
   assert "opponent_table_bounce_event" in cross_cfg.rewards
   assert cross_cfg.rewards["opponent_table_bounce_event"].weight == 1000.0
   assert "post_hit_x_progress" in cross_cfg.rewards
-  assert cross_cfg.rewards["post_hit_x_progress"].weight == 40.0
+  assert (
+    cross_cfg.rewards["post_hit_x_progress"].weight
+    == CROSS_POST_HIT_X_PROGRESS_WEIGHT
+  )
   assert "post_hit_ball_velocity_direction" in cross_cfg.rewards
-  assert cross_cfg.rewards["post_hit_ball_velocity_direction"].weight == 20.0
+  assert (
+    cross_cfg.rewards["post_hit_ball_velocity_direction"].weight
+    == CROSS_POST_HIT_BALL_VELOCITY_DIRECTION_WEIGHT
+  )
   assert "robot_table_contact" in cross_cfg.rewards
   assert "robot_ball_contact" in cross_cfg.rewards
+  assert (
+    cross_cfg.rewards["robot_ball_contact"].weight
+    == CROSS_ROBOT_BALL_CONTACT_WEIGHT
+  )
   for reward_name, loose_weight in CROSS_LOOSE_REGULARIZATION_WEIGHTS.items():
     assert cross_cfg.rewards[reward_name].weight == loose_weight
   assert "robot_ball_contact_count" not in cross_cfg.metrics
