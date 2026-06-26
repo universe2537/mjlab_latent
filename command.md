@@ -50,13 +50,13 @@ logs/rsl_rl/g1_pingpong_latent_hit/pingpong_hit_v3_collision_10240env_gpu1_2_fro
 Interactive viewer:
 
 ```sh
-uv run play Mjlab-Pingpong-Hit-Unitree-G1 \
-  --checkpoint-file logs/rsl_rl/g1_pingpong_latent_hit/v3_collision_2026-06-24_15-53-52/model_4000.pt \
+uv run play Mjlab-Pingpong-Cross-Unitree-G1 \
+  --checkpoint-file logs/rsl_rl/g1_pingpong_latent_cross/pingpong_cross_dense_retune_from_hit_v3_collision4500_16384env_gpu4_6_2026-06-25_14-26-38/model_10500.pt \
   --viewer viser
 
 
-MUJOCO_GL=egl uv run play Mjlab-Pingpong-Hit-Unitree-G1 \
-  --checkpoint-file logs/rsl_rl/g1_pingpong_latent_hit/v3_collision_2026-06-24_15-53-52/model_4000.pt \
+MUJOCO_GL=egl uv run play Mjlab-Pingpong-Cross-Unitree-G1 \
+  --checkpoint-file logs/rsl_rl/g1_pingpong_latent_cross/pingpong_cross_dense_retune_from_hit_v3_collision4500_16384env_gpu4_6_2026-06-25_14-26-38/model_10500.pt \
   --viewer none --video True --video-length 500 --video-height 1080 --video-width 1920 --num-envs 1 --device cuda:1
 ```
 
@@ -278,3 +278,6 @@ uv run play-distill.py \
   --checkpoint-file logs/rsl_rl/g1_distillation/distill_cloud_unitree_racket_tennis_2026-05-12_09-35-14/model_30000.pt \
   --viewer viser
 ```
+
+
+腿部前四个 p90 max_torque 120 max_vel 29 rad/s
