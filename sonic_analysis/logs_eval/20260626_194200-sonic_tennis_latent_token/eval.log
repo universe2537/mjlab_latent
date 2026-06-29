@@ -1,0 +1,13 @@
+2026-06-26 19:42:00.230 | INFO     | __main__:main:90 - Loading training config file from sonic_release/config.yaml
+2026-06-26 19:42:02.089 | DEBUG    | asyncio.selector_events:__init__:54 - Using selector: EpollSelector
+2026-06-26 19:42:05.093 | DEBUG    | h5py:<module>:47 - Creating converter from 7 to 5
+2026-06-26 19:42:05.094 | DEBUG    | h5py:<module>:47 - Creating converter from 5 to 7
+2026-06-26 19:42:05.094 | DEBUG    | h5py:<module>:47 - Creating converter from 7 to 5
+2026-06-26 19:42:05.094 | DEBUG    | h5py:<module>:47 - Creating converter from 5 to 7
+2026-06-26 19:42:05.243 | DEBUG    | matplotlib:wrapper:342 - matplotlib data path: /home/universe/miniconda3/envs/beyondmimic/lib/python3.10/site-packages/matplotlib/mpl-data
+2026-06-26 19:42:05.250 | DEBUG    | matplotlib:wrapper:342 - CONFIGDIR=/tmp/sonic_isaac_cache/matplotlib
+2026-06-26 19:42:05.252 | DEBUG    | matplotlib:<module>:1560 - interactive is False
+2026-06-26 19:42:05.252 | DEBUG    | matplotlib:<module>:1561 - platform is linux
+2026-06-26 19:42:07.800 | DEBUG    | filelock._api:release:537 - Attempting to release lock 140537035741200 on /tmp/isaaclab_app_launcher.lock
+2026-06-26 19:42:07.801 | DEBUG    | filelock._api:release:541 - Lock 140537035741200 released on /tmp/isaaclab_app_launcher.lock
+2026-06-26 19:42:11.814 | INFO     | gear_sonic.utils.motion_lib.torch_humanoid_batch:<module>:40 - Using Humanoid Batch

@@ -27,6 +27,7 @@ from mjlab.tasks.pingpong.pingpong_env_cfg import (
   CROSS_POST_HIT_BALL_VELOCITY_DIRECTION_WEIGHT,
   CROSS_POST_HIT_X_PROGRESS_WEIGHT,
   CROSS_ROBOT_BALL_CONTACT_WEIGHT,
+  CROSS_STRIKE_QUALITY_REWARD_WEIGHTS,
   DECODER_STATE_TERMS,
 )
 from mjlab.tasks.registry import list_tasks, load_env_cfg, load_rl_cfg
@@ -38,6 +39,9 @@ from mjlab.tasks.tennis.rl.runner import reset_actor_distribution_std
 def test_pingpong_tasks_registered() -> None:
   assert "Mjlab-Pingpong-Hit-Unitree-G1" in list_tasks()
   assert "Mjlab-Pingpong-Cross-Unitree-G1" in list_tasks()
+  assert "Mjlab-Pingpong-Cross-Diag-Unitree-G1" in list_tasks()
+  assert "Mjlab-Pingpong-Cross-StrikeQuality-Unitree-G1" in list_tasks()
+  assert "Mjlab-Pingpong-Cross-StrikeQualityEnergyRelax-Unitree-G1" in list_tasks()
   assert "Mjlab-Pingpong-Return-Unitree-G1" in list_tasks()
 
 
@@ -96,9 +100,9 @@ def test_pingpong_paddle_scales_visual_and_collision() -> None:
   assert int(handle.group) == 3
   assert float(handle.rgba[3]) == 0.0
   handle_fromto = [float(v) for v in handle.fromto]
-  handle_length = sum(
-    (handle_fromto[i + 3] - handle_fromto[i]) ** 2 for i in range(3)
-  ) ** 0.5
+  handle_length = (
+    sum((handle_fromto[i + 3] - handle_fromto[i]) ** 2 for i in range(3)) ** 0.5
+  )
   assert abs(handle_length * 0.5 - PINGPONG_PADDLE_HANDLE_HALF_LENGTH) < 1.0e-6
 
 
@@ -157,6 +161,39 @@ def test_pingpong_rl_configs_load() -> None:
   assert cross_cfg.reset_actor_std == 0.8
   assert cross_cfg.max_iterations == 40000
 
+  cross_diag_cfg = cast(
+    TennisLatentOnPolicyRunnerCfg,
+    load_rl_cfg("Mjlab-Pingpong-Cross-Diag-Unitree-G1"),
+  )
+  assert cross_diag_cfg.experiment_name == "g1_pingpong_latent_cross_diag"
+  assert cross_diag_cfg.run_name == "pingpong_cross_diag_only_from_hit"
+  assert cross_diag_cfg.algorithm.entropy_coef == 0.002
+  assert cross_diag_cfg.clip_actions == 2.5
+  assert cross_diag_cfg.reset_actor_std == 0.8
+
+  strike_cfg = cast(
+    TennisLatentOnPolicyRunnerCfg,
+    load_rl_cfg("Mjlab-Pingpong-Cross-StrikeQuality-Unitree-G1"),
+  )
+  assert strike_cfg.experiment_name == "g1_pingpong_latent_cross_strike_quality"
+  assert strike_cfg.run_name == "pingpong_cross_strike_quality_from_hit"
+  assert strike_cfg.algorithm.entropy_coef == 0.002
+  assert strike_cfg.clip_actions == 2.5
+  assert strike_cfg.reset_actor_std == 0.8
+
+  energy_cfg = cast(
+    TennisLatentOnPolicyRunnerCfg,
+    load_rl_cfg("Mjlab-Pingpong-Cross-StrikeQualityEnergyRelax-Unitree-G1"),
+  )
+  assert energy_cfg.experiment_name == (
+    "g1_pingpong_latent_cross_strike_quality_energy_relax"
+  )
+  assert energy_cfg.run_name == "pingpong_cross_strike_quality_energy_relax_from_hit"
+  assert energy_cfg.algorithm.entropy_coef == 0.003
+  assert energy_cfg.algorithm.learning_rate == 7.5e-4
+  assert energy_cfg.clip_actions == 3.5
+  assert energy_cfg.reset_actor_std == 1.0
+
   return_cfg = cast(
     TennisLatentOnPolicyRunnerCfg,
     load_rl_cfg("Mjlab-Pingpong-Return-Unitree-G1"),
@@ -180,7 +217,12 @@ def test_pingpong_hit_and_cross_success_terms() -> None:
   assert "robot_table_contact" in hit_cfg.rewards
   assert "robot_ball_contact" in hit_cfg.rewards
   assert "robot_table_contact_count" in hit_cfg.metrics
-  assert "robot_ball_contact_count" not in hit_cfg.metrics
+  assert "robot_ball_contact_count" in hit_cfg.metrics
+  assert "fault_reason/body_ball" in hit_cfg.metrics
+  assert "hit/post_vx" in hit_cfg.metrics
+  assert "hit/pred_net_clearance" in hit_cfg.metrics
+  assert "hit/pred_landing_inside_opponent_table" in hit_cfg.metrics
+  assert "hit/paddle_speed" in hit_cfg.metrics
   assert "robot_table_contact" not in hit_cfg.terminations
   assert hit_cfg.rewards["approach_ball"].weight == 5.0
   assert hit_cfg.rewards["paddle_towards_ball"].weight == 2.0
@@ -205,8 +247,9 @@ def test_pingpong_hit_and_cross_success_terms() -> None:
   )
   assert action_curriculum.params["prerequisite_stage_key"] == "stage"
   assert action_curriculum.params["prerequisite_min_stage"] == 5.0
-  assert action_curriculum.params["stage_weights"][0] == (
-    ACTION_REGULARIZATION_CURRICULUM_STAGE_WEIGHTS[0]
+  assert (
+    action_curriculum.params["stage_weights"][0]
+    == (ACTION_REGULARIZATION_CURRICULUM_STAGE_WEIGHTS[0])
   )
 
   cross_cfg = load_env_cfg("Mjlab-Pingpong-Cross-Unitree-G1")
@@ -218,8 +261,7 @@ def test_pingpong_hit_and_cross_success_terms() -> None:
   assert cross_cfg.rewards["opponent_table_bounce_event"].weight == 1000.0
   assert "post_hit_x_progress" in cross_cfg.rewards
   assert (
-    cross_cfg.rewards["post_hit_x_progress"].weight
-    == CROSS_POST_HIT_X_PROGRESS_WEIGHT
+    cross_cfg.rewards["post_hit_x_progress"].weight == CROSS_POST_HIT_X_PROGRESS_WEIGHT
   )
   assert "post_hit_ball_velocity_direction" in cross_cfg.rewards
   assert (
@@ -229,12 +271,25 @@ def test_pingpong_hit_and_cross_success_terms() -> None:
   assert "robot_table_contact" in cross_cfg.rewards
   assert "robot_ball_contact" in cross_cfg.rewards
   assert (
-    cross_cfg.rewards["robot_ball_contact"].weight
-    == CROSS_ROBOT_BALL_CONTACT_WEIGHT
+    cross_cfg.rewards["robot_ball_contact"].weight == CROSS_ROBOT_BALL_CONTACT_WEIGHT
   )
   for reward_name, loose_weight in CROSS_LOOSE_REGULARIZATION_WEIGHTS.items():
     assert cross_cfg.rewards[reward_name].weight == loose_weight
-  assert "robot_ball_contact_count" not in cross_cfg.metrics
+  assert "robot_ball_contact_count" in cross_cfg.metrics
+  assert "fault_reason/low_net" in cross_cfg.metrics
+  assert "fault_reason/net_contact" in cross_cfg.metrics
+  assert "fault_reason/return_out" in cross_cfg.metrics
+  assert "fault_reason/failed_bounce" in cross_cfg.metrics
+  assert "fault_reason/double_paddle" in cross_cfg.metrics
+  assert "fault_reason/early_hit" in cross_cfg.metrics
+  assert "hit/post_vx_toward_opponent_ratio" in cross_cfg.metrics
+  assert "hit/pred_net_clearance_positive" in cross_cfg.metrics
+  assert "hit/pred_landing_x" in cross_cfg.metrics
+  assert "hit/pred_landing_y" in cross_cfg.metrics
+  assert "hit/paddle_normal_alignment" in cross_cfg.metrics
+  assert "hit/paddle_velocity_along_normal" in cross_cfg.metrics
+  assert "strike_pred_net_clearance" not in cross_cfg.rewards
+  assert "strike_pred_landing_inside" not in cross_cfg.rewards
   assert "robot_table_contact" not in cross_cfg.terminations
   assert cross_cfg.terminations["bad_orientation"].params["limit_angle"] < 1.0
   assert cross_cfg.terminations["root_height"].params["minimum_height"] == 0.55
@@ -245,6 +300,26 @@ def test_pingpong_hit_and_cross_success_terms() -> None:
     "legal_return_success"
   )
   assert "action_regularization" not in cross_cfg.curriculum
+
+  diag_cfg = load_env_cfg("Mjlab-Pingpong-Cross-Diag-Unitree-G1")
+  assert set(diag_cfg.rewards) == set(cross_cfg.rewards)
+  assert set(diag_cfg.metrics) == set(cross_cfg.metrics)
+
+  strike_cfg = load_env_cfg("Mjlab-Pingpong-Cross-StrikeQuality-Unitree-G1")
+  for reward_name, reward_weight in CROSS_STRIKE_QUALITY_REWARD_WEIGHTS.items():
+    assert strike_cfg.rewards[reward_name].weight == reward_weight
+  for reward_name, loose_weight in CROSS_LOOSE_REGULARIZATION_WEIGHTS.items():
+    assert strike_cfg.rewards[reward_name].weight == loose_weight
+
+  energy_cfg = load_env_cfg("Mjlab-Pingpong-Cross-StrikeQualityEnergyRelax-Unitree-G1")
+  assert energy_cfg.rewards["latent_action_rate_l2"].func.__name__ == (
+    "pre_hit_action_rate_l2"
+  )
+  assert energy_cfg.rewards["low_level_action_rate_l2"].func.__name__ == (
+    "pre_hit_low_level_action_rate_l2"
+  )
+  for reward_name, reward_weight in CROSS_STRIKE_QUALITY_REWARD_WEIGHTS.items():
+    assert energy_cfg.rewards[reward_name].weight == reward_weight
 
 
 def test_pingpong_return_alias_matches_cross_success_terms() -> None:

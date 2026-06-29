@@ -106,11 +106,28 @@ def test_pingpong_state_counts_legal_single_return() -> None:
   env.common_step_counter = 2
   paddle_sensor.data.force[:] = 5.0
   ball.data.root_link_pos_w[:] = torch.tensor([[0.85, 0.0, 1.05]])
-  ball.data.root_link_lin_vel_w[:] = torch.tensor([[-2.5, 0.0, 0.3]])
+  ball.data.root_link_lin_vel_w[:] = torch.tensor([[-2.5, 0.0, 2.0]])
   state.update()
   assert state.paddle_hit_edge[0]
   assert state.has_paddle_hit[0]
   assert state.phase[0] == PHASE_RETURN_FLIGHT
+  assert state.hit_valid[0]
+  assert state.hit_post_vel.shape == (1, 3)
+  assert state.hit_post_vel.device.type == "cpu"
+  assert state.hit_post_vel.dtype == torch.float32
+  assert state.hit_pred_net_clearance.shape == (1,)
+  assert state.hit_pred_landing_inside_opponent_table.dtype == torch.float32
+  torch.testing.assert_close(
+    state.hit_post_vel[0],
+    torch.tensor([-2.5, 0.0, 2.0]),
+  )
+  assert state.hit_post_speed[0] > 3.0
+  assert state.hit_post_vx_toward_opponent_ratio[0] > 0.7
+  assert state.hit_pred_net_clearance[0] > 0.0
+  assert state.hit_pred_net_clearance_positive[0] == 1.0
+  assert state.hit_pred_landing_x[0] < 0.0
+  assert state.hit_pred_landing_inside_opponent_table[0] == 1.0
+  assert state.hit_paddle_speed[0] == 0.0
 
   env.common_step_counter = 3
   paddle_sensor.data.force.zero_()

@@ -47,6 +47,44 @@
     commands, failures, or next steps change.
   </p>
 
+  <h2>2026-06-29 Pingpong Cross Hit-to-Return Diagnostics</h2>
+  <ul>
+    <li>
+      Latest dense-retune Cross evidence points to a strike-quality bottleneck,
+      not a feed failure: <code>self_table_bounce_count ~= 0.998</code>,
+      <code>paddle_hit_count ~= 0.46</code>, but
+      <code>crossed_net_count</code>, <code>opponent_table_bounce_count</code>,
+      and <code>legal_return_count</code> are still <code>0</code>.
+    </li>
+    <li>
+      Cross metrics now include <code>fault_reason/*</code>,
+      <code>robot_ball_contact_count</code>, post-hit ball velocity, predicted
+      net clearance, predicted landing, and paddle-side hit quality. Default
+      Cross reward behavior remains unchanged.
+    </li>
+    <li>
+      New ablation task IDs:
+      <code>Mjlab-Pingpong-Cross-Diag-Unitree-G1</code>,
+      <code>Mjlab-Pingpong-Cross-StrikeQuality-Unitree-G1</code>, and
+      <code>Mjlab-Pingpong-Cross-StrikeQualityEnergyRelax-Unitree-G1</code>.
+      The energy-relax variant keeps the relaxation scoped to the post-hit
+      return flight by replacing action-rate penalties with pre-hit-only terms.
+    </li>
+    <li>
+      Use <code>tools/watch_pingpong_cross_training.py</code> for 14h Cross
+      runs. The watcher defaults to 84-minute observations, reads TensorBoard
+      scalars, reports missing metrics, and writes JSON/Markdown decisions:
+      <code>continue</code>, <code>risky_continue</code>, <code>stop</code>,
+      <code>stop_and_reconfigure</code>, or <code>insufficient_evidence</code>.
+    </li>
+    <li>
+      Dry-run on the old zero-cross run produced
+      <code>stop_and_reconfigure</code> with missing new diagnostics, confirming
+      the next useful run is diagnostics-only or strike-quality reward rather
+      than another blind continuation of the same config.
+    </li>
+  </ul>
+
   <h2>2026-06-25 Pingpong Hit Regularization Curriculum</h2>
   <ul>
     <li>

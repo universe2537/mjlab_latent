@@ -100,6 +100,12 @@ CROSS_LOOSE_REGULARIZATION_WEIGHTS = {
 CROSS_ROBOT_BALL_CONTACT_WEIGHT = -25.0
 CROSS_POST_HIT_X_PROGRESS_WEIGHT = 80.0
 CROSS_POST_HIT_BALL_VELOCITY_DIRECTION_WEIGHT = 60.0
+CROSS_STRIKE_QUALITY_REWARD_WEIGHTS = {
+  "strike_outgoing_ball_velocity": 20.0,
+  "strike_pred_net_clearance": 15.0,
+  "strike_pred_landing_inside": 25.0,
+  "strike_post_hit_speed": 5.0,
+}
 
 OUT_X_LIMITS = (-TABLE_HALF_LENGTH - 0.75, TABLE_HALF_LENGTH + 1.10)
 OUT_Y_LIMITS = (-TABLE_HALF_WIDTH - 0.50, TABLE_HALF_WIDTH + 0.50)
@@ -127,10 +133,13 @@ def _state_params() -> dict[str, object]:
     "net_sensor_name": _BALL_NET_SENSOR,
     "body_ball_sensor_name": _ROBOT_BALL_SENSOR,
     "ball_cfg": _BALL_CFG,
+    "paddle_cfg": _PADDLE_CFG,
+    "robot_cfg": _ROBOT_CFG,
     "force_threshold": HIT_FORCE_THRESHOLD,
     "table_z": BALL_CENTER_TABLE_Z,
     "net_x": NET_X,
     "net_top_z": NET_TOP_Z,
+    "gravity": 9.81,
     "self_x_limits": SELF_X_LIMITS,
     "opponent_x_limits": OPPONENT_X_LIMITS,
     "table_y_limits": TABLE_Y_LIMITS,
@@ -518,6 +527,114 @@ def make_pingpong_latent_env_cfg() -> ManagerBasedRlEnvCfg:
         "force_threshold": 5.0,
       },
     ),
+    "robot_ball_contact_count": MetricsTermCfg(
+      func=mdp.robot_ball_contact_count_metric,
+      reduce="last",
+      params={
+        "sensor_name": _ROBOT_BALL_SENSOR,
+        "force_threshold": HIT_FORCE_THRESHOLD,
+      },
+    ),
+    "fault_reason/body_ball": MetricsTermCfg(
+      func=mdp.fault_reason_body_ball_metric,
+      reduce="last",
+      params=dict(state_params),
+    ),
+    "fault_reason/low_net": MetricsTermCfg(
+      func=mdp.fault_reason_low_net_metric,
+      reduce="last",
+      params=dict(state_params),
+    ),
+    "fault_reason/net_contact": MetricsTermCfg(
+      func=mdp.fault_reason_net_contact_metric,
+      reduce="last",
+      params=dict(state_params),
+    ),
+    "fault_reason/return_out": MetricsTermCfg(
+      func=mdp.fault_reason_return_out_metric,
+      reduce="last",
+      params=dict(state_params),
+    ),
+    "fault_reason/failed_bounce": MetricsTermCfg(
+      func=mdp.fault_reason_failed_bounce_metric,
+      reduce="last",
+      params=dict(state_params),
+    ),
+    "fault_reason/double_paddle": MetricsTermCfg(
+      func=mdp.fault_reason_double_paddle_metric,
+      reduce="last",
+      params=dict(state_params),
+    ),
+    "fault_reason/early_hit": MetricsTermCfg(
+      func=mdp.fault_reason_early_hit_metric,
+      reduce="last",
+      params=dict(state_params),
+    ),
+    "hit/post_vx": MetricsTermCfg(
+      func=mdp.hit_post_vx_metric,
+      reduce="last",
+      params=dict(state_params),
+    ),
+    "hit/post_vy": MetricsTermCfg(
+      func=mdp.hit_post_vy_metric,
+      reduce="last",
+      params=dict(state_params),
+    ),
+    "hit/post_vz": MetricsTermCfg(
+      func=mdp.hit_post_vz_metric,
+      reduce="last",
+      params=dict(state_params),
+    ),
+    "hit/post_speed": MetricsTermCfg(
+      func=mdp.hit_post_speed_metric,
+      reduce="last",
+      params=dict(state_params),
+    ),
+    "hit/post_vx_toward_opponent_ratio": MetricsTermCfg(
+      func=mdp.hit_post_vx_toward_opponent_ratio_metric,
+      reduce="last",
+      params=dict(state_params),
+    ),
+    "hit/pred_net_clearance": MetricsTermCfg(
+      func=mdp.hit_pred_net_clearance_metric,
+      reduce="last",
+      params=dict(state_params),
+    ),
+    "hit/pred_net_clearance_positive": MetricsTermCfg(
+      func=mdp.hit_pred_net_clearance_positive_metric,
+      reduce="last",
+      params=dict(state_params),
+    ),
+    "hit/pred_landing_x": MetricsTermCfg(
+      func=mdp.hit_pred_landing_x_metric,
+      reduce="last",
+      params=dict(state_params),
+    ),
+    "hit/pred_landing_y": MetricsTermCfg(
+      func=mdp.hit_pred_landing_y_metric,
+      reduce="last",
+      params=dict(state_params),
+    ),
+    "hit/pred_landing_inside_opponent_table": MetricsTermCfg(
+      func=mdp.hit_pred_landing_inside_opponent_table_metric,
+      reduce="last",
+      params=dict(state_params),
+    ),
+    "hit/paddle_speed": MetricsTermCfg(
+      func=mdp.hit_paddle_speed_metric,
+      reduce="last",
+      params=dict(state_params),
+    ),
+    "hit/paddle_normal_alignment": MetricsTermCfg(
+      func=mdp.hit_paddle_normal_alignment_metric,
+      reduce="last",
+      params=dict(state_params),
+    ),
+    "hit/paddle_velocity_along_normal": MetricsTermCfg(
+      func=mdp.hit_paddle_velocity_along_normal_metric,
+      reduce="last",
+      params=dict(state_params),
+    ),
   }
   curriculum = {
     "ball_target_region": CurriculumTermCfg(
@@ -598,6 +715,48 @@ def make_pingpong_latent_env_cfg() -> ManagerBasedRlEnvCfg:
   )
 
 
+def _add_strike_quality_rewards(cfg: ManagerBasedRlEnvCfg) -> None:
+  state_params = _state_params()
+  cfg.rewards["strike_outgoing_ball_velocity"] = RewardTermCfg(
+    func=mdp.strike_outgoing_ball_velocity,
+    weight=CROSS_STRIKE_QUALITY_REWARD_WEIGHTS["strike_outgoing_ball_velocity"],
+    params={**dict(state_params), "target_x_speed": 2.5},
+  )
+  cfg.rewards["strike_pred_net_clearance"] = RewardTermCfg(
+    func=mdp.strike_pred_net_clearance,
+    weight=CROSS_STRIKE_QUALITY_REWARD_WEIGHTS["strike_pred_net_clearance"],
+    params={
+      **dict(state_params),
+      "clearance_margin": 0.03,
+      "clearance_scale": 0.18,
+    },
+  )
+  cfg.rewards["strike_pred_landing_inside"] = RewardTermCfg(
+    func=mdp.strike_pred_landing_inside,
+    weight=CROSS_STRIKE_QUALITY_REWARD_WEIGHTS["strike_pred_landing_inside"],
+    params=dict(state_params),
+  )
+  cfg.rewards["strike_post_hit_speed"] = RewardTermCfg(
+    func=mdp.strike_post_hit_speed,
+    weight=CROSS_STRIKE_QUALITY_REWARD_WEIGHTS["strike_post_hit_speed"],
+    params={**dict(state_params), "speed_scale": 4.0},
+  )
+
+
+def _apply_hit_window_energy_relaxation(cfg: ManagerBasedRlEnvCfg) -> None:
+  state_params = _state_params()
+  cfg.rewards["latent_action_rate_l2"] = RewardTermCfg(
+    func=mdp.pre_hit_action_rate_l2,
+    weight=CROSS_LOOSE_REGULARIZATION_WEIGHTS["latent_action_rate_l2"],
+    params=dict(state_params),
+  )
+  cfg.rewards["low_level_action_rate_l2"] = RewardTermCfg(
+    func=mdp.pre_hit_low_level_action_rate_l2,
+    weight=CROSS_LOOSE_REGULARIZATION_WEIGHTS["low_level_action_rate_l2"],
+    params={**dict(state_params), "action_name": "latent_joint_pos"},
+  )
+
+
 def make_pingpong_latent_cross_env_cfg() -> ManagerBasedRlEnvCfg:
   """Create the legal over-net table-tennis return task."""
   cfg = make_pingpong_latent_env_cfg()
@@ -646,6 +805,27 @@ def make_pingpong_latent_cross_env_cfg() -> ManagerBasedRlEnvCfg:
   return cfg
 
 
+def make_pingpong_latent_cross_diag_env_cfg() -> ManagerBasedRlEnvCfg:
+  """Create a diagnostics-only Cross ablation without extra strike rewards."""
+  return make_pingpong_latent_cross_env_cfg()
+
+
+def make_pingpong_latent_cross_strike_quality_env_cfg() -> ManagerBasedRlEnvCfg:
+  """Create a Cross ablation with conservative strike-quality dense rewards."""
+  cfg = make_pingpong_latent_cross_env_cfg()
+  _add_strike_quality_rewards(cfg)
+  return cfg
+
+
+def make_pingpong_latent_cross_strike_quality_energy_relax_env_cfg() -> (
+  ManagerBasedRlEnvCfg
+):
+  """Create a Cross ablation with strike rewards and hit-window energy relax."""
+  cfg = make_pingpong_latent_cross_strike_quality_env_cfg()
+  _apply_hit_window_energy_relaxation(cfg)
+  return cfg
+
+
 def make_pingpong_latent_return_env_cfg() -> ManagerBasedRlEnvCfg:
   """Create the legacy legal-return alias for the pingpong Cross task."""
   return make_pingpong_latent_cross_env_cfg()
@@ -658,9 +838,13 @@ __all__ = [
   "CROSS_POST_HIT_BALL_VELOCITY_DIRECTION_WEIGHT",
   "CROSS_POST_HIT_X_PROGRESS_WEIGHT",
   "CROSS_ROBOT_BALL_CONTACT_WEIGHT",
+  "CROSS_STRIKE_QUALITY_REWARD_WEIGHTS",
   "DECODER_STATE_TERMS",
   "ACTION_REGULARIZATION_CURRICULUM_STAGE_WEIGHTS",
+  "make_pingpong_latent_cross_diag_env_cfg",
   "make_pingpong_latent_cross_env_cfg",
   "make_pingpong_latent_env_cfg",
   "make_pingpong_latent_return_env_cfg",
+  "make_pingpong_latent_cross_strike_quality_energy_relax_env_cfg",
+  "make_pingpong_latent_cross_strike_quality_env_cfg",
 ]

@@ -1,0 +1,8 @@
+2026-06-26 21:21:14.249 | INFO     | __main__:main:90 - Loading training config file from sonic_release/config.yaml
+2026-06-26 21:21:16.084 | DEBUG    | asyncio.selector_events:__init__:54 - Using selector: EpollSelector
+2026-06-26 21:21:19.987 | DEBUG    | h5py:<module>:47 - Creating converter from 7 to 5
+2026-06-26 21:21:19.988 | DEBUG    | h5py:<module>:47 - Creating converter from 5 to 7
+2026-06-26 21:21:19.988 | DEBUG    | h5py:<module>:47 - Creating converter from 7 to 5
+2026-06-26 21:21:19.988 | DEBUG    | h5py:<module>:47 - Creating converter from 5 to 7
+2026-06-26 21:21:22.836 | DEBUG    | filelock._api:release:537 - Attempting to release lock 140039258458192 on /tmp/isaaclab_app_launcher.lock
+2026-06-26 21:21:22.837 | DEBUG    | filelock._api:release:541 - Lock 140039258458192 released on /tmp/isaaclab_app_launcher.lock

@@ -16,6 +16,7 @@ from mjlab.tasks.pingpong.scene import (
   TABLE_HALF_LENGTH,
   TABLE_HALF_WIDTH,
 )
+from mjlab.utils.lab_api.math import quat_apply
 
 if TYPE_CHECKING:
   from mjlab.envs import ManagerBasedRlEnv
@@ -36,7 +37,10 @@ FAULT_INCOMING_MISS = 7
 FAULT_ILLEGAL_BODY_BALL_CONTACT = 8
 
 _DEFAULT_BALL_CFG = SceneEntityCfg("ball")
+_DEFAULT_ROBOT_CFG = SceneEntityCfg("robot")
+_DEFAULT_PADDLE_CFG = SceneEntityCfg("robot", site_names=("pingpong_paddle_center",))
 _PINGPONG_RALLY_STATE_ATTR = "_pingpong_rally_state"
+_MIN_BALLISTIC_TIME = 1.0e-4
 
 
 def _sensor_contact_now(
@@ -65,11 +69,14 @@ class PingpongRallyState:
     paddle_sensor_name: str,
     net_sensor_name: str,
     ball_cfg: SceneEntityCfg,
+    paddle_cfg: SceneEntityCfg = _DEFAULT_PADDLE_CFG,
+    robot_cfg: SceneEntityCfg = _DEFAULT_ROBOT_CFG,
     body_ball_sensor_name: str | None = None,
     force_threshold: float = 1.0,
     table_z: float = BALL_CENTER_TABLE_Z,
     net_x: float = NET_X,
     net_top_z: float = NET_TOP_Z,
+    gravity: float = 9.81,
     self_x_limits: tuple[float, float] = (NET_X, TABLE_HALF_LENGTH),
     opponent_x_limits: tuple[float, float] = (-TABLE_HALF_LENGTH, NET_X),
     table_y_limits: tuple[float, float] = (-TABLE_HALF_WIDTH, TABLE_HALF_WIDTH),
@@ -83,10 +90,13 @@ class PingpongRallyState:
     self.net_sensor_name = net_sensor_name
     self.body_ball_sensor_name = body_ball_sensor_name
     self.ball_cfg = ball_cfg
+    self.paddle_cfg = paddle_cfg
+    self.robot_cfg = robot_cfg
     self.force_threshold = force_threshold
     self.table_z = table_z
     self.net_x = net_x
     self.net_top_z = net_top_z
+    self.gravity = gravity
     self.self_x_limits = self_x_limits
     self.opponent_x_limits = opponent_x_limits
     self.table_y_limits = table_y_limits
@@ -107,6 +117,9 @@ class PingpongRallyState:
 
     def zeros_float() -> torch.Tensor:
       return torch.zeros(num_envs, device=device)
+
+    def zeros_vec3() -> torch.Tensor:
+      return torch.zeros(num_envs, 3, device=device)
 
     self.phase = torch.full(
       (num_envs,), PHASE_INCOMING, dtype=torch.long, device=device
@@ -132,6 +145,22 @@ class PingpongRallyState:
     self.has_crossed_net = zeros_bool()
     self.has_opponent_bounce = zeros_bool()
 
+    # Diagnostics recorded at the first legal paddle hit. Coordinates are in the
+    # per-env world frame. The opponent side is negative x, table_z is ball-center
+    # height at a legal table bounce, and gravity is assumed constant downward.
+    self.hit_valid = zeros_bool()
+    self.hit_post_vel = zeros_vec3()
+    self.hit_post_speed = zeros_float()
+    self.hit_post_vx_toward_opponent_ratio = zeros_float()
+    self.hit_pred_net_clearance = zeros_float()
+    self.hit_pred_net_clearance_positive = zeros_float()
+    self.hit_pred_landing_x = zeros_float()
+    self.hit_pred_landing_y = zeros_float()
+    self.hit_pred_landing_inside_opponent_table = zeros_float()
+    self.hit_paddle_speed = zeros_float()
+    self.hit_paddle_normal_alignment = zeros_float()
+    self.hit_paddle_velocity_along_normal = zeros_float()
+
     self._prev_paddle_contact = zeros_bool()
     self._prev_net_contact = zeros_bool()
     self._prev_vz = zeros_float()
@@ -154,6 +183,18 @@ class PingpongRallyState:
     self.has_paddle_hit[env_ids] = False
     self.has_crossed_net[env_ids] = False
     self.has_opponent_bounce[env_ids] = False
+    self.hit_valid[env_ids] = False
+    self.hit_post_vel[env_ids] = 0.0
+    self.hit_post_speed[env_ids] = 0.0
+    self.hit_post_vx_toward_opponent_ratio[env_ids] = 0.0
+    self.hit_pred_net_clearance[env_ids] = 0.0
+    self.hit_pred_net_clearance_positive[env_ids] = 0.0
+    self.hit_pred_landing_x[env_ids] = 0.0
+    self.hit_pred_landing_y[env_ids] = 0.0
+    self.hit_pred_landing_inside_opponent_table[env_ids] = 0.0
+    self.hit_paddle_speed[env_ids] = 0.0
+    self.hit_paddle_normal_alignment[env_ids] = 0.0
+    self.hit_paddle_velocity_along_normal[env_ids] = 0.0
     self._prev_paddle_contact[env_ids] = False
     self._prev_net_contact[env_ids] = False
     self._prev_vz[env_ids] = 0.0
@@ -201,7 +242,9 @@ class PingpongRallyState:
     self_bounce_edge = bounce_edge & on_self_table & ~self.has_self_bounce
     illegal_body_ball_contact = body_ball_contact_now
     legal_paddle_edge = (
-      paddle_contact_edge & self.has_self_bounce & ~self.has_paddle_hit
+      paddle_contact_edge
+      & self.has_self_bounce
+      & ~self.has_paddle_hit
       & ~illegal_body_ball_contact
     )
     illegal_pre_bounce_hit = paddle_contact_edge & ~self.has_self_bounce
@@ -257,6 +300,8 @@ class PingpongRallyState:
     self.successful_return_count += opponent_bounce_edge.long()
     self.episode_fault_count += fault_edge.long()
 
+    self._record_hit_diagnostics(ball_pos, ball_vel, legal_paddle_edge)
+
     self.has_self_bounce |= self_bounce_edge
     self.has_paddle_hit |= legal_paddle_edge
     self.has_crossed_net |= crossed_net_edge
@@ -282,6 +327,108 @@ class PingpongRallyState:
     self.prev_ball_x[:] = prev_x
     self._prev_x[:] = ball_x
     self._last_step = step
+
+  def _record_hit_diagnostics(
+    self,
+    ball_pos: torch.Tensor,
+    ball_vel: torch.Tensor,
+    legal_hit: torch.Tensor,
+  ) -> None:
+    if not bool(torch.any(legal_hit)):
+      return
+
+    speed = torch.linalg.vector_norm(ball_vel, dim=-1)
+    vx = ball_vel[:, 0]
+    toward_ratio = torch.where(
+      speed > 1.0e-6,
+      torch.clamp(-vx / speed.clamp_min(1.0e-6), min=0.0, max=1.0),
+      torch.zeros_like(speed),
+    )
+
+    net_clearance, net_valid = self._predict_net_clearance(ball_pos, ball_vel)
+    landing_xy, landing_valid = self._predict_landing_xy(ball_pos, ball_vel)
+    landing_inside = landing_valid & self._in_box(
+      landing_xy[:, 0],
+      landing_xy[:, 1],
+      self.opponent_x_limits,
+    )
+
+    self.hit_valid[legal_hit] = True
+    self.hit_post_vel[legal_hit] = ball_vel[legal_hit]
+    self.hit_post_speed[legal_hit] = speed[legal_hit]
+    self.hit_post_vx_toward_opponent_ratio[legal_hit] = toward_ratio[legal_hit]
+    self.hit_pred_net_clearance[legal_hit] = net_clearance[legal_hit]
+    self.hit_pred_net_clearance_positive[legal_hit] = (
+      net_valid & (net_clearance > 0.0)
+    )[legal_hit].float()
+    self.hit_pred_landing_x[legal_hit] = landing_xy[:, 0][legal_hit]
+    self.hit_pred_landing_y[legal_hit] = landing_xy[:, 1][legal_hit]
+    self.hit_pred_landing_inside_opponent_table[legal_hit] = landing_inside[
+      legal_hit
+    ].float()
+    self._record_paddle_hit_diagnostics(legal_hit)
+
+  def _predict_net_clearance(
+    self,
+    ball_pos: torch.Tensor,
+    ball_vel: torch.Tensor,
+  ) -> tuple[torch.Tensor, torch.Tensor]:
+    vx = ball_vel[:, 0]
+    t_net = (self.net_x - ball_pos[:, 0]) / vx.clamp(max=-1.0e-6)
+    valid = (vx < -1.0e-6) & (t_net > _MIN_BALLISTIC_TIME)
+    z_at_net = ball_pos[:, 2] + ball_vel[:, 2] * t_net - 0.5 * self.gravity * t_net**2
+    clearance = z_at_net - self.net_top_z
+    return torch.where(valid, clearance, torch.zeros_like(clearance)), valid
+
+  def _predict_landing_xy(
+    self,
+    ball_pos: torch.Tensor,
+    ball_vel: torch.Tensor,
+  ) -> tuple[torch.Tensor, torch.Tensor]:
+    disc = ball_vel[:, 2] ** 2 + 2.0 * self.gravity * (ball_pos[:, 2] - self.table_z)
+    valid_disc = disc >= 0.0
+    sqrt_disc = torch.sqrt(torch.clamp(disc, min=0.0))
+    t_land = (ball_vel[:, 2] + sqrt_disc) / self.gravity
+    valid = valid_disc & (t_land > _MIN_BALLISTIC_TIME)
+    t_land = torch.where(valid, t_land, torch.zeros_like(t_land))
+    landing_xy = ball_pos[:, :2] + ball_vel[:, :2] * t_land.unsqueeze(-1)
+    return landing_xy, valid
+
+  def _record_paddle_hit_diagnostics(self, legal_hit: torch.Tensor) -> None:
+    try:
+      robot = self._env.scene[self.robot_cfg.name]
+    except (KeyError, TypeError, AttributeError):
+      return
+    site_ids = getattr(self.paddle_cfg, "site_ids", None)
+    if site_ids is None:
+      return
+    data = getattr(robot, "data", None)
+    if data is None:
+      return
+
+    try:
+      site_vel_w = data.site_lin_vel_w[:, site_ids]
+      site_quat_w = data.site_quat_w[:, site_ids]
+    except (AttributeError, IndexError, TypeError):
+      return
+
+    paddle_vel_w = site_vel_w.mean(dim=1)
+    paddle_quat_w = site_quat_w[:, 0]
+    normal_local = torch.zeros_like(paddle_vel_w)
+    normal_local[:, 0] = 1.0
+    normal_w = quat_apply(paddle_quat_w, normal_local)
+    normal_w = torch.nn.functional.normalize(normal_w, dim=-1)
+    opponent_dir = torch.zeros_like(normal_w)
+    opponent_dir[:, 0] = -1.0
+    normal_dot = torch.sum(normal_w * opponent_dir, dim=-1)
+    oriented_normal = torch.where(normal_dot.unsqueeze(-1) >= 0.0, normal_w, -normal_w)
+    normal_alignment = torch.sum(oriented_normal * opponent_dir, dim=-1).clamp(0.0, 1.0)
+    velocity_along_normal = torch.sum(paddle_vel_w * oriented_normal, dim=-1)
+    paddle_speed = torch.linalg.vector_norm(paddle_vel_w, dim=-1)
+
+    self.hit_paddle_speed[legal_hit] = paddle_speed[legal_hit]
+    self.hit_paddle_normal_alignment[legal_hit] = normal_alignment[legal_hit]
+    self.hit_paddle_velocity_along_normal[legal_hit] = velocity_along_normal[legal_hit]
 
   def _clear_step_edges(self, env_ids: torch.Tensor | slice | None = None) -> None:
     if env_ids is None:
@@ -377,11 +524,14 @@ def get_pingpong_rally_state(
   paddle_sensor_name: str,
   net_sensor_name: str,
   ball_cfg: SceneEntityCfg = _DEFAULT_BALL_CFG,
+  paddle_cfg: SceneEntityCfg = _DEFAULT_PADDLE_CFG,
+  robot_cfg: SceneEntityCfg = _DEFAULT_ROBOT_CFG,
   body_ball_sensor_name: str | None = None,
   force_threshold: float = 1.0,
   table_z: float = BALL_CENTER_TABLE_Z,
   net_x: float = NET_X,
   net_top_z: float = NET_TOP_Z,
+  gravity: float = 9.81,
   self_x_limits: tuple[float, float] = (NET_X, TABLE_HALF_LENGTH),
   opponent_x_limits: tuple[float, float] = (-TABLE_HALF_LENGTH, NET_X),
   table_y_limits: tuple[float, float] = (-TABLE_HALF_WIDTH, TABLE_HALF_WIDTH),
@@ -398,11 +548,14 @@ def get_pingpong_rally_state(
     paddle_sensor_name=paddle_sensor_name,
     net_sensor_name=net_sensor_name,
     ball_cfg=ball_cfg,
+    paddle_cfg=paddle_cfg,
+    robot_cfg=robot_cfg,
     body_ball_sensor_name=body_ball_sensor_name,
     force_threshold=force_threshold,
     table_z=table_z,
     net_x=net_x,
     net_top_z=net_top_z,
+    gravity=gravity,
     self_x_limits=self_x_limits,
     opponent_x_limits=opponent_x_limits,
     table_y_limits=table_y_limits,
@@ -424,11 +577,14 @@ class PingpongRallyStateTerm:
       paddle_sensor_name=cfg.params["paddle_sensor_name"],
       net_sensor_name=cfg.params["net_sensor_name"],
       ball_cfg=cfg.params.get("ball_cfg", _DEFAULT_BALL_CFG),
+      paddle_cfg=cfg.params.get("paddle_cfg", _DEFAULT_PADDLE_CFG),
+      robot_cfg=cfg.params.get("robot_cfg", _DEFAULT_ROBOT_CFG),
       body_ball_sensor_name=cfg.params.get("body_ball_sensor_name"),
       force_threshold=float(cfg.params.get("force_threshold", 1.0)),
       table_z=float(cfg.params.get("table_z", BALL_CENTER_TABLE_Z)),
       net_x=float(cfg.params.get("net_x", NET_X)),
       net_top_z=float(cfg.params.get("net_top_z", NET_TOP_Z)),
+      gravity=float(cfg.params.get("gravity", 9.81)),
       self_x_limits=cfg.params.get("self_x_limits", (NET_X, TABLE_HALF_LENGTH)),
       opponent_x_limits=cfg.params.get(
         "opponent_x_limits", (-TABLE_HALF_LENGTH, NET_X)

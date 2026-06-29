@@ -1,0 +1,13 @@
+[2026-06-26 19:28:23,442][asyncio][DEBUG] - Using selector: EpollSelector
+[2026-06-26 19:28:30,242][h5py._conv][DEBUG] - Creating converter from 7 to 5
+[2026-06-26 19:28:30,243][h5py._conv][DEBUG] - Creating converter from 5 to 7
+[2026-06-26 19:28:30,243][h5py._conv][DEBUG] - Creating converter from 7 to 5
+[2026-06-26 19:28:30,243][h5py._conv][DEBUG] - Creating converter from 5 to 7
+[2026-06-26 19:28:30,560][matplotlib][DEBUG] - matplotlib data path: /home/universe/miniconda3/envs/beyondmimic/lib/python3.10/site-packages/matplotlib/mpl-data
+[2026-06-26 19:28:30,570][matplotlib][WARNING] - /home/universe/.config/matplotlib is not a writable directory
+[2026-06-26 19:28:30,571][matplotlib][WARNING] - Matplotlib created a temporary cache directory at /tmp/matplotlib-1zd5fthf because there was an issue with the default path (/home/universe/.config/matplotlib); it is highly recommended to set the MPLCONFIGDIR environment variable to a writable directory, in particular to speed up the import of Matplotlib and to better support multiprocessing.
+[2026-06-26 19:28:30,572][matplotlib][DEBUG] - CONFIGDIR=/tmp/matplotlib-1zd5fthf
+[2026-06-26 19:28:30,573][matplotlib][DEBUG] - interactive is False
+[2026-06-26 19:28:30,574][matplotlib][DEBUG] - platform is linux
+[2026-06-26 19:28:34,757][filelock][DEBUG] - Attempting to release lock 139962243632816 on /tmp/isaaclab_app_launcher.lock
+[2026-06-26 19:28:34,757][filelock][DEBUG] - Lock 139962243632816 released on /tmp/isaaclab_app_launcher.lock

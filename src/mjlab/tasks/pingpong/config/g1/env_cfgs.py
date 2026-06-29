@@ -17,7 +17,10 @@ from mjlab.asset_zoo.robots.unitree_g1_w_racket.g1_constants import (
 )
 from mjlab.entity import EntityCfg
 from mjlab.tasks.pingpong.pingpong_env_cfg import (
+  make_pingpong_latent_cross_diag_env_cfg,
   make_pingpong_latent_cross_env_cfg,
+  make_pingpong_latent_cross_strike_quality_energy_relax_env_cfg,
+  make_pingpong_latent_cross_strike_quality_env_cfg,
   make_pingpong_latent_env_cfg,
   make_pingpong_latent_return_env_cfg,
 )
@@ -144,7 +147,9 @@ def get_g1_w_pingpong_paddle_spec() -> mujoco.MjSpec:
   )
   for idx, geom in enumerate(visual_geoms):
     geom.meshname = "pingpong_paddle_visual"
-    geom.name = "pingpong_paddle_visual" if idx == 0 else f"pingpong_paddle_visual_{idx}"
+    geom.name = (
+      "pingpong_paddle_visual" if idx == 0 else f"pingpong_paddle_visual_{idx}"
+    )
 
   paddle_center = _scale_from_anchor(
     _TENNIS_RACKET_COLLISION_POS,
@@ -237,13 +242,36 @@ def unitree_g1_pingpong_latent_cross_env_cfg(play: bool = False):
   return _apply_g1_pingpong_common(cfg, play=play)
 
 
+def unitree_g1_pingpong_latent_cross_diag_env_cfg(play: bool = False):
+  """Create G1 diagnostics-only table-tennis Cross task."""
+  cfg = make_pingpong_latent_cross_diag_env_cfg()
+  return _apply_g1_pingpong_common(cfg, play=play)
+
+
+def unitree_g1_pingpong_latent_cross_strike_quality_env_cfg(play: bool = False):
+  """Create G1 Cross task with strike-quality dense rewards."""
+  cfg = make_pingpong_latent_cross_strike_quality_env_cfg()
+  return _apply_g1_pingpong_common(cfg, play=play)
+
+
+def unitree_g1_pingpong_latent_cross_strike_quality_energy_relax_env_cfg(
+  play: bool = False,
+):
+  """Create G1 Cross task with strike rewards and hit-window energy relax."""
+  cfg = make_pingpong_latent_cross_strike_quality_energy_relax_env_cfg()
+  return _apply_g1_pingpong_common(cfg, play=play)
+
+
 __all__ = [
   "DEFAULT_DECODER_CHECKPOINT",
   "PINGPONG_PADDLE_RADIUS",
   "PINGPONG_PADDLE_SCALE",
   "get_g1_w_pingpong_paddle_robot_cfg",
   "get_g1_w_pingpong_paddle_spec",
+  "unitree_g1_pingpong_latent_cross_diag_env_cfg",
   "unitree_g1_pingpong_latent_cross_env_cfg",
+  "unitree_g1_pingpong_latent_cross_strike_quality_energy_relax_env_cfg",
+  "unitree_g1_pingpong_latent_cross_strike_quality_env_cfg",
   "unitree_g1_pingpong_latent_hit_env_cfg",
   "unitree_g1_pingpong_latent_return_env_cfg",
 ]

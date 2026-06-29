@@ -1,0 +1,11 @@
+[2026-06-26 19:49:05,429][asyncio][DEBUG] - Using selector: EpollSelector
+[2026-06-26 19:49:08,338][h5py._conv][DEBUG] - Creating converter from 7 to 5
+[2026-06-26 19:49:08,339][h5py._conv][DEBUG] - Creating converter from 5 to 7
+[2026-06-26 19:49:08,340][h5py._conv][DEBUG] - Creating converter from 7 to 5
+[2026-06-26 19:49:08,340][h5py._conv][DEBUG] - Creating converter from 5 to 7
+[2026-06-26 19:49:08,486][matplotlib][DEBUG] - matplotlib data path: /home/universe/miniconda3/envs/beyondmimic/lib/python3.10/site-packages/matplotlib/mpl-data
+[2026-06-26 19:49:08,493][matplotlib][DEBUG] - CONFIGDIR=/tmp/sonic_isaac_cache/matplotlib
+[2026-06-26 19:49:08,495][matplotlib][DEBUG] - interactive is False
+[2026-06-26 19:49:08,496][matplotlib][DEBUG] - platform is linux
+[2026-06-26 19:49:11,213][filelock][DEBUG] - Attempting to release lock 140466120777616 on /tmp/isaaclab_app_launcher.lock
+[2026-06-26 19:49:11,214][filelock][DEBUG] - Lock 140466120777616 released on /tmp/isaaclab_app_launcher.lock

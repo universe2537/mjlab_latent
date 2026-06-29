@@ -1,0 +1,28 @@
+{
+  "joint_order": "mj",
+  "source_format": "mjlab tracking motion.npz",
+  "output": "/home/universe/workspace/mjlab_latent/sonic_analysis/sonic_tennis_motion_lib.pkl",
+  "motions": {
+    "tennis_random_001": {
+      "source": "/home/universe/workspace/mjlab_latent/artifacts/tennis_random_001/motion.npz",
+      "frames": 1874,
+      "fps": 50
+    },
+    "tennis_random_002": {
+      "source": "/home/universe/workspace/mjlab_latent/artifacts/tennis_random_002/motion.npz",
+      "frames": 2725,
+      "fps": 50
+    },
+    "tennis_random_003": {
+      "source": "/home/universe/workspace/mjlab_latent/artifacts/tennis_random_003/motion.npz",
+      "frames": 2773,
+      "fps": 50
+    },
+    "tennis_random_004": {
+      "source": "/home/universe/workspace/mjlab_latent/artifacts/tennis_random_004/motion.npz",
+      "frames": 3749,
+      "fps": 50
+    }
+  },
+  "serializer": "pickle"
+}

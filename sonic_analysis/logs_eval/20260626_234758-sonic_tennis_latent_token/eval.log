@@ -1,0 +1,9 @@
+2026-06-26 23:47:58.792 | INFO     | __main__:main:90 - Loading training config file from sonic_release/config.yaml
+2026-06-26 23:47:59.272 | DEBUG    | logging:callHandlers:1706 - Using selector: EpollSelector
+2026-06-26 23:47:59.299 | INFO     | logging:callHandlers:1706 - 'trusted' is not set for registry 'kit/default' in '/exts/omni.kit.registry.nucleus/registries'
+2026-06-26 23:47:59.300 | INFO     | logging:callHandlers:1706 - switch auth for host: ovextensionsprod.blob.core.windows.net, account: :
+2026-06-26 23:47:59.300 | INFO     | logging:callHandlers:1706 - 'trusted' is not set for registry 'kit/sdk' in '/exts/omni.kit.registry.nucleus/registries'
+2026-06-26 23:47:59.300 | INFO     | logging:callHandlers:1706 - 'trusted' is not set for registry 'kit/community' in '/exts/omni.kit.registry.nucleus/registries'
+2026-06-26 23:47:59.301 | INFO     | logging:callHandlers:1706 - switch auth for host: dw290v42wisod.cloudfront.net, account: :
+2026-06-26 23:48:15.194 | DEBUG    | logging:callHandlers:1706 - Attempting to release lock 140332114069200 on /tmp/isaaclab_app_launcher.lock
+2026-06-26 23:48:15.195 | DEBUG    | logging:callHandlers:1706 - Lock 140332114069200 released on /tmp/isaaclab_app_launcher.lock

@@ -1,0 +1,14 @@
+2026-06-26 19:28:22.018 | INFO     | __main__:main:90 - Loading training config file from sonic_release/config.yaml
+2026-06-26 19:28:23.442 | DEBUG    | asyncio.selector_events:__init__:54 - Using selector: EpollSelector
+2026-06-26 19:28:30.242 | DEBUG    | h5py:<module>:47 - Creating converter from 7 to 5
+2026-06-26 19:28:30.243 | DEBUG    | h5py:<module>:47 - Creating converter from 5 to 7
+2026-06-26 19:28:30.243 | DEBUG    | h5py:<module>:47 - Creating converter from 7 to 5
+2026-06-26 19:28:30.243 | DEBUG    | h5py:<module>:47 - Creating converter from 5 to 7
+2026-06-26 19:28:30.560 | DEBUG    | matplotlib:wrapper:342 - matplotlib data path: /home/universe/miniconda3/envs/beyondmimic/lib/python3.10/site-packages/matplotlib/mpl-data
+2026-06-26 19:28:30.571 | WARNING  | matplotlib:_get_config_or_cache_dir:541 - /home/universe/.config/matplotlib is not a writable directory
+2026-06-26 19:28:30.571 | WARNING  | matplotlib:_get_config_or_cache_dir:554 - Matplotlib created a temporary cache directory at /tmp/matplotlib-1zd5fthf because there was an issue with the default path (/home/universe/.config/matplotlib); it is highly recommended to set the MPLCONFIGDIR environment variable to a writable directory, in particular to speed up the import of Matplotlib and to better support multiprocessing.
+2026-06-26 19:28:30.572 | DEBUG    | matplotlib:wrapper:342 - CONFIGDIR=/tmp/matplotlib-1zd5fthf
+2026-06-26 19:28:30.574 | DEBUG    | matplotlib:<module>:1560 - interactive is False
+2026-06-26 19:28:30.574 | DEBUG    | matplotlib:<module>:1561 - platform is linux
+2026-06-26 19:28:34.757 | DEBUG    | filelock._api:release:537 - Attempting to release lock 139962243632816 on /tmp/isaaclab_app_launcher.lock
+2026-06-26 19:28:34.758 | DEBUG    | filelock._api:release:541 - Lock 139962243632816 released on /tmp/isaaclab_app_launcher.lock

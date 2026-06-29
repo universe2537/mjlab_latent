@@ -76,6 +76,38 @@ def unitree_g1_pingpong_cross_ppo_runner_cfg() -> TennisLatentOnPolicyRunnerCfg:
   return cfg
 
 
+def unitree_g1_pingpong_cross_diag_ppo_runner_cfg() -> TennisLatentOnPolicyRunnerCfg:
+  """Create PPO config for the diagnostics-only Cross ablation."""
+  cfg = unitree_g1_pingpong_cross_ppo_runner_cfg()
+  cfg.experiment_name = "g1_pingpong_latent_cross_diag"
+  cfg.run_name = "pingpong_cross_diag_only_from_hit"
+  return cfg
+
+
+def unitree_g1_pingpong_cross_strike_quality_ppo_runner_cfg() -> (
+  TennisLatentOnPolicyRunnerCfg
+):
+  """Create PPO config for the strike-quality reward Cross ablation."""
+  cfg = unitree_g1_pingpong_cross_ppo_runner_cfg()
+  cfg.experiment_name = "g1_pingpong_latent_cross_strike_quality"
+  cfg.run_name = "pingpong_cross_strike_quality_from_hit"
+  return cfg
+
+
+def unitree_g1_pingpong_cross_strike_quality_energy_relax_ppo_runner_cfg() -> (
+  TennisLatentOnPolicyRunnerCfg
+):
+  """Create PPO config for the hit-window energy-relax Cross ablation."""
+  cfg = unitree_g1_pingpong_cross_strike_quality_ppo_runner_cfg()
+  cfg.experiment_name = "g1_pingpong_latent_cross_strike_quality_energy_relax"
+  cfg.run_name = "pingpong_cross_strike_quality_energy_relax_from_hit"
+  cfg.algorithm.entropy_coef = 0.003
+  cfg.algorithm.learning_rate = 7.5e-4
+  cfg.clip_actions = 3.5
+  cfg.reset_actor_std = 1.0
+  return cfg
+
+
 def unitree_g1_pingpong_return_ppo_runner_cfg() -> TennisLatentOnPolicyRunnerCfg:
   """Create PPO config for the legacy G1 table-tennis legal-return task."""
   cfg = unitree_g1_pingpong_cross_ppo_runner_cfg()
@@ -89,7 +121,10 @@ def unitree_g1_pingpong_return_ppo_runner_cfg() -> TennisLatentOnPolicyRunnerCfg
 __all__ = [
   "DEFAULT_CROSS_RESUME_CHECKPOINT",
   "DEFAULT_RETURN_RESUME_CHECKPOINT",
+  "unitree_g1_pingpong_cross_diag_ppo_runner_cfg",
   "unitree_g1_pingpong_cross_ppo_runner_cfg",
+  "unitree_g1_pingpong_cross_strike_quality_energy_relax_ppo_runner_cfg",
+  "unitree_g1_pingpong_cross_strike_quality_ppo_runner_cfg",
   "unitree_g1_pingpong_latent_ppo_runner_cfg",
   "unitree_g1_pingpong_return_ppo_runner_cfg",
 ]

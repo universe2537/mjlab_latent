@@ -7,10 +7,12 @@ from typing import TYPE_CHECKING
 import torch
 
 from mjlab.entity import Entity
+from mjlab.envs.mdp.rewards import action_rate_l2
 from mjlab.managers.reward_manager import RewardTermCfg
 from mjlab.managers.scene_entity_config import SceneEntityCfg
 from mjlab.tasks.pingpong.mdp.state import PingpongRallyStateTerm
 from mjlab.tasks.tennis.mdp.observations import racket_to_ball_b, racket_velocity_b
+from mjlab.tasks.tennis.mdp.rewards import low_level_action_rate_l2
 
 if TYPE_CHECKING:
   from mjlab.envs import ManagerBasedRlEnv
@@ -64,6 +66,21 @@ def robot_ball_contact_penalty(
   return _contact_substep_count(env, sensor_name, force_threshold, max_count)
 
 
+def _return_flight_active(
+  state,
+  env: ManagerBasedRlEnv,
+  ball_cfg: SceneEntityCfg,
+) -> torch.Tensor:
+  ball: Entity = env.scene[ball_cfg.name]
+  ball_x = ball.data.root_link_pos_w[:, 0] - env.scene.env_origins[:, 0]
+  return (
+    state.hit_valid
+    & state.has_paddle_hit
+    & ~state.has_crossed_net
+    & (ball_x > state.net_x)
+  )
+
+
 class paddle_to_ball_after_bounce_dense(PingpongRallyStateTerm):
   """Reward keeping the paddle near the ball after the legal self-table bounce."""
 
@@ -91,6 +108,7 @@ class paddle_to_ball_after_bounce_dense(PingpongRallyStateTerm):
     y_limits: tuple[float, float] = (-1.25, 1.25),
     z_limits: tuple[float, float] = (0.05, 2.5),
     bounce_z_tolerance: float = 0.05,
+    gravity: float = 9.81,
   ) -> torch.Tensor:
     del (
       paddle_sensor_name,
@@ -100,6 +118,7 @@ class paddle_to_ball_after_bounce_dense(PingpongRallyStateTerm):
       table_z,
       net_x,
       net_top_z,
+      gravity,
       self_x_limits,
       opponent_x_limits,
       table_y_limits,
@@ -144,6 +163,7 @@ class paddle_towards_ball_velocity(PingpongRallyStateTerm):
     y_limits: tuple[float, float] = (-1.25, 1.25),
     z_limits: tuple[float, float] = (0.05, 2.5),
     bounce_z_tolerance: float = 0.05,
+    gravity: float = 9.81,
   ) -> torch.Tensor:
     del (
       paddle_sensor_name,
@@ -153,6 +173,7 @@ class paddle_towards_ball_velocity(PingpongRallyStateTerm):
       table_z,
       net_x,
       net_top_z,
+      gravity,
       self_x_limits,
       opponent_x_limits,
       table_y_limits,
@@ -247,6 +268,122 @@ class post_hit_ball_velocity_direction(PingpongRallyStateTerm):
     return x_reward * lateral_weight * active.float()
 
 
+class strike_outgoing_ball_velocity(PingpongRallyStateTerm):
+  """Reward a legal hit whose outgoing velocity points toward the opponent."""
+
+  def __init__(self, cfg: RewardTermCfg, env: ManagerBasedRlEnv):
+    super().__init__(cfg, env)
+
+  def __call__(
+    self,
+    env: ManagerBasedRlEnv,
+    ball_cfg: SceneEntityCfg = _BALL_CFG,
+    target_x_speed: float = 2.5,
+    **params,
+  ) -> torch.Tensor:
+    del params
+    state = self.state
+    active = _return_flight_active(state, env, ball_cfg)
+    x_speed = torch.clamp(
+      -state.hit_post_vel[:, 0] / target_x_speed,
+      min=0.0,
+      max=1.0,
+    )
+    return x_speed * state.hit_post_vx_toward_opponent_ratio * active.float()
+
+
+class strike_pred_net_clearance(PingpongRallyStateTerm):
+  """Reward legal hits whose ballistic path is predicted to clear the net."""
+
+  def __init__(self, cfg: RewardTermCfg, env: ManagerBasedRlEnv):
+    super().__init__(cfg, env)
+
+  def __call__(
+    self,
+    env: ManagerBasedRlEnv,
+    ball_cfg: SceneEntityCfg = _BALL_CFG,
+    clearance_margin: float = 0.03,
+    clearance_scale: float = 0.18,
+    **params,
+  ) -> torch.Tensor:
+    del params
+    state = self.state
+    active = _return_flight_active(state, env, ball_cfg)
+    reward = torch.clamp(
+      (state.hit_pred_net_clearance + clearance_margin) / clearance_scale,
+      min=0.0,
+      max=1.0,
+    )
+    return reward * active.float()
+
+
+class strike_pred_landing_inside(PingpongRallyStateTerm):
+  """Reward legal hits predicted to land on the opponent table half."""
+
+  def __init__(self, cfg: RewardTermCfg, env: ManagerBasedRlEnv):
+    super().__init__(cfg, env)
+
+  def __call__(
+    self,
+    env: ManagerBasedRlEnv,
+    ball_cfg: SceneEntityCfg = _BALL_CFG,
+    **params,
+  ) -> torch.Tensor:
+    del params
+    state = self.state
+    active = _return_flight_active(state, env, ball_cfg)
+    return state.hit_pred_landing_inside_opponent_table * active.float()
+
+
+class strike_post_hit_speed(PingpongRallyStateTerm):
+  """Reward enough legal-hit ball speed without rewarding wrong-way hits."""
+
+  def __init__(self, cfg: RewardTermCfg, env: ManagerBasedRlEnv):
+    super().__init__(cfg, env)
+
+  def __call__(
+    self,
+    env: ManagerBasedRlEnv,
+    ball_cfg: SceneEntityCfg = _BALL_CFG,
+    speed_scale: float = 4.0,
+    **params,
+  ) -> torch.Tensor:
+    del params
+    state = self.state
+    active = _return_flight_active(state, env, ball_cfg)
+    speed_reward = torch.tanh(state.hit_post_speed / speed_scale)
+    return speed_reward * state.hit_post_vx_toward_opponent_ratio * active.float()
+
+
+class pre_hit_action_rate_l2(PingpongRallyStateTerm):
+  """Action-rate penalty that relaxes only after the legal paddle hit."""
+
+  def __init__(self, cfg: RewardTermCfg, env: ManagerBasedRlEnv):
+    super().__init__(cfg, env)
+
+  def __call__(self, env: ManagerBasedRlEnv, **params) -> torch.Tensor:
+    del params
+    active = ~self.state.has_paddle_hit
+    return action_rate_l2(env) * active.float()
+
+
+class pre_hit_low_level_action_rate_l2(PingpongRallyStateTerm):
+  """Low-level action-rate penalty that relaxes only in return flight."""
+
+  def __init__(self, cfg: RewardTermCfg, env: ManagerBasedRlEnv):
+    super().__init__(cfg, env)
+
+  def __call__(
+    self,
+    env: ManagerBasedRlEnv,
+    action_name: str,
+    **params,
+  ) -> torch.Tensor:
+    del params
+    active = ~self.state.has_paddle_hit
+    return low_level_action_rate_l2(env, action_name=action_name) * active.float()
+
+
 class crossed_net_event(PingpongRallyStateTerm):
   """Sparse reward when the returned ball clears the net plane."""
 
@@ -277,7 +414,13 @@ __all__ = [
   "paddle_towards_ball_velocity",
   "post_hit_ball_velocity_direction",
   "post_hit_x_progress",
+  "pre_hit_action_rate_l2",
+  "pre_hit_low_level_action_rate_l2",
   "robot_ball_contact_penalty",
   "robot_table_contact_penalty",
   "self_table_bounce_event",
+  "strike_outgoing_ball_velocity",
+  "strike_post_hit_speed",
+  "strike_pred_landing_inside",
+  "strike_pred_net_clearance",
 ]

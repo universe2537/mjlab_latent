@@ -17,6 +17,15 @@ Added
   over-net return task. It succeeds when a legal paddle hit crosses the net
   and first lands on the opponent table; the older Return task remains as a
   compatibility alias.
+- Added Pingpong Cross hit-to-return diagnostics, including fault-reason
+  episode metrics, non-paddle robot-ball contact counts, post-hit ball
+  velocity, predicted net clearance, predicted opponent-table landing, and
+  paddle-side hit-quality metrics. Also added
+  ``Mjlab-Pingpong-Cross-Diag-Unitree-G1``,
+  ``Mjlab-Pingpong-Cross-StrikeQuality-Unitree-G1``, and
+  ``Mjlab-Pingpong-Cross-StrikeQualityEnergyRelax-Unitree-G1`` ablation tasks,
+  plus ``tools/watch_pingpong_cross_training.py`` for 84-minute evidence
+  checks during long Cross training runs.
 - Added a separate Pingpong paddle-handle collision cylinder for the
   racket-equipped G1. The handle participates in robot-table and robot-ball
   physics but renders invisible, while paddle-hit scoring remains restricted

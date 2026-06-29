@@ -1,0 +1,182 @@
+hydra:
+  run:
+    dir: ${eval_log_dir}
+  sweep:
+    dir: multirun/${now:%Y-%m-%d}/${now:%H-%M-%S}
+    subdir: ${hydra.job.num}
+  launcher:
+    _target_: hydra._internal.core_plugins.basic_launcher.BasicLauncher
+  sweeper:
+    _target_: hydra._internal.core_plugins.basic_sweeper.BasicSweeper
+    max_batch_size: null
+    params: null
+  help:
+    app_name: ${hydra.job.name}
+    header: '${hydra.help.app_name} is powered by Hydra.
+
+      '
+    footer: 'Powered by Hydra (https://hydra.cc)
+
+      Use --hydra-help to view Hydra specific help
+
+      '
+    template: '${hydra.help.header}
+
+      == Configuration groups ==
+
+      Compose your configuration from those groups (group=option)
+
+
+      $APP_CONFIG_GROUPS
+
+
+      == Config ==
+
+      Override anything in the config (foo.bar=value)
+
+
+      $CONFIG
+
+
+      ${hydra.help.footer}
+
+      '
+  hydra_help:
+    template: 'Hydra (${hydra.runtime.version})
+
+      See https://hydra.cc for more info.
+
+
+      == Flags ==
+
+      $FLAGS_HELP
+
+
+      == Configuration groups ==
+
+      Compose your configuration from those groups (For example, append hydra/job_logging=disabled
+      to command line)
+
+
+      $HYDRA_CONFIG_GROUPS
+
+
+      Use ''--cfg hydra'' to Show the Hydra config.
+
+      '
+    hydra_help: ???
+  hydra_logging:
+    version: 1
+    formatters:
+      simple:
+        format: '[%(asctime)s][HYDRA] %(message)s'
+    handlers:
+      console:
+        class: logging.StreamHandler
+        formatter: simple
+        stream: ext://sys.stdout
+    root:
+      level: INFO
+      handlers:
+      - console
+    loggers:
+      logging_example:
+        level: DEBUG
+    disable_existing_loggers: false
+  job_logging:
+    version: 1
+    formatters:
+      simple:
+        format: '[%(asctime)s][%(name)s][%(levelname)s] - %(message)s'
+    handlers:
+      console:
+        class: logging.StreamHandler
+        formatter: simple
+        stream: ext://sys.stdout
+      file:
+        class: logging.FileHandler
+        formatter: simple
+        filename: ${hydra.runtime.output_dir}/${hydra.job.name}.log
+    root:
+      level: INFO
+      handlers:
+      - console
+      - file
+    disable_existing_loggers: false
+  env: {}
+  mode: RUN
+  searchpath: []
+  callbacks: {}
+  output_subdir: .hydra
+  overrides:
+    hydra:
+    - hydra.mode=RUN
+    task:
+    - checkpoint=sonic_release/last.pt
+    - +exp_base=sonic_release
+    - +exp_var=analysis
+    - +num_envs=4
+    - +headless=True
+    - +run_once=True
+    - +use_encoder=g1
+    - eval_base_dir=/home/universe/workspace/mjlab_latent/sonic_analysis/logs_eval
+    - eval_name=sonic_tennis_latent_token
+    - +eval_callbacks=[sonic_latent_token_recorder]
+    - +callbacks.sonic_latent_token_recorder._target_=sonic_analysis.latent_token_recorder.SonicLatentTokenRecorderCallback
+    - +callbacks.sonic_latent_token_recorder.output_path=/home/universe/workspace/mjlab_latent/sonic_analysis/sonic_tennis_latent_token.npz
+    - +callbacks.sonic_latent_token_recorder.motion_keys=[tennis_random_001,tennis_random_002,tennis_random_003,tennis_random_004]
+    - +callbacks.sonic_latent_token_recorder.encoder_name=g1
+    - +callbacks.sonic_latent_token_recorder.save_every_steps=25
+    - +callbacks.sonic_latent_token_recorder.skip_done_steps=True
+    - ++manager_env.config.terrain_type=plane
+    - ++manager_env.commands.motion.cat_upper_body_poses=False
+    - ++manager_env.commands.motion.freeze_frame_aug=False
+    - ++manager_env.commands.motion.start_from_first_frame=True
+    - ++manager_env.commands.motion.motion_lib_cfg.motion_file=/home/universe/workspace/mjlab_latent/sonic_analysis/sonic_tennis_motion_lib.pkl
+    - ++manager_env.commands.motion.motion_lib_cfg.smpl_motion_file=null
+    - ++manager_env.commands.motion.motion_lib_cfg.filter_motion_keys=[tennis_random_001,tennis_random_002,tennis_random_003,tennis_random_004]
+    - ++manager_env.commands.motion.motion_lib_cfg.load_unique_motions=True
+    - ++manager_env.commands.motion.motion_lib_cfg.max_num_motions=4
+    - ++manager_env.commands.motion.motion_lib_cfg.target_fps=50
+    - +callbacks.sonic_latent_token_recorder.max_steps=3
+  job:
+    name: eval_agent_trl
+    chdir: null
+    override_dirname: ++manager_env.commands.motion.cat_upper_body_poses=False,++manager_env.commands.motion.freeze_frame_aug=False,++manager_env.commands.motion.motion_lib_cfg.filter_motion_keys=[tennis_random_001,tennis_random_002,tennis_random_003,tennis_random_004],++manager_env.commands.motion.motion_lib_cfg.load_unique_motions=True,++manager_env.commands.motion.motion_lib_cfg.max_num_motions=4,++manager_env.commands.motion.motion_lib_cfg.motion_file=/home/universe/workspace/mjlab_latent/sonic_analysis/sonic_tennis_motion_lib.pkl,++manager_env.commands.motion.motion_lib_cfg.smpl_motion_file=null,++manager_env.commands.motion.motion_lib_cfg.target_fps=50,++manager_env.commands.motion.start_from_first_frame=True,++manager_env.config.terrain_type=plane,+callbacks.sonic_latent_token_recorder._target_=sonic_analysis.latent_token_recorder.SonicLatentTokenRecorderCallback,+callbacks.sonic_latent_token_recorder.encoder_name=g1,+callbacks.sonic_latent_token_recorder.max_steps=3,+callbacks.sonic_latent_token_recorder.motion_keys=[tennis_random_001,tennis_random_002,tennis_random_003,tennis_random_004],+callbacks.sonic_latent_token_recorder.output_path=/home/universe/workspace/mjlab_latent/sonic_analysis/sonic_tennis_latent_token.npz,+callbacks.sonic_latent_token_recorder.save_every_steps=25,+callbacks.sonic_latent_token_recorder.skip_done_steps=True,+eval_callbacks=[sonic_latent_token_recorder],+exp_base=sonic_release,+exp_var=analysis,+headless=True,+num_envs=4,+run_once=True,+use_encoder=g1,checkpoint=sonic_release/last.pt,eval_base_dir=/home/universe/workspace/mjlab_latent/sonic_analysis/logs_eval,eval_name=sonic_tennis_latent_token
+    id: ???
+    num: ???
+    config_name: base_eval
+    env_set: {}
+    env_copy: []
+    config:
+      override_dirname:
+        kv_sep: '='
+        item_sep: ','
+        exclude_keys: []
+  runtime:
+    version: 1.3.2
+    version_base: '1.1'
+    cwd: /home/universe/workspace/GR00T-WholeBodyControl
+    config_sources:
+    - path: hydra.conf
+      schema: pkg
+      provider: hydra
+    - path: /home/universe/workspace/GR00T-WholeBodyControl/gear_sonic/config
+      schema: file
+      provider: main
+    - path: ''
+      schema: structured
+      provider: schema
+    output_dir: /home/universe/workspace/mjlab_latent/sonic_analysis/logs_eval/20260626_211525-sonic_tennis_latent_token
+    choices:
+      manager_env/recorders: empty
+      hydra/env: default
+      hydra/callbacks: null
+      hydra/job_logging: default
+      hydra/hydra_logging: default
+      hydra/hydra_help: default
+      hydra/help: default
+      hydra/sweeper: basic
+      hydra/launcher: basic
+      hydra/output: default
+  verbose: false

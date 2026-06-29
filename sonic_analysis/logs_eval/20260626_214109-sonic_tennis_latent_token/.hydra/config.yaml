@@ -1,0 +1,62 @@
+callbacks:
+  im_eval:
+    _target_: gear_sonic.trl.callbacks.im_eval_callback.ImEvalCallback
+    eval_frequency: 1
+    eval_only: true
+    output_dir: ${experiment_dir}/eval_metrics
+  sonic_latent_token_recorder:
+    _target_: sonic_analysis.latent_token_recorder.SonicLatentTokenRecorderCallback
+    output_path: /home/universe/workspace/mjlab_latent/sonic_analysis/sonic_tennis_latent_token.npz
+    motion_keys:
+    - tennis_random_001
+    - tennis_random_002
+    - tennis_random_003
+    - tennis_random_004
+    encoder_name: g1
+    save_every_steps: 25
+    skip_done_steps: true
+    max_steps: 3
+manager_env:
+  recorders:
+    _target_: gear_sonic.envs.manager_env.mdp.recorders.RecordersCfg
+  config:
+    terrain_type: plane
+  commands:
+    motion:
+      cat_upper_body_poses: false
+      freeze_frame_aug: false
+      start_from_first_frame: true
+      motion_lib_cfg:
+        motion_file: /home/universe/workspace/mjlab_latent/sonic_analysis/sonic_tennis_motion_lib.pkl
+        smpl_motion_file: dummy
+        filter_motion_keys:
+        - tennis_random_001
+        - tennis_random_002
+        - tennis_random_003
+        - tennis_random_004
+        load_unique_motions: true
+        max_num_motions: 4
+        target_fps: 50
+      motion_lib_num_dof: 29
+checkpoint: sonic_release/last.pt
+algo:
+  config:
+    eval:
+      num_eval_episodes: 150
+      save_videos: false
+      video_save_prob: 1.0
+      save_goal_reached_only: true
+      save_trajectories: false
+      num_save_episodes: 200
+eval_timestamp: ${now:%Y%m%d_%H%M%S}
+eval_name: sonic_tennis_latent_token
+eval_base_dir: /home/universe/workspace/mjlab_latent/sonic_analysis/logs_eval
+eval_log_dir: ${eval_base_dir}/${eval_timestamp}-${eval_name}
+exp_base: sonic_release
+exp_var: analysis
+num_envs: 4
+headless: true
+run_once: true
+use_encoder: g1
+eval_callbacks:
+- sonic_latent_token_recorder

@@ -335,3 +335,56 @@ action-rate / torque / acceleration 等正则收紧。
 - `UV_CACHE_DIR=/tmp/uv-cache FORCE_CPU=1 uv run pytest tests/test_pingpong_task.py tests/test_pingpong_state.py -q`
 - `UV_CACHE_DIR=/tmp/uv-cache uv run ruff check src/mjlab/tasks/pingpong tests/test_pingpong_task.py tests/test_pingpong_state.py`
 - `UV_CACHE_DIR=/tmp/uv-cache uv run ty check src/mjlab/tasks/pingpong`
+
+## 2026-06-29 20:32 - Pingpong Cross Hit-to-Return Diagnostics
+
+### 目标
+
+定位 Cross 卡在 hit-to-return funnel 的原因，补充可观测诊断，增加可开关的
+strike-quality reward ablation，并建立 14h 长训 watcher。
+
+### 计划
+
+- [x] 复查 Cross 状态机、reward、metrics、G1 注册和历史 run 指标。
+- [x] 记录合法 hit 后的球速、方向、预测过网高度、预测落点和球拍侧质量。
+- [x] 暴露 fault reason breakdown 与 robot-ball contact episode metric。
+- [x] 新增 diagnostics-only、strike-quality、strike-quality+energy-relax 三个 ablation task。
+- [x] 新增 watcher，按 84 分钟 observation window 生成 JSON/Markdown 决策报告。
+
+### 实现记录
+
+- `PingpongRallyState` 在首次合法 paddle hit 时缓存 post-hit ball velocity、
+  speed、toward-opponent ratio、predicted net clearance、predicted opponent-table
+  landing 和 paddle speed / normal alignment / normal velocity。
+- Metrics 新增 `fault_reason/*`、`robot_ball_contact_count`、`hit/post_*`、
+  `hit/pred_*`、`hit/paddle_*`；旧 Cross reward 默认不自动启用新增 strike reward。
+- 新增 strike-quality reward：`strike_outgoing_ball_velocity`、
+  `strike_pred_net_clearance`、`strike_pred_landing_inside`、
+  `strike_post_hit_speed`。
+- 新增 `pre_hit_action_rate_l2` 与 `pre_hit_low_level_action_rate_l2`，用于
+  `Mjlab-Pingpong-Cross-StrikeQualityEnergyRelax-Unitree-G1` 在合法 hit 后的
+  return-flight 阶段放松 action-rate penalty，而不是全局放飞动作。
+- 新增 `tools/watch_pingpong_cross_training.py`，支持 `--logdir`、`--pid`、
+  `--eta-hours`、`--observe-interval-minutes`、`--kill-on-stop`、`--dry-run`、
+  `--once` 和 `--report-dir`。
+
+### 问题判断
+
+历史 dense-retune run 的证据仍支持 strike-quality bottleneck：自方落台稳定，
+paddle 可以碰到约一半来球，但过网、对方落台和合法回球均为 0；同时
+`post_hit_x_progress` 与 `post_hit_ball_velocity_direction` 很低。
+
+### 验证
+
+- `UV_CACHE_DIR=/tmp/uv-cache uv run ruff check ...`
+- `UV_CACHE_DIR=/tmp/uv-cache FORCE_CPU=1 uv run pytest tests/test_pingpong_state.py tests/test_pingpong_task.py -q`
+- `UV_CACHE_DIR=/tmp/uv-cache uv run ty check src/mjlab/tasks/pingpong tests/test_pingpong_state.py tests/test_pingpong_task.py tools/watch_pingpong_cross_training.py`
+- `UV_CACHE_DIR=/tmp/uv-cache uv run python tools/watch_pingpong_cross_training.py --help`
+- `UV_CACHE_DIR=/tmp/uv-cache uv run python tools/watch_pingpong_cross_training.py --logdir /data0/universe/home_moved/mjlab_latent/logs/rsl_rl/g1_pingpong_latent_cross/pingpong_cross_dense_retune_from_hit_v3_collision4500_16384env_gpu4_6_2026-06-25_14-26-38 --eta-hours 14 --observe-interval-minutes 84 --report-dir /tmp/pingpong_cross_watch_dryrun3 --dry-run --once`
+
+### 下一步
+
+优先跑 `Mjlab-Pingpong-Cross-Diag-Unitree-G1` 确认新 metrics；如果
+`hit/post_vx_toward_opponent_ratio`、`hit/pred_net_clearance` 和
+`hit/pred_landing_inside_opponent_table` 仍长期为 0，再比较 strike-quality reward
+与 hit-window energy-relax ablation。
