@@ -382,6 +382,47 @@ paddle 可以碰到约一半来球，但过网、对方落台和合法回球均�
 - `UV_CACHE_DIR=/tmp/uv-cache uv run python tools/watch_pingpong_cross_training.py --help`
 - `UV_CACHE_DIR=/tmp/uv-cache uv run python tools/watch_pingpong_cross_training.py --logdir /data0/universe/home_moved/mjlab_latent/logs/rsl_rl/g1_pingpong_latent_cross/pingpong_cross_dense_retune_from_hit_v3_collision4500_16384env_gpu4_6_2026-06-25_14-26-38 --eta-hours 14 --observe-interval-minutes 84 --report-dir /tmp/pingpong_cross_watch_dryrun3 --dry-run --once`
 
+### Pre-commit review follow-up
+
+- Paddle-side hit quality originally assumed the paddle site local `+x` axis.
+  Review changed it to the `pingpong_paddle_collision` geom local `+z` normal,
+  matching the thin-cylinder collision proxy used for legal hits.
+- Legal-hit diagnostics no longer call `bool(torch.any(...))`; vectorized masked
+  updates avoid a CPU/GPU sync in the hot path.
+- `pred_net_clearance` and predicted landing now reject or cap very long
+  ballistic horizons, avoiding misleading huge negative clearance from nearly
+  stationary/away-from-net post-hit velocity.
+- Dense reward terms that share `_state_params()` now accept the additional
+  `paddle_geom_cfg` argument, avoiding config construction regressions.
+- Final validation before launch passed:
+  `UV_CACHE_DIR=/tmp/uv-cache uv run ruff format ...`,
+  `UV_CACHE_DIR=/tmp/uv-cache uv run ruff check ...`,
+  `UV_CACHE_DIR=/tmp/uv-cache FORCE_CPU=1 uv run pytest tests/test_pingpong_state.py tests/test_pingpong_task.py -q`,
+  and `UV_CACHE_DIR=/tmp/uv-cache uv run ty check src/mjlab/tasks/pingpong tests/test_pingpong_state.py tests/test_pingpong_task.py tools/watch_pingpong_cross_training.py`.
+
+### Diag-only long run launch
+
+- First attempt with `30720` envs on GPU `[0,1]` hit Warp CUDA graph OOM.
+- Second attempt with `16384` envs exposed the `paddle_geom_cfg` reward
+  signature bug; fixed before relaunch.
+- Third attempt exposed the long-horizon `pred_net_clearance` diagnostic issue;
+  fixed before relaunch.
+- Active run:
+  `Mjlab-Pingpong-Cross-Diag-Unitree-G1`,
+  tmux `pingpong_cross_diag_20260629_211353_16384`,
+  pane PID `3180955`,
+  `16384` envs on GPU `[0,1]`.
+- Logdir:
+  `/data0/universe/home_moved/mjlab_latent/logs/rsl_rl/g1_pingpong_latent_cross_diag/pingpong_cross_diag_only_from_hit_16384env_gpu0_1_20260629_211353_2026-06-29_21-15-42`.
+- Launch record:
+  `/data0/universe/home_moved/mjlab_latent/logs/rsl_rl/_codex_launch_records/pingpong_cross_diag_20260629_211353_16384`.
+- Watcher `--once` succeeded with `decision=continue`, no missing metrics, and
+  wrote
+  `/data0/universe/home_moved/mjlab_latent/logs/rsl_rl/g1_pingpong_latent_cross_diag/pingpong_cross_diag_only_from_hit_16384env_gpu0_1_20260629_211353_2026-06-29_21-15-42/watch_reports/20260629_212039_pingpong_cross_watch.md`.
+- Persistent watcher tmux:
+  `pingpong_cross_diag_watch_20260629_211353_16384`; it observes every
+  `84` minutes and writes reports under the run's `watch_reports/`.
+
 ### 下一步
 
 优先跑 `Mjlab-Pingpong-Cross-Diag-Unitree-G1` 确认新 metrics；如果

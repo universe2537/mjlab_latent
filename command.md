@@ -41,12 +41,6 @@ MUJOCO_GL=egl uv run play Mjlab-Pingpong-Hit-Unitree-G1 \
   --viewer none
 ```
 
-Video output:
-
-```text
-logs/rsl_rl/g1_pingpong_latent_hit/pingpong_hit_v3_collision_10240env_gpu1_2_from15500_2026-06-23_17-00-15/videos/play/rl-video-step-0.mp4
-```
-
 Interactive viewer:
 
 ```sh
@@ -54,6 +48,8 @@ uv run play Mjlab-Pingpong-Cross-Unitree-G1 \
   --checkpoint-file logs/rsl_rl/g1_pingpong_latent_cross/pingpong_cross_dense_retune_from_hit_v3_collision4500_16384env_gpu4_6_2026-06-25_14-26-38/model_10500.pt \
   --viewer viser
 
+uv run play Mjlab-Pingpong-Cross-Unitree-G1 \
+  --checkpoint-file logs/rsl_rl/g1_pingpong_latent_cross_strike_quality/pingpong_cross_strike_quality_from_hit_16384env_gpu0_1_20260629_224812_2026-06-29_22-48-24/model_16500.pt --viewer viser
 
 MUJOCO_GL=egl uv run play Mjlab-Pingpong-Cross-Unitree-G1 \
   --checkpoint-file logs/rsl_rl/g1_pingpong_latent_cross/pingpong_cross_dense_retune_from_hit_v3_collision4500_16384env_gpu4_6_2026-06-25_14-26-38/model_10500.pt \

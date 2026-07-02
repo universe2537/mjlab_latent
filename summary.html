@@ -83,6 +83,52 @@
       the next useful run is diagnostics-only or strike-quality reward rather
       than another blind continuation of the same config.
     </li>
+    <li>
+      Pre-commit review fixed four diagnostic issues before launch:
+      paddle-side hit quality now uses the
+      <code>pingpong_paddle_collision</code> geom local <code>+z</code> normal,
+      legal-hit diagnostic updates avoid a scalar GPU sync,
+      ballistic net/landing predictions cap long horizons, and reward call
+      signatures tolerate the shared <code>paddle_geom_cfg</code> parameter.
+    </li>
+    <li>
+      First-stage Diag-only long run started on 2026-06-29:
+      tmux <code>pingpong_cross_diag_20260629_211353_16384</code>,
+      task <code>Mjlab-Pingpong-Cross-Diag-Unitree-G1</code>,
+      <code>16384</code> envs on GPU <code>[0,1]</code>. Logdir:
+      <code>/data0/universe/home_moved/mjlab_latent/logs/rsl_rl/g1_pingpong_latent_cross_diag/pingpong_cross_diag_only_from_hit_16384env_gpu0_1_20260629_211353_2026-06-29_21-15-42</code>.
+      Launch record:
+      <code>/data0/universe/home_moved/mjlab_latent/logs/rsl_rl/_codex_launch_records/pingpong_cross_diag_20260629_211353_16384</code>.
+    </li>
+    <li>
+      Watcher tmux <code>pingpong_cross_diag_watch_20260629_211353_16384</code>
+      observes every 84 minutes. First report was
+      <code>continue</code> with no missing metrics:
+      self-table bounce about <code>0.999</code>, paddle-hit about
+      <code>0.759</code>, but crossed-net/opponent-table/legal-return still
+      <code>0</code>; early fault mix is mainly return-out and failed-bounce.
+    </li>
+    <li>
+      Second Diag-only watcher report at <code>2026-06-29 22:45</code> was
+      <code>risky_continue</code>, but met the manual stop rule:
+      <code>crossed_net_count=0</code>, <code>legal_return_count=0</code>,
+      <code>paddle_hit_count=0.728</code>, weaker
+      <code>hit/post_vx_toward_opponent_ratio=0.054</code>, no predicted
+      legal landing, and degraded paddle quality. The Diag-only tmux session
+      was stopped with <code>C-c</code>; preserved checkpoint/report evidence
+      includes <code>model_500.pt</code> and
+      <code>watch_reports/20260629_224507_pingpong_cross_watch.*</code>.
+    </li>
+    <li>
+      Next ablation launched on 2026-06-29:
+      tmux <code>pingpong_cross_strike_quality_20260629_224812_16384</code>,
+      watcher <code>pingpong_cross_sq_watch_20260629_224812_16384</code>,
+      task <code>Mjlab-Pingpong-Cross-StrikeQuality-Unitree-G1</code>,
+      <code>16384</code> envs on GPU <code>[0,1]</code>. Logdir:
+      <code>/data0/universe/home_moved/mjlab_latent/logs/rsl_rl/g1_pingpong_latent_cross_strike_quality/pingpong_cross_strike_quality_from_hit_16384env_gpu0_1_20260629_224812_2026-06-29_22-48-24</code>.
+      Launch record:
+      <code>/data0/universe/home_moved/mjlab_latent/logs/rsl_rl/_codex_launch_records/pingpong_cross_strike_quality_20260629_224812_16384</code>.
+    </li>
   </ul>
 
   <h2>2026-06-25 Pingpong Hit Regularization Curriculum</h2>

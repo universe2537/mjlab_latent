@@ -37,6 +37,7 @@ from mjlab.viewer import ViewerConfig
 
 _ROBOT_CFG = SceneEntityCfg("robot", joint_names=(".*",))
 _PADDLE_CFG = SceneEntityCfg("robot", site_names=("pingpong_paddle_center",))
+_PADDLE_GEOM_CFG = SceneEntityCfg("robot", geom_names=("pingpong_paddle_collision",))
 _BALL_CFG = SceneEntityCfg("ball")
 _TABLE_CFG = SceneEntityCfg("table")
 _PADDLE_BALL_SENSOR = "paddle_ball_contact"
@@ -134,6 +135,7 @@ def _state_params() -> dict[str, object]:
     "body_ball_sensor_name": _ROBOT_BALL_SENSOR,
     "ball_cfg": _BALL_CFG,
     "paddle_cfg": _PADDLE_CFG,
+    "paddle_geom_cfg": _PADDLE_GEOM_CFG,
     "robot_cfg": _ROBOT_CFG,
     "force_threshold": HIT_FORCE_THRESHOLD,
     "table_z": BALL_CENTER_TABLE_Z,

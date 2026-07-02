@@ -96,6 +96,7 @@ class paddle_to_ball_after_bounce_dense(PingpongRallyStateTerm):
     paddle_cfg: SceneEntityCfg = _PADDLE_CFG,
     ball_cfg: SceneEntityCfg = _BALL_CFG,
     robot_cfg: SceneEntityCfg = _ROBOT_CFG,
+    paddle_geom_cfg: SceneEntityCfg | None = None,
     body_ball_sensor_name: str | None = None,
     force_threshold: float = 1.0,
     table_z: float = 0.78,
@@ -113,6 +114,7 @@ class paddle_to_ball_after_bounce_dense(PingpongRallyStateTerm):
     del (
       paddle_sensor_name,
       net_sensor_name,
+      paddle_geom_cfg,
       body_ball_sensor_name,
       force_threshold,
       table_z,
@@ -149,6 +151,7 @@ class paddle_towards_ball_velocity(PingpongRallyStateTerm):
     paddle_cfg: SceneEntityCfg = _PADDLE_CFG,
     ball_cfg: SceneEntityCfg = _BALL_CFG,
     robot_cfg: SceneEntityCfg = _ROBOT_CFG,
+    paddle_geom_cfg: SceneEntityCfg | None = None,
     body_ball_sensor_name: str | None = None,
     speed_scale: float = 2.0,
     distance_std: float = 0.55,
@@ -168,6 +171,7 @@ class paddle_towards_ball_velocity(PingpongRallyStateTerm):
     del (
       paddle_sensor_name,
       net_sensor_name,
+      paddle_geom_cfg,
       body_ball_sensor_name,
       force_threshold,
       table_z,
