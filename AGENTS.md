@@ -84,6 +84,20 @@ uv run play Mjlab-Tennis-Cross-Unitree-G1 --checkpoint-file <model.pt>
 uv run pytest tests/test_tennis_task.py -q
 ```
 
+### 1.5 Solve The Real Problem
+
+当命令、测试、训练、评测、渲染、下载、GPU/EGL 或数据加载失败时，Agent
+必须优先定位和解决根因，不得用更弱的检查、跳过步骤、改小目标或换指标来
+假装完成。
+
+- 失败后先保留原始命令、错误、相关配置和日志，再阅读调用路径形成假设。
+- workaround 只有在不改变用户目标和数据契约时才可使用；若会改变范围，
+  必须明确说明并征求用户确认。
+- 若问题来自权限、sandbox、网络、缺失资产、GPU/EGL 不可见或外部服务，
+  必须说明证据、请求所需授权或给出具体阻塞点。
+- 任务只有在原始目标被验证通过，或 blocker 被清楚记录并给出下一步时，
+  才算完成。
+
 ---
 
 ## 2. 工作区保护规则
