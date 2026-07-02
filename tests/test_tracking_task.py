@@ -5,6 +5,11 @@ import pytest
 from mjlab.asset_zoo.robots import G1_ACTION_SCALE
 from mjlab.envs.mdp.actions import JointPositionActionCfg
 from mjlab.tasks.registry import list_tasks, load_env_cfg
+from mjlab.tasks.tracking.config.g1.env_cfgs import (
+  G1_TRACKING_BODY_NAMES,
+  TABLE_TENNIS_TRAIN_MOTION_FILES,
+  TABLE_TENNIS_TRAIN_MOTION_NAMES,
+)
 from mjlab.tasks.tracking.mdp import MotionCommandCfg
 
 
@@ -52,6 +57,18 @@ def test_tracking_tasks_configure_motion_files(tracking_task_ids: list[str]) -> 
     )
 
 
+def test_table_tennis_tracking_task_uses_train_motion_split() -> None:
+  cfg = load_env_cfg("Mjlab-Tracking-TableTennis-Unitree-G1")
+  motion_cmd = cfg.commands["motion"]
+  assert isinstance(motion_cmd, MotionCommandCfg)
+  assert motion_cmd.motion_source == "local"
+  assert motion_cmd.motion_files == TABLE_TENNIS_TRAIN_MOTION_FILES
+  assert tuple(motion_cmd.body_names) == G1_TRACKING_BODY_NAMES
+  assert len(motion_cmd.motion_files) == len(TABLE_TENNIS_TRAIN_MOTION_NAMES)
+  assert not any("test_001" in path for path in motion_cmd.motion_files)
+  assert not any("badend" in path for path in motion_cmd.motion_files)
+
+
 def test_tracking_tasks_have_self_collision_sensor(
   tracking_task_ids: list[str],
 ) -> None:
@@ -96,6 +113,7 @@ def test_tracking_play_disables_rsi_randomization() -> None:
   tracking_tasks = [
     "Mjlab-Tracking-Flat-Unitree-G1",
     "Mjlab-Tracking-Flat-Unitree-G1-No-State-Estimation",
+    "Mjlab-Tracking-TableTennis-Unitree-G1",
   ]
 
   for task_id in tracking_tasks:
@@ -121,6 +139,7 @@ def test_tracking_play_uses_start_sampling_mode() -> None:
   tracking_tasks = [
     "Mjlab-Tracking-Flat-Unitree-G1",
     "Mjlab-Tracking-Flat-Unitree-G1-No-State-Estimation",
+    "Mjlab-Tracking-TableTennis-Unitree-G1",
   ]
 
   for task_id in tracking_tasks:

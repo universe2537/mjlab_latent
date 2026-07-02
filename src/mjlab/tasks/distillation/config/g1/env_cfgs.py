@@ -10,7 +10,10 @@ from mjlab.envs import ManagerBasedRlEnvCfg
 from mjlab.envs.mdp import dr
 from mjlab.managers.event_manager import EventTermCfg
 from mjlab.managers.scene_entity_config import SceneEntityCfg
-from mjlab.tasks.tracking.config.g1.env_cfgs import unitree_g1_flat_tracking_env_cfg
+from mjlab.tasks.tracking.config.g1.env_cfgs import (
+  unitree_g1_flat_tracking_env_cfg,
+  unitree_g1_table_tennis_tracking_env_cfg,
+)
 
 _WRIST_JOINTS = (
   "right_wrist_roll_joint",
@@ -43,3 +46,29 @@ def unitree_g1_flat_distillation_env_cfg(
     },
   )
   return cfg
+
+
+def unitree_g1_table_tennis_distillation_env_cfg(
+  has_state_estimation: bool = True,
+  play: bool = False,
+) -> ManagerBasedRlEnvCfg:
+  """Create distillation env for table-tennis tracking motions."""
+  cfg = unitree_g1_table_tennis_tracking_env_cfg(
+    has_state_estimation=has_state_estimation,
+    play=play,
+  )
+  cfg.events["wrist_encoder_bias"] = EventTermCfg(
+    mode="startup",
+    func=dr.encoder_bias,
+    params={
+      "asset_cfg": SceneEntityCfg("robot", joint_names=_WRIST_JOINTS),
+      "bias_range": _WRIST_BIAS_RANGE,
+    },
+  )
+  return cfg
+
+
+__all__ = [
+  "unitree_g1_flat_distillation_env_cfg",
+  "unitree_g1_table_tennis_distillation_env_cfg",
+]

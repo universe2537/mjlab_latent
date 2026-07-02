@@ -8,6 +8,12 @@ Upcoming version (not yet released)
 Added
 ^^^^^
 
+- Added a table-tennis low-level controller chain for G1: a
+  ``mjlab.scripts.table_pkl_to_npz`` converter for ``table_data`` pkl motions,
+  ``Mjlab-Tracking-TableTennis-Unitree-G1`` tracking teacher config, and
+  ``Mjlab-Distill-TableTennis-Unitree-G1`` distillation config. The new tasks
+  use local ``artifacts/table_tennis/*/motion.npz`` motions and keep existing
+  tennis task defaults unchanged.
 - Added ``Mjlab-Pingpong-Hit-Unitree-G1`` and
   ``Mjlab-Pingpong-Return-Unitree-G1`` table-tennis tasks for the
   racket-equipped G1. The v1 tasks use programmatic table, net, ball, and

@@ -2,20 +2,15 @@
 
 from __future__ import annotations
 
-from typing import Any
-
-import mujoco
-
 from mjlab.asset_zoo.robots import G1_W_RACKET_ACTION_SCALE
-from mjlab.asset_zoo.robots.unitree_g1_w_racket.g1_constants import (
-  FULL_COLLISION,
-  G1_ARTICULATION,
-  KNEES_BENT_KEYFRAME,
+from mjlab.asset_zoo.robots.unitree_g1_w_pingpong_paddle import (
+  PINGPONG_PADDLE_HANDLE_HALF_LENGTH,
+  PINGPONG_PADDLE_HANDLE_RADIUS,
+  PINGPONG_PADDLE_RADIUS,
+  PINGPONG_PADDLE_SCALE,
+  get_g1_w_pingpong_paddle_robot_cfg,
+  get_g1_w_pingpong_paddle_spec,
 )
-from mjlab.asset_zoo.robots.unitree_g1_w_racket.g1_constants import (
-  get_spec as get_g1_w_racket_spec,
-)
-from mjlab.entity import EntityCfg
 from mjlab.tasks.pingpong.pingpong_env_cfg import (
   add_pingpong_paddle_ball_contact_pair,
   make_pingpong_latent_cross_diag_env_cfg,
@@ -30,179 +25,6 @@ from mjlab.tasks.pingpong.scene import get_pingpong_ball_cfg, get_pingpong_table
 from mjlab.tasks.tennis.mdp import FrozenDecoderLatentJointPositionActionCfg
 
 DEFAULT_DECODER_CHECKPOINT = "logs/rsl_rl/g1_distillation/distill_cloud_unitree_racket_tennis_2026-05-12_09-35-14/model_30000.pt"
-PINGPONG_PADDLE_RADIUS = 0.065
-PINGPONG_PADDLE_HANDLE_RADIUS = 0.018
-PINGPONG_PADDLE_HANDLE_HALF_LENGTH = 0.09
-PINGPONG_PADDLE_HANDLE_GAP = 0.002
-PINGPONG_PADDLE_SCALE = PINGPONG_PADDLE_RADIUS / 0.12
-_TENNIS_RACKET_COLLISION_POS = (0.1025, -0.004, 0.4)
-
-
-def _iter_body_tree(body: mujoco.MjsBody):
-  yield body
-  for child in body.bodies:
-    yield from _iter_body_tree(child)
-
-
-def _find_geom(spec: mujoco.MjSpec, name: str) -> mujoco.MjsGeom:
-  for body in _iter_body_tree(spec.worldbody):
-    for geom in body.geoms:
-      if geom.name == name:
-        return geom
-  raise ValueError(f"Could not find geom {name!r} in G1 racket spec.")
-
-
-def _find_geom_with_body(
-  spec: mujoco.MjSpec, name: str
-) -> tuple[mujoco.MjsBody, mujoco.MjsGeom]:
-  for body in _iter_body_tree(spec.worldbody):
-    for geom in body.geoms:
-      if geom.name == name:
-        return body, geom
-  raise ValueError(f"Could not find geom {name!r} in G1 racket spec.")
-
-
-def _find_geoms_by_mesh(spec: mujoco.MjSpec, meshname: str) -> list[mujoco.MjsGeom]:
-  geoms = []
-  for body in _iter_body_tree(spec.worldbody):
-    for geom in body.geoms:
-      if geom.meshname == meshname:
-        geoms.append(geom)
-  if not geoms:
-    raise ValueError(f"Could not find geom using mesh {meshname!r}.")
-  return geoms
-
-
-def _find_mesh(spec: mujoco.MjSpec, name: str) -> mujoco.MjsMesh:
-  for mesh in spec.meshes:
-    if mesh.name == name:
-      return mesh
-  raise ValueError(f"Could not find mesh {name!r} in G1 racket spec.")
-
-
-def _find_site(spec: mujoco.MjSpec, name: str) -> mujoco.MjsSite:
-  for body in _iter_body_tree(spec.worldbody):
-    for site in body.sites:
-      if site.name == name:
-        return site
-  raise ValueError(f"Could not find site {name!r} in G1 racket spec.")
-
-
-def _scale_from_anchor(
-  pos: tuple[float, float, float],
-  anchor: tuple[float, float, float],
-  scale: float,
-) -> tuple[float, float, float]:
-  return (
-    anchor[0] + (pos[0] - anchor[0]) * scale,
-    anchor[1] + (pos[1] - anchor[1]) * scale,
-    anchor[2] + (pos[2] - anchor[2]) * scale,
-  )
-
-
-def _quat_to_matrix(q: Any) -> tuple[tuple[float, float, float], ...]:
-  w, x, y, z = (float(v) for v in q)
-  return (
-    (
-      1.0 - 2.0 * (y * y + z * z),
-      2.0 * (x * y - z * w),
-      2.0 * (x * z + y * w),
-    ),
-    (
-      2.0 * (x * y + z * w),
-      1.0 - 2.0 * (x * x + z * z),
-      2.0 * (y * z - x * w),
-    ),
-    (
-      2.0 * (x * z - y * w),
-      2.0 * (y * z + x * w),
-      1.0 - 2.0 * (x * x + y * y),
-    ),
-  )
-
-
-def _vec_add(
-  lhs: tuple[float, float, float], rhs: tuple[float, float, float]
-) -> tuple[float, float, float]:
-  return (lhs[0] + rhs[0], lhs[1] + rhs[1], lhs[2] + rhs[2])
-
-
-def _vec_scale(
-  vec: tuple[float, float, float], scale: float
-) -> tuple[float, float, float]:
-  return (vec[0] * scale, vec[1] * scale, vec[2] * scale)
-
-
-def get_g1_w_pingpong_paddle_spec() -> mujoco.MjSpec:
-  """Reuse the held-racket G1 XML with a smaller pingpong paddle."""
-  spec = get_g1_w_racket_spec()
-
-  visual_mesh = _find_mesh(spec, "tennis_racket")
-  visual_mesh.name = "pingpong_paddle_visual"
-  visual_mesh.scale[:] = tuple(v * PINGPONG_PADDLE_SCALE for v in visual_mesh.scale)
-
-  visual_geoms = _find_geoms_by_mesh(spec, "tennis_racket")
-  visual_anchor = (
-    float(visual_geoms[0].pos[0]),
-    float(visual_geoms[0].pos[1]),
-    float(visual_geoms[0].pos[2]),
-  )
-  for idx, geom in enumerate(visual_geoms):
-    geom.meshname = "pingpong_paddle_visual"
-    geom.name = (
-      "pingpong_paddle_visual" if idx == 0 else f"pingpong_paddle_visual_{idx}"
-    )
-
-  paddle_center = _scale_from_anchor(
-    _TENNIS_RACKET_COLLISION_POS,
-    visual_anchor,
-    PINGPONG_PADDLE_SCALE,
-  )
-  paddle_body, paddle = _find_geom_with_body(spec, "tennis_racket_collision")
-  paddle.name = "pingpong_paddle_collision"
-  paddle.size[0] = PINGPONG_PADDLE_RADIUS
-  paddle.size[1] = 0.004
-  paddle.pos[:] = paddle_center
-  paddle.rgba[:] = (0.85, 0.12, 0.06, 0.35)
-
-  paddle_rot = _quat_to_matrix(paddle.quat)
-  handle_dir = (
-    paddle_rot[0][1],
-    paddle_rot[1][1],
-    paddle_rot[2][1],
-  )
-  handle_start = _vec_add(
-    paddle_center,
-    _vec_scale(handle_dir, PINGPONG_PADDLE_RADIUS + PINGPONG_PADDLE_HANDLE_GAP),
-  )
-  handle_end = _vec_add(
-    handle_start,
-    _vec_scale(handle_dir, PINGPONG_PADDLE_HANDLE_HALF_LENGTH * 2.0),
-  )
-  handle = paddle_body.add_geom(
-    name="pingpong_paddle_handle_collision",
-    type=mujoco.mjtGeom.mjGEOM_CYLINDER,
-  )
-  handle.size[0] = PINGPONG_PADDLE_HANDLE_RADIUS
-  handle.fromto[:] = (*handle_start, *handle_end)
-  handle.group = 3
-  handle.rgba[:] = (1.0, 0.55, 0.02, 0.0)
-
-  center = _find_site(spec, "tennis_racket_center")
-  center.name = "pingpong_paddle_center"
-  center.pos[:] = paddle_center
-  center.size[0] = 0.01
-  return spec
-
-
-def get_g1_w_pingpong_paddle_robot_cfg() -> EntityCfg:
-  """Return a G1 robot cfg with a table-tennis paddle collision proxy."""
-  return EntityCfg(
-    init_state=KNEES_BENT_KEYFRAME,
-    collisions=(FULL_COLLISION,),
-    spec_fn=get_g1_w_pingpong_paddle_spec,
-    articulation=G1_ARTICULATION,
-  )
 
 
 def _apply_g1_pingpong_common(cfg, play: bool):
@@ -273,6 +95,8 @@ def unitree_g1_pingpong_latent_cross_strike_quality_energy_relax_env_cfg(
 
 __all__ = [
   "DEFAULT_DECODER_CHECKPOINT",
+  "PINGPONG_PADDLE_HANDLE_HALF_LENGTH",
+  "PINGPONG_PADDLE_HANDLE_RADIUS",
   "PINGPONG_PADDLE_RADIUS",
   "PINGPONG_PADDLE_SCALE",
   "get_g1_w_pingpong_paddle_robot_cfg",

@@ -91,6 +91,7 @@ def test_pingpong_task_scene_compiles() -> None:
     sensor_names = {model.sensor(i).name for i in range(model.nsensor)}
 
     assert "robot/pingpong_paddle_collision" in geom_names
+    assert "robot/pingpong_paddle_visual" in geom_names
     assert "robot/pingpong_paddle_handle_collision" in geom_names
     handle_id = geom_by_name["robot/pingpong_paddle_handle_collision"]
     assert int(model.geom_contype[handle_id]) == 1
@@ -150,11 +151,14 @@ def test_pingpong_paddle_scales_visual_and_collision() -> None:
     bodies.extend(body.bodies)
   assert "pingpong_paddle_visual" in geom_by_name
   assert geom_by_name["pingpong_paddle_visual"].meshname == "pingpong_paddle_visual"
+
   assert "pingpong_paddle_collision" in geom_by_name
   collision = geom_by_name["pingpong_paddle_collision"]
   assert abs(float(collision.size[0]) - PINGPONG_PADDLE_RADIUS) < 1.0e-6
   assert float(collision.pos[2]) < 0.4
+
   assert "pingpong_paddle_handle_collision" in geom_by_name
+  assert "pingpong_paddle_handle_visual" not in geom_by_name
   handle = geom_by_name["pingpong_paddle_handle_collision"]
   assert abs(float(handle.size[0]) - PINGPONG_PADDLE_HANDLE_RADIUS) < 1.0e-6
   assert int(handle.group) == 3
@@ -195,6 +199,14 @@ def test_pingpong_env_uses_frozen_decoder_action() -> None:
     load_rl_cfg("Mjlab-Distill-Flat-Unitree-G1"),
   )
   assert tuple(action.decoder_state_terms) == tuple(distill_cfg.state_terms)
+
+  table_distill_cfg = cast(
+    DistillationRunnerCfg,
+    load_rl_cfg("Mjlab-Distill-TableTennis-Unitree-G1"),
+  )
+  assert table_distill_cfg.teacher_task_id == "Mjlab-Tracking-TableTennis-Unitree-G1"
+  assert table_distill_cfg.teacher_checkpoint == ""
+  assert tuple(action.decoder_state_terms) == tuple(table_distill_cfg.state_terms)
 
 
 def test_pingpong_rl_configs_load() -> None:

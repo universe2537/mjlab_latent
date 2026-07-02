@@ -48,3 +48,17 @@ def unitree_g1_tracking_ppo_runner_cfg() -> RslRlOnPolicyRunnerCfg:
     num_steps_per_env=24,
     max_iterations=30_000,
   )
+
+
+def unitree_g1_table_tennis_tracking_ppo_runner_cfg() -> RslRlOnPolicyRunnerCfg:
+  """Create PPO runner config for G1 table-tennis motion tracking."""
+  cfg = unitree_g1_tracking_ppo_runner_cfg()
+  cfg.experiment_name = "g1_tracking_table_tennis"
+  cfg.run_name = "table_tennis_tracking_scratch"
+  return cfg
+
+
+__all__ = [
+  "unitree_g1_table_tennis_tracking_ppo_runner_cfg",
+  "unitree_g1_tracking_ppo_runner_cfg",
+]

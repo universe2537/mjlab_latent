@@ -16,6 +16,9 @@ from mjlab.asset_zoo.robots.unitree_g1_w_racket.g1_constants import (
 from mjlab.asset_zoo.robots.unitree_g1_w_racket.g1_constants import (
   get_g1_w_racket_robot_cfg as get_g1_w_racket_robot_cfg,
 )
+from mjlab.asset_zoo.robots.unitree_g1_w_pingpong_paddle import (
+  get_g1_w_pingpong_paddle_robot_cfg as get_g1_w_pingpong_paddle_robot_cfg,
+)
 from mjlab.asset_zoo.robots.unitree_go1.go1_constants import (
   GO1_ACTION_SCALE as GO1_ACTION_SCALE,
 )

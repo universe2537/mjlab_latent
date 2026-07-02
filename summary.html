@@ -47,6 +47,24 @@
     commands, failures, or next steps change.
   </p>
 
+  <h2>2026-07-02 Table-Tennis Low-Level Chain</h2>
+  <ul>
+    <li>
+      Added a local pkl-to-tracking converter:
+      <code>uv run -m mjlab.scripts.table_pkl_to_npz --input-dir table_data --output-dir artifacts/table_tennis --output-fps 50</code>.
+      It expects <code>root_pos</code>, <code>root_rot</code> in xyzw,
+      <code>dof_pos</code> with 29 G1 joints, and writes tracking-compatible
+      <code>motion.npz</code> files.
+    </li>
+    <li>
+      Registered <code>Mjlab-Tracking-TableTennis-Unitree-G1</code> and
+      <code>Mjlab-Distill-TableTennis-Unitree-G1</code>. The tracking task uses
+      local <code>artifacts/table_tennis/*/motion.npz</code> train motions,
+      excludes <code>test_001</code> and <code>zhengshou_002_badend</code> from
+      training, and reuses the shared G1 pingpong-paddle robot helper.
+    </li>
+  </ul>
+
   <h2>2026-07-02 Pingpong Paddle-Ball Contact Calibration</h2>
   <ul>
     <li>

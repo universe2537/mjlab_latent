@@ -4,12 +4,52 @@ from mjlab.asset_zoo.robots import (
   G1_W_RACKET_ACTION_SCALE,
   get_g1_w_racket_robot_cfg,
 )
+from mjlab.asset_zoo.robots.unitree_g1_w_pingpong_paddle import (
+  get_g1_w_pingpong_paddle_robot_cfg,
+)
 from mjlab.envs import ManagerBasedRlEnvCfg
 from mjlab.envs.mdp.actions import JointPositionActionCfg
 from mjlab.managers.observation_manager import ObservationGroupCfg
 from mjlab.sensor import ContactMatch, ContactSensorCfg
 from mjlab.tasks.tracking.mdp import MotionCommandCfg
 from mjlab.tasks.tracking.tracking_env_cfg import make_tracking_env_cfg
+
+G1_TRACKING_BODY_NAMES = (
+  "pelvis",
+  "left_hip_roll_link",
+  "left_knee_link",
+  "left_ankle_roll_link",
+  "right_hip_roll_link",
+  "right_knee_link",
+  "right_ankle_roll_link",
+  "torso_link",
+  "left_shoulder_roll_link",
+  "left_elbow_link",
+  "left_wrist_yaw_link",
+  "right_shoulder_roll_link",
+  "right_elbow_link",
+  "right_wrist_yaw_link",
+)
+
+TABLE_TENNIS_TRAIN_MOTION_NAMES = (
+  "fanshou_001",
+  "fanshou_a_001",
+  "fanshou_jingtai_001",
+  "fanshou_jingtai_a_001",
+  "mix_001",
+  "mix_002",
+  "mix_a_001",
+  "mix_a_002",
+  "zhengshou_a_001",
+  "zhengshou_a_002",
+  "zhengshou_jingtai_001",
+)
+TABLE_TENNIS_VALIDATION_MOTION_NAMES = ("test_001",)
+TABLE_TENNIS_DIAGNOSTIC_MOTION_NAMES = ("zhengshou_002_badend",)
+TABLE_TENNIS_TRAIN_MOTION_FILES = tuple(
+  f"./artifacts/table_tennis/{name}/motion.npz"
+  for name in TABLE_TENNIS_TRAIN_MOTION_NAMES
+)
 
 
 def unitree_g1_flat_tracking_env_cfg(
@@ -55,22 +95,7 @@ def unitree_g1_flat_tracking_env_cfg(
   )
   motion_cmd.anchor_body_name = "torso_link"
   # 顺序很重要：motion NPZ 张量必须使用相同的身体顺序。
-  motion_cmd.body_names = (
-    "pelvis",
-    "left_hip_roll_link",
-    "left_knee_link",
-    "left_ankle_roll_link",
-    "right_hip_roll_link",
-    "right_knee_link",
-    "right_ankle_roll_link",
-    "torso_link",
-    "left_shoulder_roll_link",
-    "left_elbow_link",
-    "left_wrist_yaw_link",
-    "right_shoulder_roll_link",
-    "right_elbow_link",
-    "right_wrist_yaw_link",
-  )
+  motion_cmd.body_names = G1_TRACKING_BODY_NAMES
 
   cfg.events["foot_friction"].params[
     "asset_cfg"
@@ -114,3 +139,33 @@ def unitree_g1_flat_tracking_env_cfg(
     motion_cmd.sampling_mode = "start"
 
   return cfg
+
+
+def unitree_g1_table_tennis_tracking_env_cfg(
+  has_state_estimation: bool = True,
+  play: bool = False,
+) -> ManagerBasedRlEnvCfg:
+  """Create G1 tracking config for table-tennis low-level motions."""
+  cfg = unitree_g1_flat_tracking_env_cfg(
+    has_state_estimation=has_state_estimation,
+    play=play,
+  )
+  cfg.scene.entities = {"robot": get_g1_w_pingpong_paddle_robot_cfg()}
+
+  motion_cmd = cfg.commands["motion"]
+  assert isinstance(motion_cmd, MotionCommandCfg)
+  motion_cmd.motion_source = "local"
+  motion_cmd.motion_files = TABLE_TENNIS_TRAIN_MOTION_FILES
+  motion_cmd.body_names = G1_TRACKING_BODY_NAMES
+  return cfg
+
+
+__all__ = [
+  "G1_TRACKING_BODY_NAMES",
+  "TABLE_TENNIS_DIAGNOSTIC_MOTION_NAMES",
+  "TABLE_TENNIS_TRAIN_MOTION_FILES",
+  "TABLE_TENNIS_TRAIN_MOTION_NAMES",
+  "TABLE_TENNIS_VALIDATION_MOTION_NAMES",
+  "unitree_g1_flat_tracking_env_cfg",
+  "unitree_g1_table_tennis_tracking_env_cfg",
+]

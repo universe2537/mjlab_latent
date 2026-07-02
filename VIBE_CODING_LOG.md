@@ -1,3 +1,32 @@
+## 2026-07-02 - Table-Tennis Low-Level Chain
+
+### 目标
+
+新增乒乓球 low-level 数据链路：table pkl 转 tracking motion、table-tennis
+tracking teacher task、table-tennis distillation task，同时保持 tennis 默认任务不变。
+
+### 实现记录
+
+- 新增 `uv run -m mjlab.scripts.table_pkl_to_npz`，读取 `table_data/*.bvh_wxy.pkl`
+  并输出 `artifacts/table_tennis/<motion>/motion.npz`。
+- 转换器按 `root_pos`、xyzw `root_rot`、29 维 `dof_pos`、`fps` 加载数据，
+  重采样到目标 fps，经当前 G1 pingpong-paddle MuJoCo 模型 replay 后保存
+  tracking 兼容字段。
+- 新增共享 `get_g1_w_pingpong_paddle_robot_cfg()` helper，供 Pingpong、
+  Tracking table-tennis 和 Distillation table-tennis 复用；当前保持缩放原
+  `tennis_racket` mesh 的模型路线，不使用单独 primitive 乒乓拍。
+- 注册 `Mjlab-Tracking-TableTennis-Unitree-G1` 和
+  `Mjlab-Distill-TableTennis-Unitree-G1`。tracking 训练 split 排除 `test_001`
+  和 `zhengshou_002_badend`；distill runner 指向 table-tennis tracking teacher
+  且默认要求通过 CLI 提供 teacher checkpoint。
+
+### 验证记录
+
+- `FORCE_CPU=1 UV_CACHE_DIR=/tmp/uv-cache MPLCONFIGDIR=/tmp/mplconfig uv run pytest tests/test_tracking_task.py tests/test_pingpong_task.py tests/test_table_pkl_to_npz.py -q`
+  通过。
+- `UV_CACHE_DIR=/tmp/uv-cache MPLCONFIGDIR=/tmp/mplconfig uv run ty check src/mjlab/scripts src/mjlab/tasks/tracking src/mjlab/tasks/distillation src/mjlab/asset_zoo/robots/unitree_g1_w_pingpong_paddle.py tests/test_tracking_task.py tests/test_table_pkl_to_npz.py`
+  通过。
+
 ## 2026-07-02 - Pingpong Paddle-Ball Contact 标定
 
 ### 目标

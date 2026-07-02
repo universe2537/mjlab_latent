@@ -49,7 +49,6 @@ def unitree_g1_distillation_runner_cfg() -> DistillationRunnerCfg:
       "command",
     ),
     action_loss_weight=1.0,
-
     # kl_loss_weight=1.0e-3,
     # kl_loss_weight_end=5.0e-3,
     # kl_loss_anneal_start=2500,
@@ -59,7 +58,6 @@ def unitree_g1_distillation_runner_cfg() -> DistillationRunnerCfg:
     buffer_capacity=1048576,
     batch_size=32768,
     updates_per_iteration=16,
-    
     teacher_action_prob=1.0,
     teacher_action_prob_end=0.2,
     teacher_action_prob_anneal_iters=15000,
@@ -68,3 +66,19 @@ def unitree_g1_distillation_runner_cfg() -> DistillationRunnerCfg:
     save_interval=250,
     upload_model=False,
   )
+
+
+def unitree_g1_table_tennis_distillation_runner_cfg() -> DistillationRunnerCfg:
+  """Create distillation config for the table-tennis low-level decoder."""
+  cfg = unitree_g1_distillation_runner_cfg()
+  cfg.experiment_name = "g1_distillation_table_tennis"
+  cfg.run_name = "table_tennis_distill_scratch"
+  cfg.teacher_task_id = "Mjlab-Tracking-TableTennis-Unitree-G1"
+  cfg.teacher_checkpoint = ""
+  return cfg
+
+
+__all__ = [
+  "unitree_g1_distillation_runner_cfg",
+  "unitree_g1_table_tennis_distillation_runner_cfg",
+]
