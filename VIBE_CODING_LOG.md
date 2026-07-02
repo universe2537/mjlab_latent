@@ -1,3 +1,57 @@
+## 2026-07-02 - Table-Tennis Tracking 18432-Env Relaunch
+
+### 目标
+
+按用户要求将 table-tennis tracking 训练环境数改为 `18*1024=18432`，重新训练。
+
+### 启动记录
+
+- 已停止旧 session `table_tennis_tracking_v1_gpu2_20260702`。
+- 新 tmux session: `table_tennis_tracking_v1_18432env_gpu2_20260702`
+- Task: `Mjlab-Tracking-TableTennis-Unitree-G1`
+- GPU: host GPU 2 exposed as `cuda:0`
+- Env count: `18432`
+- Run name: `table_tennis_tracking_v1_18432env_gpu2`
+- Output:
+  `logs/rsl_rl/g1_tracking_table_tennis/table_tennis_tracking_v1_18432env_gpu2_2026-07-02_17-39-35`
+- Command:
+  `CUDA_VISIBLE_DEVICES=2 UV_CACHE_DIR=/tmp/uv-cache MPLCONFIGDIR=/tmp/mplconfig uv run train Mjlab-Tracking-TableTennis-Unitree-G1 --env.scene.num-envs 18432 --gpu-ids "[0]" --agent.experiment-name g1_tracking_table_tennis --agent.run-name table_tennis_tracking_v1_18432env_gpu2`
+
+### 初始状态
+
+- Environment table confirmed `Number of environments | 18432`.
+- Training reached iteration `1/30000`; early speed after warmup was about
+  `190k steps/s`.
+- Initial terminations are still dominated by `ee_body_pos`, so this run should
+  be watched before selecting a teacher checkpoint.
+
+## 2026-07-02 - Table-Tennis Tracking Training Launch
+
+### 目标
+
+启动 table-tennis low-level tracking teacher 正式训练。
+
+### 启动记录
+
+- Tmux session: `table_tennis_tracking_v1_gpu2_20260702`
+- Task: `Mjlab-Tracking-TableTennis-Unitree-G1`
+- GPU: host GPU 2 exposed as `cuda:0`
+- Env count: `4096`
+- Run name: `table_tennis_tracking_v1_gpu2`
+- Output:
+  `logs/rsl_rl/g1_tracking_table_tennis/table_tennis_tracking_v1_gpu2_2026-07-02_17-34-02`
+- Command:
+  `CUDA_VISIBLE_DEVICES=2 UV_CACHE_DIR=/tmp/uv-cache MPLCONFIGDIR=/tmp/mplconfig uv run train Mjlab-Tracking-TableTennis-Unitree-G1 --env.scene.num-envs 4096 --gpu-ids "[0]" --agent.experiment-name g1_tracking_table_tennis --agent.run-name table_tennis_tracking_v1_gpu2`
+
+### 初始状态
+
+- Preflight confirmed 11 local training motions under `artifacts/table_tennis`,
+  with no missing paths.
+- Training reached iteration `48/30000` within the first minute. Initial
+  tracking errors are still high, with very short episode length and many
+  `ee_body_pos` terminations, so this should be watched before assuming the
+  teacher is healthy.
+
 ## 2026-07-02 - Table-Tennis Low-Level Chain
 
 ### 目标
@@ -25,6 +79,73 @@ tracking teacher task、table-tennis distillation task，同时保持 tennis 默
 - `FORCE_CPU=1 UV_CACHE_DIR=/tmp/uv-cache MPLCONFIGDIR=/tmp/mplconfig uv run pytest tests/test_tracking_task.py tests/test_pingpong_task.py tests/test_table_pkl_to_npz.py -q`
   通过。
 - `UV_CACHE_DIR=/tmp/uv-cache MPLCONFIGDIR=/tmp/mplconfig uv run ty check src/mjlab/scripts src/mjlab/tasks/tracking src/mjlab/tasks/distillation src/mjlab/asset_zoo/robots/unitree_g1_w_pingpong_paddle.py tests/test_tracking_task.py tests/test_table_pkl_to_npz.py`
+  通过。
+
+## 2026-07-02 - Revert Pingpong Primitive Paddle Geometry
+
+### 目标
+
+撤回把 G1 pingpong 持拍模型改成单独 primitive 乒乓拍的尝试，恢复到参考原
+tennis 持拍模型的缩放 mesh 路线。
+
+### 实现记录
+
+- `get_g1_w_pingpong_paddle_spec()` 恢复为缩放 `tennis_racket` visual mesh，
+  并继续使用 `pingpong_paddle_collision` 作为拍面碰撞 proxy。
+- 移除 primitive 版本中的 ellipsoid 拍面、独立可见 handle 和隐藏 tennis
+  mesh 语义；`pingpong_paddle_handle_collision` 仍是不计分的透明手柄碰撞体。
+- `tests/test_pingpong_task.py` 恢复为检查 scaled mesh 契约，并显式确认不存在
+  `pingpong_paddle_handle_visual`。
+- `docs/source/changelog.rst` 和 `summary.html` 移除了 primitive paddle 记录。
+
+### 验证记录
+
+- `FORCE_CPU=1 UV_CACHE_DIR=/tmp/uv-cache MPLCONFIGDIR=/tmp/mplconfig uv run pytest tests/test_pingpong_task.py tests/test_tracking_task.py -q`
+  通过：21 passed。
+- `UV_CACHE_DIR=/tmp/uv-cache MPLCONFIGDIR=/tmp/mplconfig uv run ty check src/mjlab/asset_zoo/robots/unitree_g1_w_pingpong_paddle.py src/mjlab/tasks/pingpong/config/g1/env_cfgs.py tests/test_pingpong_task.py`
+  通过。
+- 对比脚本确认 pingpong helper 重新显示 `pingpong_paddle_visual` mesh，并只保留
+  `pingpong_paddle_collision` 与 `pingpong_paddle_handle_collision` 两个 paddle
+  collision proxy。
+
+## 2026-07-02 - Pingpong Cross Reward Simplification
+
+### 目标
+
+把 Pingpong Cross reward 从 strike/pred/impact 多项 shaping 收敛为用户确认的
+最小结构：预击球、后击球、真实 sparse success 和基础保护。
+
+### 计划
+
+- [x] 用预测击球点替换 Cross 中追当前球的预击球 reward。
+- [x] 让后击球 `x_progress` 和 `velocity_direction` 使用相同权重和横向 gate。
+- [x] 从 Cross-StrikeQuality/Impact reward 中移除 pred landing/net 和 impact
+  paddle shaping，保留这些信息为 metrics。
+- [x] 放松动作变化正则，避免过早压制击球加速。
+
+### 实现记录
+
+- Cross 系列移除 `approach_ball` 和 `paddle_towards_ball`，新增
+  `hit_point=10`，通过 `paddle_to_predicted_hit_point_dense` 奖励球拍中心靠近
+  `ball_predicted_edge_hit_point_b` 给出的 post-bounce 击球点。
+- `post_hit_x_progress` 和 `post_hit_ball_velocity_direction` 都设为 `120`，都使用
+  `lateral_speed_std=0.8` 抑制横飞出界的回球。`x_progress` 仍保留较强权重，但
+  不再单独奖励大横向速度。
+- `strike_outgoing_ball_velocity`、`strike_pred_net_clearance`、
+  `strike_pred_landing_inside`、`strike_post_hit_speed`、
+  `impact_paddle_to_target_velocity`、`impact_paddle_normal_alignment`、
+  `impact_paddle_normal_velocity`、`impact_contact_centering` 和
+  `followthrough_velocity` 不再作为 Cross/Impact reward。Impact task 继续保留
+  impact-window metrics 作为诊断。
+- `paddle_hit_event` 调整为 `40`，`opponent_table_bounce_event` 调整为 `1200`。
+  Cross loose regularization 调整为 `latent_action_rate_l2=-0.0025`、
+  `low_level_action_rate_l2=0.0`，其余保护项保持不变。
+
+### 验证记录
+
+- `UV_CACHE_DIR=/tmp/uv-cache FORCE_CPU=1 uv run pytest tests/test_pingpong_task.py tests/test_pingpong_state.py -q`
+  通过：20 passed。
+- `UV_CACHE_DIR=/tmp/uv-cache uv run ty check src/mjlab/tasks/pingpong tests/test_pingpong_task.py tests/test_pingpong_state.py`
   通过。
 
 ## 2026-07-02 - Pingpong Paddle-Ball Contact 标定
@@ -55,12 +176,13 @@ tracking teacher task、table-tennis distillation task，同时保持 tennis 默
 - Extended/focused sweep 输出：
   `contact_test/results/2026-07-02_14-28-35` 和
   `contact_test/results/2026-07-02_14-31-04`。当前 baseline 中位 `e_n` 约 `0.158`；
-  最终写回候选为 `solref=(0.011, 0.40)`、`margin=0.0175`、
-  `friction=(0.08, 0.002, 0.0001)`、`solimp=(0.93, 0.98, 0.001)`。
+  写回候选为 `solref=(0.011, 0.40)`、`friction=(0.08, 0.002, 0.0001)`、
+  `solimp=(0.93, 0.98, 0.001)`，margin 后续按提前接触风险折中为 `0.010`。
 - Focused best row：`2/3/5/8m/s` 的 `e_n` 中位约
   `0.555/0.609/0.490/0.474`，`5m/s` 最大穿透约 `4.687mm`，`8m/s` 全相位分离。
-  注意：`margin=0.0175` 较大，这是当前 `timestep=0.005s` 下同时压住高速穿透和
-  避免 8m/s 粘住的代价；若视频显示提前接触过强，下一步应在降低 margin 与更小
+  注意：满足该严格稳定行需要较大 margin。主配置改用 `margin=0.010` 以减轻提前
+  接触；该折中预计会保留中等回弹，但不再满足 `5m/s` 穿透和 `8m/s` 全相位分离的
+  严格标定标准。若视频仍显示提前接触过强，下一步应在继续降低 margin 与更小
   physics timestep 之间权衡。
 - 主配置新增 `add_pingpong_paddle_ball_contact_pair()`，只通过 G1 pingpong
   `_apply_g1_pingpong_common()` 的 `cfg.scene.spec_fn` 注入；tennis/tracking/distillation
@@ -583,3 +705,48 @@ paddle 可以碰到约一半来球，但过网、对方落台和合法回球均�
 `hit/post_vx_toward_opponent_ratio`、`hit/pred_net_clearance` 和
 `hit/pred_landing_inside_opponent_table` 仍长期为 0，再比较 strike-quality reward
 与 hit-window energy-relax ablation。
+
+## 2026-07-02 17:30 - Pingpong Cross hit-recovery restart
+
+### 目标
+
+针对 `pingpong_cross_impact_collision_update_15360...` 训练中
+`paddle_hit_count` 下降、`robot_ball_contact_count` 和
+`fault_reason/body_ball` 上升的问题，先把训练目标重新拉回合法拍面命中。
+
+### 参数调整
+
+- `paddle_hit_event.weight`: `40.0 -> 200.0`
+- `CROSS_ROBOT_BALL_CONTACT_WEIGHT`: `-25.0 -> -75.0`
+- `CROSS_POST_HIT_X_PROGRESS_WEIGHT`: `120.0 -> 60.0`
+- `Mjlab-Pingpong-Cross-Impact-Unitree-G1` PPO:
+  `entropy_coef=0.001`, `reset_actor_std=0.6`
+
+### 运行处理
+
+- 已停止旧 tmux：
+  `pingpong_cross_impact_collision_update_15360_20260702_144131`
+- 用户确认不要从旧 impact ckpt 接训；新 run 直接从 Hit 最好 ckpt warm start：
+  `/data0/universe/home_moved/mjlab_latent/logs/rsl_rl/g1_pingpong_latent_hit/v3_collision_2026-06-24_15-53-52/model_4500.pt`
+- 新 tmux：
+  `pingpong_cross_impact_from_hit_15360_20260702_172724`
+- 新 run：
+  `/data0/universe/home_moved/mjlab_latent/logs/rsl_rl/g1_pingpong_latent_cross_impact/pingpong_cross_impact_from_hit_15360pergpu_gpu4_7_20260702_172724_2026-07-02_17-28-34`
+- Launch record：
+  `/data0/universe/home_moved/mjlab_latent/logs/rsl_rl/_codex_launch_records/pingpong_cross_impact_from_hit_15360_20260702_172724/COMMAND.md`
+- GPU: `CUDA_VISIBLE_DEVICES=4,5,6,7`, `15360` env per visible GPU,
+  `max_iterations=2000`, `reset_resume_progress=True`
+
+### 验证
+
+- `UV_CACHE_DIR=/tmp/uv-cache FORCE_CPU=1 uv run pytest tests/test_pingpong_task.py -q`
+- `UV_CACHE_DIR=/tmp/uv-cache uv run ruff check src/mjlab/tasks/pingpong/pingpong_env_cfg.py src/mjlab/tasks/pingpong/config/g1/rl_cfg.py tests/test_pingpong_task.py`
+- `UV_CACHE_DIR=/tmp/uv-cache uv run ty check src/mjlab/tasks/pingpong/pingpong_env_cfg.py src/mjlab/tasks/pingpong/config/g1/rl_cfg.py tests/test_pingpong_task.py`
+- Resolved agent config confirms `load_checkpoint_file=model_4500.pt`,
+  `entropy_coef=0.001`, `reset_actor_std=0.6`.
+
+### 观察重点
+
+先看 `paddle_hit_count` 是否回升，同时 `robot_ball_contact_count` /
+`fault_reason/body_ball` 是否下降；若 hit 回升但 `legal_return_count` 长期不动，
+再恢复或重做更直接的 impact-window paddle behavior rewards。

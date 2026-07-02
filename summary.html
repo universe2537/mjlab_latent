@@ -47,6 +47,25 @@
     commands, failures, or next steps change.
   </p>
 
+  <h2>2026-07-02 Table-Tennis Tracking Training</h2>
+  <ul>
+    <li>
+      Active tmux session is now
+      <code>table_tennis_tracking_v1_18432env_gpu2_20260702</code>. The previous
+      <code>4096</code>-env session was stopped and relaunched with
+      <code>18432</code> envs on host GPU 2 (<code>CUDA_VISIBLE_DEVICES=2</code>).
+      Output:
+      <code>logs/rsl_rl/g1_tracking_table_tennis/table_tennis_tracking_v1_18432env_gpu2_2026-07-02_17-39-35</code>.
+    </li>
+    <li>
+      Launch command:
+      <code>CUDA_VISIBLE_DEVICES=2 UV_CACHE_DIR=/tmp/uv-cache MPLCONFIGDIR=/tmp/mplconfig uv run train Mjlab-Tracking-TableTennis-Unitree-G1 --env.scene.num-envs 18432 --gpu-ids "[0]" --agent.experiment-name g1_tracking_table_tennis --agent.run-name table_tennis_tracking_v1_18432env_gpu2</code>.
+      First check reached iteration <code>1/30000</code> at about
+      <code>190k steps/s</code>; early terminations are dominated by
+      <code>ee_body_pos</code>, so monitor before selecting a teacher checkpoint.
+    </li>
+  </ul>
+
   <h2>2026-07-02 Table-Tennis Low-Level Chain</h2>
   <ul>
     <li>
@@ -62,6 +81,20 @@
       local <code>artifacts/table_tennis/*/motion.npz</code> train motions,
       excludes <code>test_001</code> and <code>zhengshou_002_badend</code> from
       training, and reuses the shared G1 pingpong-paddle robot helper.
+    </li>
+  </ul>
+
+  <h2>2026-07-02 Pingpong Primitive Paddle Reverted</h2>
+  <ul>
+    <li>
+      The separate primitive pingpong paddle experiment was reverted. Current
+      G1 pingpong/table-tennis helper behavior is back to the reference-style
+      wrapper: scale and rename the original <code>tennis_racket</code> visual
+      mesh to <code>pingpong_paddle_visual</code>, use
+      <code>pingpong_paddle_collision</code> as the paddle-face collision proxy,
+      and keep <code>pingpong_paddle_handle_collision</code> as a transparent
+      non-scoring handle collision. There should be no
+      <code>pingpong_paddle_handle_visual</code>.
     </li>
   </ul>
 
@@ -94,16 +127,17 @@
       <code>(0.08, 0.002, 0.0001)</code>,
       <code>solref=(0.011, 0.40)</code>,
       <code>solimp=(0.93, 0.98, 0.001)</code>, and
-      <code>margin=0.0175</code>.
+      <code>margin=0.010</code>.
     </li>
     <li>
-      Focused selected row metrics:
+      Focused strict-stability row metrics at larger margin:
       <code>e_n</code> medians for <code>2/3/5/8m/s</code> are about
       <code>0.555/0.609/0.490/0.474</code>, <code>5m/s</code> max penetration
       is about <code>4.687mm</code>, and <code>8m/s</code> separates in all
-      sampled contact phases. The margin is intentionally large because the
-      current physics timestep is <code>0.005s</code>; if videos show premature
-      paddle hits, revisit margin versus timestep.
+      sampled contact phases. The main config uses a smaller <code>10mm</code>
+      margin as an early-contact compromise, so it should preserve medium
+      rebound but no longer claims the strict high-speed penetration criterion.
+      If videos show premature paddle hits, revisit margin versus timestep.
     </li>
   </ul>
 
@@ -111,10 +145,11 @@
   <ul>
     <li>
       New ablation task:
-      <code>Mjlab-Pingpong-Cross-Impact-Unitree-G1</code>. It inherits the
-      Cross loose regularization and StrikeQuality post-hit rewards, then adds
-      impact-window paddle behavior rewards so the policy is guided before and
-      around legal contact instead of only by post-hit ball behavior.
+      <code>Mjlab-Pingpong-Cross-Impact-Unitree-G1</code>. It originally added
+      impact-window paddle behavior rewards, but on 2026-07-02 the Cross family
+      reward was simplified: StrikeQuality/Impact no longer add pred or impact
+      shaping rewards, and Impact now keeps the impact-window terms as metrics
+      only.
     </li>
     <li>
       <code>PingpongRallyState</code> now caches impact-window paddle center,
@@ -126,13 +161,24 @@
       imperfect.
     </li>
     <li>
-      New reward weights for the Impact task:
-      <code>impact_paddle_to_target_velocity=15</code>,
-      <code>impact_paddle_normal_alignment=8</code>,
-      <code>impact_paddle_normal_velocity=8</code>,
-      <code>impact_contact_centering=5</code>, and
-      <code>followthrough_velocity=5</code>. Old Cross and StrikeQuality reward
-      keys remain unchanged.
+      Current simplified Cross reward structure is:
+      <code>self_table_bounce_event=5</code>, <code>hit_point=10</code>,
+      <code>paddle_hit_event=40</code>, <code>post_hit_x_progress=120</code>,
+      <code>post_hit_ball_velocity_direction=120</code>,
+      <code>crossed_net_event=500</code>, and
+      <code>opponent_table_bounce_event=1200</code>, plus protection terms.
+      The two post-hit dense terms share <code>lateral_speed_std=0.8</code> so
+      sideways returns are not rewarded as strongly.
+    </li>
+    <li>
+      Cross no longer uses <code>approach_ball</code>,
+      <code>paddle_towards_ball</code>,
+      <code>strike_pred_net_clearance</code>,
+      <code>strike_pred_landing_inside</code>,
+      <code>strike_outgoing_ball_velocity</code>,
+      <code>strike_post_hit_speed</code>, or the <code>impact_*</code> rewards.
+      Predicted landing/net and impact-window values remain useful diagnostics
+      through metrics.
     </li>
     <li>
       New Impact metrics include <code>impact/window_active</code>,
@@ -901,6 +947,35 @@
       <code>paddle_towards_ball.weight=2.0</code>. The body-ball penalty is
       <code>-50.0</code>, about one order larger than table contact, and no
       separate <code>robot_ball_contact_count</code> metric was added.
+    </li>
+  </ul>
+
+  <h2>Pingpong Cross Impact Relaunch</h2>
+  <ul>
+    <li>
+      On 2026-07-02, the active
+      <code>pingpong_cross_impact_collision_update_15360...</code> run showed
+      falling <code>paddle_hit_count</code> and rising body-ball faults. It was
+      stopped and preserved.
+    </li>
+    <li>
+      The follow-up run intentionally starts from the Hit checkpoint, not from
+      the previous Impact checkpoint:
+      <code>/data0/universe/home_moved/mjlab_latent/logs/rsl_rl/g1_pingpong_latent_hit/v3_collision_2026-06-24_15-53-52/model_4500.pt</code>.
+    </li>
+    <li>
+      Hit-recovery parameters are:
+      <code>paddle_hit_event.weight=200.0</code>,
+      <code>robot_ball_contact.weight=-75.0</code>,
+      <code>post_hit_x_progress.weight=60.0</code>,
+      Impact PPO <code>entropy_coef=0.001</code>, and
+      <code>reset_actor_std=0.6</code>.
+    </li>
+    <li>
+      Active tmux:
+      <code>pingpong_cross_impact_from_hit_15360_20260702_172724</code>.
+      Run dir:
+      <code>/data0/universe/home_moved/mjlab_latent/logs/rsl_rl/g1_pingpong_latent_cross_impact/pingpong_cross_impact_from_hit_15360pergpu_gpu4_7_20260702_172724_2026-07-02_17-28-34</code>.
     </li>
   </ul>
 

@@ -25,7 +25,9 @@ from mjlab.tasks.pingpong.pingpong_env_cfg import (
   ACTION_REGULARIZATION_CURRICULUM_STAGE_WEIGHTS,
   BALL_TARGET_X_RANGE,
   BALL_TARGET_Y_RANGE,
+  CROSS_HIT_POINT_WEIGHT,
   CROSS_IMPACT_REWARD_WEIGHTS,
+  CROSS_LAND_OPPONENT_WEIGHT,
   CROSS_LOOSE_REGULARIZATION_WEIGHTS,
   CROSS_POST_HIT_BALL_VELOCITY_DIRECTION_WEIGHT,
   CROSS_POST_HIT_X_PROGRESS_WEIGHT,
@@ -260,9 +262,9 @@ def test_pingpong_rl_configs_load() -> None:
   )
   assert impact_rl_cfg.experiment_name == "g1_pingpong_latent_cross_impact"
   assert impact_rl_cfg.run_name == "pingpong_cross_impact_from_hit"
-  assert impact_rl_cfg.algorithm.entropy_coef == 0.002
+  assert impact_rl_cfg.algorithm.entropy_coef == 0.001
   assert impact_rl_cfg.clip_actions == 2.5
-  assert impact_rl_cfg.reset_actor_std == 0.8
+  assert impact_rl_cfg.reset_actor_std == 0.6
   assert impact_rl_cfg.load_checkpoint_file == (DEFAULT_CROSS_RESUME_CHECKPOINT or None)
 
   energy_cfg = cast(
@@ -342,15 +344,28 @@ def test_pingpong_hit_and_cross_success_terms() -> None:
   assert "crossed_net_event" in cross_cfg.rewards
   assert cross_cfg.rewards["crossed_net_event"].weight == 500.0
   assert "opponent_table_bounce_event" in cross_cfg.rewards
-  assert cross_cfg.rewards["opponent_table_bounce_event"].weight == 1000.0
+  assert (
+    cross_cfg.rewards["opponent_table_bounce_event"].weight
+    == CROSS_LAND_OPPONENT_WEIGHT
+  )
+  assert "hit_point" in cross_cfg.rewards
+  assert cross_cfg.rewards["hit_point"].weight == CROSS_HIT_POINT_WEIGHT
+  assert cross_cfg.rewards["hit_point"].func.__name__ == (
+    "paddle_to_predicted_hit_point_dense"
+  )
   assert "post_hit_x_progress" in cross_cfg.rewards
   assert (
     cross_cfg.rewards["post_hit_x_progress"].weight == CROSS_POST_HIT_X_PROGRESS_WEIGHT
   )
+  assert cross_cfg.rewards["post_hit_x_progress"].params["lateral_speed_std"] == 0.8
   assert "post_hit_ball_velocity_direction" in cross_cfg.rewards
   assert (
     cross_cfg.rewards["post_hit_ball_velocity_direction"].weight
     == CROSS_POST_HIT_BALL_VELOCITY_DIRECTION_WEIGHT
+  )
+  assert (
+    cross_cfg.rewards["post_hit_ball_velocity_direction"].weight
+    > cross_cfg.rewards["post_hit_x_progress"].weight
   )
   assert "robot_table_contact" in cross_cfg.rewards
   assert "robot_ball_contact" in cross_cfg.rewards
@@ -378,9 +393,9 @@ def test_pingpong_hit_and_cross_success_terms() -> None:
   assert "robot_table_contact" not in cross_cfg.terminations
   assert cross_cfg.terminations["bad_orientation"].params["limit_angle"] < 1.0
   assert cross_cfg.terminations["root_height"].params["minimum_height"] == 0.55
-  assert cross_cfg.rewards["approach_ball"].weight == 5.0
-  assert cross_cfg.rewards["paddle_towards_ball"].weight == 2.0
-  assert cross_cfg.rewards["paddle_hit_event"].weight == 25.0
+  assert "approach_ball" not in cross_cfg.rewards
+  assert "paddle_towards_ball" not in cross_cfg.rewards
+  assert cross_cfg.rewards["paddle_hit_event"].weight == 200.0
   assert cross_cfg.curriculum["ball_target_region"].params["success_term_name"] == (
     "legal_return_success"
   )
@@ -395,6 +410,10 @@ def test_pingpong_hit_and_cross_success_terms() -> None:
     assert strike_cfg.rewards[reward_name].weight == reward_weight
   for reward_name, loose_weight in CROSS_LOOSE_REGULARIZATION_WEIGHTS.items():
     assert strike_cfg.rewards[reward_name].weight == loose_weight
+  assert "strike_outgoing_ball_velocity" not in strike_cfg.rewards
+  assert "strike_pred_net_clearance" not in strike_cfg.rewards
+  assert "strike_pred_landing_inside" not in strike_cfg.rewards
+  assert "strike_post_hit_speed" not in strike_cfg.rewards
   assert "impact_paddle_to_target_velocity" not in strike_cfg.rewards
   assert "impact/velocity_to_target" not in strike_cfg.metrics
 
@@ -403,12 +422,11 @@ def test_pingpong_hit_and_cross_success_terms() -> None:
     assert impact_cfg.rewards[reward_name].weight == reward_weight
   for reward_name, reward_weight in CROSS_IMPACT_REWARD_WEIGHTS.items():
     assert impact_cfg.rewards[reward_name].weight == reward_weight
-  assert impact_cfg.rewards["impact_paddle_to_target_velocity"].func.__name__ == (
-    "impact_paddle_to_target_velocity"
-  )
-  assert impact_cfg.rewards["followthrough_velocity"].func.__name__ == (
-    "followthrough_velocity"
-  )
+  assert "impact_paddle_to_target_velocity" not in impact_cfg.rewards
+  assert "impact_paddle_normal_alignment" not in impact_cfg.rewards
+  assert "impact_paddle_normal_velocity" not in impact_cfg.rewards
+  assert "impact_contact_centering" not in impact_cfg.rewards
+  assert "followthrough_velocity" not in impact_cfg.rewards
   assert "impact/window_active" in impact_cfg.metrics
   assert impact_cfg.metrics["impact/window_active"].reduce == "mean"
   assert "impact/window_count" in impact_cfg.metrics
@@ -433,9 +451,9 @@ def test_pingpong_state_backed_rewards_accept_shared_state_params() -> None:
   cfg = load_env_cfg("Mjlab-Pingpong-Cross-Impact-Unitree-G1")
 
   for reward_name in (
-    "approach_ball",
-    "paddle_towards_ball",
-    "impact_paddle_to_target_velocity",
+    "hit_point",
+    "post_hit_x_progress",
+    "post_hit_ball_velocity_direction",
   ):
     reward = cfg.rewards[reward_name]
     signature = inspect.signature(reward.func.__call__)

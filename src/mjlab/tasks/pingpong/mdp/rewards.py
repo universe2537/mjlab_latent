@@ -10,9 +10,11 @@ from mjlab.entity import Entity
 from mjlab.envs.mdp.rewards import action_rate_l2
 from mjlab.managers.reward_manager import RewardTermCfg
 from mjlab.managers.scene_entity_config import SceneEntityCfg
+from mjlab.tasks.pingpong.mdp.observations import ball_predicted_edge_hit_point_b
 from mjlab.tasks.pingpong.mdp.state import PingpongRallyStateTerm
 from mjlab.tasks.tennis.mdp.observations import racket_to_ball_b, racket_velocity_b
 from mjlab.tasks.tennis.mdp.rewards import low_level_action_rate_l2
+from mjlab.utils.lab_api.math import quat_apply_inverse
 
 if TYPE_CHECKING:
   from mjlab.envs import ManagerBasedRlEnv
@@ -203,6 +205,43 @@ class paddle_towards_ball_velocity(PingpongRallyStateTerm):
     return reward * active.float()
 
 
+class paddle_to_predicted_hit_point_dense(PingpongRallyStateTerm):
+  """Reward keeping the paddle near the predicted post-bounce hit point."""
+
+  def __init__(self, cfg: RewardTermCfg, env: ManagerBasedRlEnv):
+    super().__init__(cfg, env)
+
+  def __call__(
+    self,
+    env: ManagerBasedRlEnv,
+    paddle_sensor_name: str,
+    net_sensor_name: str,
+    std: float,
+    paddle_cfg: SceneEntityCfg = _PADDLE_CFG,
+    ball_cfg: SceneEntityCfg = _BALL_CFG,
+    robot_cfg: SceneEntityCfg = _ROBOT_CFG,
+    paddle_geom_cfg: SceneEntityCfg | None = None,
+    body_ball_sensor_name: str | None = None,
+    **params,
+  ) -> torch.Tensor:
+    del paddle_sensor_name, net_sensor_name, paddle_geom_cfg, body_ball_sensor_name
+    del params
+    state = self.state
+    robot: Entity = env.scene[robot_cfg.name]
+    paddle_pos_w = robot.data.site_pos_w[:, paddle_cfg.site_ids].squeeze(1)
+    paddle_delta_w = paddle_pos_w - robot.data.root_link_pos_w
+    paddle_pos_b = quat_apply_inverse(robot.data.root_link_quat_w, paddle_delta_w)
+    hit_point_b = ball_predicted_edge_hit_point_b(
+      env,
+      ball_cfg=ball_cfg,
+      robot_cfg=robot_cfg,
+    )[:, :3]
+    error = torch.sum(torch.square(paddle_pos_b - hit_point_b), dim=-1)
+    reward = torch.exp(-error / std**2)
+    active = state.has_self_bounce & ~state.has_paddle_hit
+    return reward * active.float()
+
+
 class self_table_bounce_event(PingpongRallyStateTerm):
   """Sparse reward when the incoming feed legally bounces on the robot side."""
 
@@ -238,15 +277,18 @@ class post_hit_x_progress(PingpongRallyStateTerm):
     net_sensor_name: str,
     ball_cfg: SceneEntityCfg = _BALL_CFG,
     max_progress: float = 0.04,
+    lateral_speed_std: float = 0.8,
     **params,
   ) -> torch.Tensor:
     del paddle_sensor_name, net_sensor_name, params
     state = self.state
     ball: Entity = env.scene[ball_cfg.name]
     ball_x = ball.data.root_link_pos_w[:, 0] - env.scene.env_origins[:, 0]
+    ball_vel = ball.data.root_link_lin_vel_w
     progress = torch.clamp(state.prev_ball_x - ball_x, min=0.0, max=max_progress)
+    lateral_weight = torch.exp(-(ball_vel[:, 1] ** 2) / lateral_speed_std**2)
     active = state.has_paddle_hit & ~state.has_crossed_net & (ball_x > state.net_x)
-    return (progress / max_progress) * active.float()
+    return (progress / max_progress) * lateral_weight * active.float()
 
 
 class post_hit_ball_velocity_direction(PingpongRallyStateTerm):
@@ -272,7 +314,9 @@ class post_hit_ball_velocity_direction(PingpongRallyStateTerm):
     ball_vel = ball.data.root_link_lin_vel_w
     x_reward = torch.clamp(-ball_vel[:, 0] / x_speed_scale, min=0.0, max=1.0)
     lateral_weight = torch.exp(-(ball_vel[:, 1] ** 2) / lateral_speed_std**2)
-    active = state.has_paddle_hit & ~state.has_crossed_net & (ball_pos[:, 0] > 0.0)
+    active = (
+      state.has_paddle_hit & ~state.has_crossed_net & (ball_pos[:, 0] > state.net_x)
+    )
     return x_reward * lateral_weight * active.float()
 
 
@@ -511,6 +555,7 @@ __all__ = [
   "opponent_table_bounce_event",
   "paddle_hit_event",
   "paddle_to_ball_after_bounce_dense",
+  "paddle_to_predicted_hit_point_dense",
   "paddle_towards_ball_velocity",
   "post_hit_ball_velocity_direction",
   "post_hit_x_progress",

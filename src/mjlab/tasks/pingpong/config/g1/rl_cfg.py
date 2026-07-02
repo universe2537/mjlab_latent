@@ -99,6 +99,8 @@ def unitree_g1_pingpong_cross_impact_ppo_runner_cfg() -> TennisLatentOnPolicyRun
   cfg = unitree_g1_pingpong_cross_strike_quality_ppo_runner_cfg()
   cfg.experiment_name = "g1_pingpong_latent_cross_impact"
   cfg.run_name = "pingpong_cross_impact_from_hit"
+  cfg.algorithm.entropy_coef = 0.001
+  cfg.reset_actor_std = 0.6
   return cfg
 
 

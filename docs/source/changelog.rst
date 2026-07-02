@@ -99,12 +99,18 @@ Added
 Changed
 ^^^^^^^
 
+- Simplified Pingpong Cross reward shaping around the current return plan.
+  Cross now uses a predicted hit-point pre-hit reward, matched post-hit
+  ``x_progress`` and current-velocity direction rewards with the same lateral
+  speed gate, real sparse over-net/opponent-table success rewards, and the
+  existing protection penalties. Predicted net/landing and impact-window terms
+  remain as diagnostics but are no longer active reward terms.
 - Calibrated Pingpong paddle-ball contact with local ``contact_test`` sweeps
   and added a pingpong-only explicit contact pair between
   ``ball/pingpong_ball`` and ``robot/pingpong_paddle_collision``. The pair uses
   ``condim=3``, friction ``(0.08, 0.002, 0.0001)``,
   ``solref=(0.011, 0.40)``, ``solimp=(0.93, 0.98, 0.001)``, and
-  ``margin=0.0175``; shared tennis/tracking/distillation racket assets are
+  ``margin=0.010``; shared tennis/tracking/distillation racket assets are
   unchanged.
 - Added a success-rate-gated Pingpong Hit regularization curriculum: after the
   existing serve-target curriculum reaches its final stage, Hit progressively

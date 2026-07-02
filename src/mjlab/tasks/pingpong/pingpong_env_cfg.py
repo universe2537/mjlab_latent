@@ -54,7 +54,7 @@ PADDLE_BALL_PAIR_CONDIM = 3
 PADDLE_BALL_PAIR_FRICTION = (0.08, 0.002, 0.0001)
 PADDLE_BALL_PAIR_SOLREF = (0.011, 0.40)
 PADDLE_BALL_PAIR_SOLIMP = (0.93, 0.98, 0.001, 0.5, 2.0)
-PADDLE_BALL_PAIR_MARGIN = 0.0175
+PADDLE_BALL_PAIR_MARGIN = 0.010
 _PADDLE_BALL_PAIR_FRICTION_FULL = PADDLE_BALL_PAIR_FRICTION + (0.0001, 0.0001)
 
 ROBOT_RESET_X_RANGE = (TABLE_HALF_LENGTH + 0.36, TABLE_HALF_LENGTH + 0.58)
@@ -103,29 +103,20 @@ ACTION_REGULARIZATION_CURRICULUM_STAGE_WEIGHTS = (
   },
 )
 CROSS_LOOSE_REGULARIZATION_WEIGHTS = {
-  "latent_action_rate_l2": -0.005,
-  "low_level_action_rate_l2": -0.01,
+  "latent_action_rate_l2": -0.0025,
+  "low_level_action_rate_l2": 0.0,
   "joint_torques_l2": -2.0e-5,
   "joint_acc_l2": -1.0e-6,
   "fall_penalty": -300.0,
   "flat_orientation_l2": -0.5,
 }
-CROSS_ROBOT_BALL_CONTACT_WEIGHT = -25.0
-CROSS_POST_HIT_X_PROGRESS_WEIGHT = 80.0
-CROSS_POST_HIT_BALL_VELOCITY_DIRECTION_WEIGHT = 60.0
-CROSS_STRIKE_QUALITY_REWARD_WEIGHTS = {
-  "strike_outgoing_ball_velocity": 20.0,
-  "strike_pred_net_clearance": 15.0,
-  "strike_pred_landing_inside": 25.0,
-  "strike_post_hit_speed": 5.0,
-}
-CROSS_IMPACT_REWARD_WEIGHTS = {
-  "impact_paddle_to_target_velocity": 15.0,
-  "impact_paddle_normal_alignment": 8.0,
-  "impact_paddle_normal_velocity": 8.0,
-  "impact_contact_centering": 5.0,
-  "followthrough_velocity": 5.0,
-}
+CROSS_HIT_POINT_WEIGHT = 10.0
+CROSS_ROBOT_BALL_CONTACT_WEIGHT = -75.0
+CROSS_POST_HIT_X_PROGRESS_WEIGHT = 60.0
+CROSS_POST_HIT_BALL_VELOCITY_DIRECTION_WEIGHT = 120.0
+CROSS_LAND_OPPONENT_WEIGHT = 1200.0
+CROSS_STRIKE_QUALITY_REWARD_WEIGHTS: dict[str, float] = {}
+CROSS_IMPACT_REWARD_WEIGHTS: dict[str, float] = {}
 
 OUT_X_LIMITS = (-TABLE_HALF_LENGTH - 0.75, TABLE_HALF_LENGTH + 1.10)
 OUT_Y_LIMITS = (-TABLE_HALF_WIDTH - 0.50, TABLE_HALF_WIDTH + 0.50)
@@ -761,60 +752,11 @@ def make_pingpong_latent_env_cfg() -> ManagerBasedRlEnvCfg:
 
 
 def _add_strike_quality_rewards(cfg: ManagerBasedRlEnvCfg) -> None:
-  state_params = _state_params()
-  cfg.rewards["strike_outgoing_ball_velocity"] = RewardTermCfg(
-    func=mdp.strike_outgoing_ball_velocity,
-    weight=CROSS_STRIKE_QUALITY_REWARD_WEIGHTS["strike_outgoing_ball_velocity"],
-    params={**dict(state_params), "target_x_speed": 2.5},
-  )
-  cfg.rewards["strike_pred_net_clearance"] = RewardTermCfg(
-    func=mdp.strike_pred_net_clearance,
-    weight=CROSS_STRIKE_QUALITY_REWARD_WEIGHTS["strike_pred_net_clearance"],
-    params={
-      **dict(state_params),
-      "clearance_margin": 0.03,
-      "clearance_scale": 0.18,
-    },
-  )
-  cfg.rewards["strike_pred_landing_inside"] = RewardTermCfg(
-    func=mdp.strike_pred_landing_inside,
-    weight=CROSS_STRIKE_QUALITY_REWARD_WEIGHTS["strike_pred_landing_inside"],
-    params=dict(state_params),
-  )
-  cfg.rewards["strike_post_hit_speed"] = RewardTermCfg(
-    func=mdp.strike_post_hit_speed,
-    weight=CROSS_STRIKE_QUALITY_REWARD_WEIGHTS["strike_post_hit_speed"],
-    params={**dict(state_params), "speed_scale": 4.0},
-  )
+  del cfg
 
 
 def _add_impact_window_rewards(cfg: ManagerBasedRlEnvCfg) -> None:
-  state_params = _state_params()
-  cfg.rewards["impact_paddle_to_target_velocity"] = RewardTermCfg(
-    func=mdp.impact_paddle_to_target_velocity,
-    weight=CROSS_IMPACT_REWARD_WEIGHTS["impact_paddle_to_target_velocity"],
-    params={**dict(state_params), "speed_scale": 2.0},
-  )
-  cfg.rewards["impact_paddle_normal_alignment"] = RewardTermCfg(
-    func=mdp.impact_paddle_normal_alignment,
-    weight=CROSS_IMPACT_REWARD_WEIGHTS["impact_paddle_normal_alignment"],
-    params=dict(state_params),
-  )
-  cfg.rewards["impact_paddle_normal_velocity"] = RewardTermCfg(
-    func=mdp.impact_paddle_normal_velocity,
-    weight=CROSS_IMPACT_REWARD_WEIGHTS["impact_paddle_normal_velocity"],
-    params={**dict(state_params), "speed_scale": 1.5},
-  )
-  cfg.rewards["impact_contact_centering"] = RewardTermCfg(
-    func=mdp.impact_contact_centering,
-    weight=CROSS_IMPACT_REWARD_WEIGHTS["impact_contact_centering"],
-    params={**dict(state_params), "distance_std": 0.20},
-  )
-  cfg.rewards["followthrough_velocity"] = RewardTermCfg(
-    func=mdp.followthrough_velocity,
-    weight=CROSS_IMPACT_REWARD_WEIGHTS["followthrough_velocity"],
-    params={**dict(state_params), "speed_scale": 2.0},
-  )
+  del cfg
 
 
 def _add_impact_window_metrics(cfg: ManagerBasedRlEnvCfg) -> None:
@@ -879,16 +821,30 @@ def make_pingpong_latent_cross_env_cfg() -> ManagerBasedRlEnvCfg:
   """Create the legal over-net table-tennis return task."""
   cfg = make_pingpong_latent_env_cfg()
   state_params = _state_params()
-  cfg.rewards["approach_ball"].weight = 5.0
-  cfg.rewards["paddle_towards_ball"].weight = 2.0
-  cfg.rewards["paddle_hit_event"].weight = 25.0
+  cfg.rewards.pop("approach_ball", None)
+  cfg.rewards.pop("paddle_towards_ball", None)
+  cfg.rewards["hit_point"] = RewardTermCfg(
+    func=mdp.paddle_to_predicted_hit_point_dense,
+    weight=CROSS_HIT_POINT_WEIGHT,
+    params={
+      **dict(state_params),
+      "std": 0.35,
+      "paddle_cfg": _PADDLE_CFG,
+      "robot_cfg": _ROBOT_CFG,
+    },
+  )
+  cfg.rewards["paddle_hit_event"].weight = 200.0
   for reward_name, reward_weight in CROSS_LOOSE_REGULARIZATION_WEIGHTS.items():
     cfg.rewards[reward_name].weight = reward_weight
   cfg.rewards["robot_ball_contact"].weight = CROSS_ROBOT_BALL_CONTACT_WEIGHT
   cfg.rewards["post_hit_x_progress"] = RewardTermCfg(
     func=mdp.post_hit_x_progress,
     weight=CROSS_POST_HIT_X_PROGRESS_WEIGHT,
-    params={**dict(state_params), "max_progress": 0.04},
+    params={
+      **dict(state_params),
+      "max_progress": 0.04,
+      "lateral_speed_std": 0.8,
+    },
   )
   cfg.rewards["post_hit_ball_velocity_direction"] = RewardTermCfg(
     func=mdp.post_hit_ball_velocity_direction,
@@ -906,7 +862,7 @@ def make_pingpong_latent_cross_env_cfg() -> ManagerBasedRlEnvCfg:
   )
   cfg.rewards["opponent_table_bounce_event"] = RewardTermCfg(
     func=mdp.opponent_table_bounce_event,
-    weight=1000.0,
+    weight=CROSS_LAND_OPPONENT_WEIGHT,
     params=dict(state_params),
   )
   cfg.terminations.pop("first_paddle_hit", None)
@@ -961,6 +917,8 @@ __all__ = [
   "BALL_TARGET_X_RANGE",
   "BALL_TARGET_Y_RANGE",
   "CROSS_LOOSE_REGULARIZATION_WEIGHTS",
+  "CROSS_HIT_POINT_WEIGHT",
+  "CROSS_LAND_OPPONENT_WEIGHT",
   "CROSS_POST_HIT_BALL_VELOCITY_DIRECTION_WEIGHT",
   "CROSS_POST_HIT_X_PROGRESS_WEIGHT",
   "CROSS_ROBOT_BALL_CONTACT_WEIGHT",

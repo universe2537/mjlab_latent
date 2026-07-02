@@ -17,6 +17,8 @@ artifacts/
 render_robots.py
 benchmark_results/
 /contact_test/
+outputs/
+table_data/
 
 # Documentation outputs.
 **/_build/*
