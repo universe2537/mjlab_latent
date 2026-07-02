@@ -1,3 +1,58 @@
+## 2026-07-02 - Pingpong Paddle-Ball Contact 标定
+
+### 目标
+
+用本地 `contact_test` 最小场景标定 pingpong paddle-ball 碰撞，再把实验支持的
+显式 contact pair 写回 pingpong scene，避免继续依赖当前偏软的 geom 混合接触。
+
+### 计划
+
+- [x] 在 `contact_test/` 中新增 paddle-ball sweep 脚本和 JSON 配置。
+- [x] 跑默认计划 sweep，确认原候选范围是否足够。
+- [x] 跑 extended/focused sweep，寻找能达到 `e_n ~= 0.55` 的参数。
+- [x] 只在 pingpong G1 scene 注入 explicit pair，不修改共享 G1-with-racket 资产。
+- [x] 增加 compiled-model pair 参数测试和 sensor 语义回归。
+
+### 实现记录
+
+- 新增本地 ignored 实验入口：
+  `contact_test/run_pingpong_paddle_contact_sweep.py`，配置在
+  `contact_test/configs/paddle_ball_sweep*.json`。脚本读取当前 pingpong 球半径/质量、
+  拍面尺寸和 env timestep，构建固定薄圆柱 paddle + 自由 pingpong ball 的最小 MuJoCo
+  scene，并输出 `summary.csv` / `summary.json`。
+- 默认计划 sweep 输出：
+  `contact_test/results/2026-07-02_14-27-55`。在 `damping>=0.55` 范围内仍偏软，
+  最好 `2/3/5m/s` 中位 `e_n` 约 `0.41`，未达到 `0.45~0.70`。
+- Extended/focused sweep 输出：
+  `contact_test/results/2026-07-02_14-28-35` 和
+  `contact_test/results/2026-07-02_14-31-04`。当前 baseline 中位 `e_n` 约 `0.158`；
+  最终写回候选为 `solref=(0.011, 0.40)`、`margin=0.0175`、
+  `friction=(0.08, 0.002, 0.0001)`、`solimp=(0.93, 0.98, 0.001)`。
+- Focused best row：`2/3/5/8m/s` 的 `e_n` 中位约
+  `0.555/0.609/0.490/0.474`，`5m/s` 最大穿透约 `4.687mm`，`8m/s` 全相位分离。
+  注意：`margin=0.0175` 较大，这是当前 `timestep=0.005s` 下同时压住高速穿透和
+  避免 8m/s 粘住的代价；若视频显示提前接触过强，下一步应在降低 margin 与更小
+  physics timestep 之间权衡。
+- 主配置新增 `add_pingpong_paddle_ball_contact_pair()`，只通过 G1 pingpong
+  `_apply_g1_pingpong_common()` 的 `cfg.scene.spec_fn` 注入；tennis/tracking/distillation
+  共用 racket asset 不变。
+
+### 验证记录
+
+- `UV_CACHE_DIR=/tmp/uv-cache MPLCONFIGDIR=/tmp/mplconfig uv run python contact_test/run_pingpong_paddle_contact_sweep.py`
+- `UV_CACHE_DIR=/tmp/uv-cache MPLCONFIGDIR=/tmp/mplconfig uv run python contact_test/run_pingpong_paddle_contact_sweep.py --config contact_test/configs/paddle_ball_sweep_extended.json --max-print-rows 16`
+- `UV_CACHE_DIR=/tmp/uv-cache MPLCONFIGDIR=/tmp/mplconfig uv run python contact_test/run_pingpong_paddle_contact_sweep.py --config contact_test/configs/paddle_ball_margin_focus.json --max-print-rows 12`
+- `UV_CACHE_DIR=/tmp/uv-cache MPLCONFIGDIR=/tmp/mplconfig uv run pytest tests/test_pingpong_task.py::test_pingpong_paddle_ball_explicit_contact_pair tests/test_pingpong_task.py::test_pingpong_paddle_handle_collision_does_not_score -q`
+  通过：2 passed。
+- `UV_CACHE_DIR=/tmp/uv-cache MPLCONFIGDIR=/tmp/mplconfig uv run pytest tests/test_pingpong_task.py tests/test_pingpong_state.py -q`
+  通过：20 passed。
+- `UV_CACHE_DIR=/tmp/uv-cache MPLCONFIGDIR=/tmp/mplconfig uv run pytest tests/test_ball_sport_geometry.py -q`
+  通过：1 passed。
+- `UV_CACHE_DIR=/tmp/uv-cache MPLCONFIGDIR=/tmp/mplconfig uv run ruff check src/mjlab/tasks/pingpong/pingpong_env_cfg.py src/mjlab/tasks/pingpong/config/g1/env_cfgs.py tests/test_pingpong_task.py`
+  通过。
+- `UV_CACHE_DIR=/tmp/uv-cache MPLCONFIGDIR=/tmp/mplconfig uv run ty check src/mjlab/tasks/pingpong/pingpong_env_cfg.py src/mjlab/tasks/pingpong/config/g1/env_cfgs.py tests/test_pingpong_task.py`
+  通过。
+
 ## 2026-07-02 - Pingpong Cross Impact-Window Guidance
 
 ### 目标

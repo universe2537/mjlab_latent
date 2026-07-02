@@ -47,6 +47,48 @@
     commands, failures, or next steps change.
   </p>
 
+  <h2>2026-07-02 Pingpong Paddle-Ball Contact Calibration</h2>
+  <ul>
+    <li>
+      New ignored local experiment:
+      <code>contact_test/run_pingpong_paddle_contact_sweep.py</code> with configs
+      under <code>contact_test/configs/</code>. It builds a fixed thin-cylinder
+      paddle plus free pingpong ball scene, reads the current ball/paddle
+      geometry and timestep, and reports effective normal rebound
+      <code>e_n = v_out / v_in</code>, max penetration, contact steps, separation,
+      and abnormal flags.
+    </li>
+    <li>
+      Default planned sweep output:
+      <code>contact_test/results/2026-07-02_14-27-55</code>. The original
+      <code>damping&gt;=0.55</code> range stayed too soft, with best
+      <code>2/3/5m/s</code> median <code>e_n ~= 0.41</code>. Baseline mixed
+      geom contact in the extended sweep was much softer:
+      median <code>e_n ~= 0.158</code>.
+    </li>
+    <li>
+      Final focused output:
+      <code>contact_test/results/2026-07-02_14-31-04</code>. The selected
+      pingpong-only explicit pair is
+      <code>ball/pingpong_ball</code> x
+      <code>robot/pingpong_paddle_collision</code>, with
+      <code>condim=3</code>, friction
+      <code>(0.08, 0.002, 0.0001)</code>,
+      <code>solref=(0.011, 0.40)</code>,
+      <code>solimp=(0.93, 0.98, 0.001)</code>, and
+      <code>margin=0.0175</code>.
+    </li>
+    <li>
+      Focused selected row metrics:
+      <code>e_n</code> medians for <code>2/3/5/8m/s</code> are about
+      <code>0.555/0.609/0.490/0.474</code>, <code>5m/s</code> max penetration
+      is about <code>4.687mm</code>, and <code>8m/s</code> separates in all
+      sampled contact phases. The margin is intentionally large because the
+      current physics timestep is <code>0.005s</code>; if videos show premature
+      paddle hits, revisit margin versus timestep.
+    </li>
+  </ul>
+
   <h2>2026-07-02 Pingpong Cross Impact-Window Guidance</h2>
   <ul>
     <li>

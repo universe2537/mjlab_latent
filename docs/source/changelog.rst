@@ -93,6 +93,13 @@ Added
 Changed
 ^^^^^^^
 
+- Calibrated Pingpong paddle-ball contact with local ``contact_test`` sweeps
+  and added a pingpong-only explicit contact pair between
+  ``ball/pingpong_ball`` and ``robot/pingpong_paddle_collision``. The pair uses
+  ``condim=3``, friction ``(0.08, 0.002, 0.0001)``,
+  ``solref=(0.011, 0.40)``, ``solimp=(0.93, 0.98, 0.001)``, and
+  ``margin=0.0175``; shared tennis/tracking/distillation racket assets are
+  unchanged.
 - Added a success-rate-gated Pingpong Hit regularization curriculum: after the
   existing serve-target curriculum reaches its final stage, Hit progressively
   strengthens latent action-rate, torque, acceleration, fall, and upright

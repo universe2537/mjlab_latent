@@ -17,6 +17,7 @@ from mjlab.asset_zoo.robots.unitree_g1_w_racket.g1_constants import (
 )
 from mjlab.entity import EntityCfg
 from mjlab.tasks.pingpong.pingpong_env_cfg import (
+  add_pingpong_paddle_ball_contact_pair,
   make_pingpong_latent_cross_diag_env_cfg,
   make_pingpong_latent_cross_env_cfg,
   make_pingpong_latent_cross_impact_env_cfg,
@@ -210,6 +211,7 @@ def _apply_g1_pingpong_common(cfg, play: bool):
     "ball": get_pingpong_ball_cfg(),
     "table": get_pingpong_table_cfg(),
   }
+  cfg.scene.spec_fn = add_pingpong_paddle_ball_contact_pair
   cfg.viewer.body_name = "torso_link"
   cfg.viewer.elevation = -16.0
   cfg.viewer.azimuth = 135.0

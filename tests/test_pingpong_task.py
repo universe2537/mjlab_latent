@@ -1,6 +1,7 @@
 import inspect
 from typing import cast
 
+import mujoco
 import torch
 
 import mjlab.tasks  # noqa: F401
@@ -31,11 +32,39 @@ from mjlab.tasks.pingpong.pingpong_env_cfg import (
   CROSS_ROBOT_BALL_CONTACT_WEIGHT,
   CROSS_STRIKE_QUALITY_REWARD_WEIGHTS,
   DECODER_STATE_TERMS,
+  PADDLE_BALL_PAIR_CONDIM,
+  PADDLE_BALL_PAIR_FRICTION,
+  PADDLE_BALL_PAIR_GEOM1,
+  PADDLE_BALL_PAIR_GEOM2,
+  PADDLE_BALL_PAIR_MARGIN,
+  PADDLE_BALL_PAIR_NAME,
+  PADDLE_BALL_PAIR_SOLIMP,
+  PADDLE_BALL_PAIR_SOLREF,
 )
 from mjlab.tasks.registry import list_tasks, load_env_cfg, load_rl_cfg
 from mjlab.tasks.tennis.mdp import FrozenDecoderLatentJointPositionActionCfg
 from mjlab.tasks.tennis.rl import TennisLatentOnPolicyRunnerCfg
 from mjlab.tasks.tennis.rl.runner import reset_actor_distribution_std
+
+
+def _geom_name(model: mujoco.MjModel, geom_id: int) -> str:
+  name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, geom_id)
+  assert name is not None
+  return name
+
+
+def _find_paddle_ball_pair_id(model: mujoco.MjModel) -> int:
+  expected = {PADDLE_BALL_PAIR_GEOM1, PADDLE_BALL_PAIR_GEOM2}
+  matches = []
+  for pair_id in range(model.npair):
+    geom_names = {
+      _geom_name(model, int(model.pair_geom1[pair_id])),
+      _geom_name(model, int(model.pair_geom2[pair_id])),
+    }
+    if geom_names == expected:
+      matches.append(pair_id)
+  assert len(matches) == 1
+  return matches[0]
 
 
 def test_pingpong_tasks_registered() -> None:
@@ -75,6 +104,34 @@ def test_pingpong_task_scene_compiles() -> None:
     assert any(name.startswith("pingpong_ball_net_contact") for name in sensor_names)
     assert any(name.startswith("robot_table_contact") for name in sensor_names)
     assert any(name.startswith("robot_ball_contact") for name in sensor_names)
+
+
+def test_pingpong_paddle_ball_explicit_contact_pair() -> None:
+  cfg = load_env_cfg("Mjlab-Pingpong-Hit-Unitree-G1")
+  model = Scene(cfg.scene, device="cpu").compile()
+  pair_id = _find_paddle_ball_pair_id(model)
+
+  assert model.pair(pair_id).name == PADDLE_BALL_PAIR_NAME
+  assert int(model.pair_dim[pair_id]) == PADDLE_BALL_PAIR_CONDIM
+  assert abs(float(model.pair_margin[pair_id]) - PADDLE_BALL_PAIR_MARGIN) < 1.0e-9
+  torch.testing.assert_close(
+    torch.as_tensor(model.pair_friction[pair_id, :3]),
+    torch.as_tensor(PADDLE_BALL_PAIR_FRICTION, dtype=torch.float64),
+    atol=1.0e-9,
+    rtol=0.0,
+  )
+  torch.testing.assert_close(
+    torch.as_tensor(model.pair_solref[pair_id]),
+    torch.as_tensor(PADDLE_BALL_PAIR_SOLREF, dtype=torch.float64),
+    atol=1.0e-9,
+    rtol=0.0,
+  )
+  torch.testing.assert_close(
+    torch.as_tensor(model.pair_solimp[pair_id]),
+    torch.as_tensor(PADDLE_BALL_PAIR_SOLIMP, dtype=torch.float64),
+    atol=1.0e-9,
+    rtol=0.0,
+  )
 
 
 def test_pingpong_paddle_scales_visual_and_collision() -> None:
@@ -117,6 +174,7 @@ def test_pingpong_paddle_handle_collision_does_not_score() -> None:
   assert isinstance(paddle_ball, ContactSensorCfg)
   assert paddle_ball.secondary is not None
   assert paddle_ball.secondary.pattern == "pingpong_paddle_collision"
+  assert "handle" not in paddle_ball.secondary.pattern
 
   robot_ball = sensors["robot_ball_contact"]
   assert isinstance(robot_ball, ContactSensorCfg)

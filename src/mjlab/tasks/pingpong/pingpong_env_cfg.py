@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import math
 
+import mujoco
+
 from mjlab.envs import ManagerBasedRlEnvCfg
 from mjlab.managers.action_manager import ActionTermCfg
 from mjlab.managers.curriculum_manager import CurriculumTermCfg
@@ -44,6 +46,16 @@ _PADDLE_BALL_SENSOR = "paddle_ball_contact"
 _BALL_NET_SENSOR = "pingpong_ball_net_contact"
 _ROBOT_TABLE_SENSOR = "robot_table_contact"
 _ROBOT_BALL_SENSOR = "robot_ball_contact"
+
+PADDLE_BALL_PAIR_NAME = "pingpong_paddle_ball_contact_pair"
+PADDLE_BALL_PAIR_GEOM1 = "ball/pingpong_ball"
+PADDLE_BALL_PAIR_GEOM2 = "robot/pingpong_paddle_collision"
+PADDLE_BALL_PAIR_CONDIM = 3
+PADDLE_BALL_PAIR_FRICTION = (0.08, 0.002, 0.0001)
+PADDLE_BALL_PAIR_SOLREF = (0.011, 0.40)
+PADDLE_BALL_PAIR_SOLIMP = (0.93, 0.98, 0.001, 0.5, 2.0)
+PADDLE_BALL_PAIR_MARGIN = 0.0175
+_PADDLE_BALL_PAIR_FRICTION_FULL = PADDLE_BALL_PAIR_FRICTION + (0.0001, 0.0001)
 
 ROBOT_RESET_X_RANGE = (TABLE_HALF_LENGTH + 0.36, TABLE_HALF_LENGTH + 0.58)
 ROBOT_RESET_Y_RANGE = (-0.18, 0.18)
@@ -138,6 +150,20 @@ DECODER_STATE_TERMS = (
   "joint_vel",
   "actions",
 )
+
+
+def add_pingpong_paddle_ball_contact_pair(spec: mujoco.MjSpec) -> None:
+  """Add the pingpong-only explicit paddle-face/ball contact pair."""
+  spec.add_pair(
+    name=PADDLE_BALL_PAIR_NAME,
+    geomname1=PADDLE_BALL_PAIR_GEOM1,
+    geomname2=PADDLE_BALL_PAIR_GEOM2,
+    condim=PADDLE_BALL_PAIR_CONDIM,
+    solref=PADDLE_BALL_PAIR_SOLREF,
+    solimp=PADDLE_BALL_PAIR_SOLIMP,
+    margin=PADDLE_BALL_PAIR_MARGIN,
+    friction=_PADDLE_BALL_PAIR_FRICTION_FULL,
+  )
 
 
 def _state_params() -> dict[str, object]:
