@@ -107,6 +107,13 @@ CROSS_STRIKE_QUALITY_REWARD_WEIGHTS = {
   "strike_pred_landing_inside": 25.0,
   "strike_post_hit_speed": 5.0,
 }
+CROSS_IMPACT_REWARD_WEIGHTS = {
+  "impact_paddle_to_target_velocity": 15.0,
+  "impact_paddle_normal_alignment": 8.0,
+  "impact_paddle_normal_velocity": 8.0,
+  "impact_contact_centering": 5.0,
+  "followthrough_velocity": 5.0,
+}
 
 OUT_X_LIMITS = (-TABLE_HALF_LENGTH - 0.75, TABLE_HALF_LENGTH + 1.10)
 OUT_Y_LIMITS = (-TABLE_HALF_WIDTH - 0.50, TABLE_HALF_WIDTH + 0.50)
@@ -116,6 +123,11 @@ OPPONENT_X_LIMITS = (-TABLE_HALF_LENGTH, NET_X)
 TABLE_Y_LIMITS = (-TABLE_HALF_WIDTH, TABLE_HALF_WIDTH)
 HIT_FORCE_THRESHOLD = 0.05
 BOUNCE_Z_TOLERANCE = 0.055
+IMPACT_WINDOW_DISTANCE = 0.45
+IMPACT_FOLLOWTHROUGH_STEPS = 6
+IMPACT_TARGET_X = -0.5 * TABLE_HALF_LENGTH
+IMPACT_TARGET_Y = 0.0
+IMPACT_TARGET_Z = NET_TOP_Z + 0.20
 
 HIT_POINT_HEIGHT_OFFSET = 0.02
 HIT_POINT_MAX_HORIZON = 1.2
@@ -149,6 +161,11 @@ def _state_params() -> dict[str, object]:
     "y_limits": OUT_Y_LIMITS,
     "z_limits": OUT_Z_LIMITS,
     "bounce_z_tolerance": BOUNCE_Z_TOLERANCE,
+    "impact_window_distance": IMPACT_WINDOW_DISTANCE,
+    "impact_followthrough_steps": IMPACT_FOLLOWTHROUGH_STEPS,
+    "impact_target_x": IMPACT_TARGET_X,
+    "impact_target_y": IMPACT_TARGET_Y,
+    "impact_target_z": IMPACT_TARGET_Z,
   }
 
 
@@ -745,6 +762,79 @@ def _add_strike_quality_rewards(cfg: ManagerBasedRlEnvCfg) -> None:
   )
 
 
+def _add_impact_window_rewards(cfg: ManagerBasedRlEnvCfg) -> None:
+  state_params = _state_params()
+  cfg.rewards["impact_paddle_to_target_velocity"] = RewardTermCfg(
+    func=mdp.impact_paddle_to_target_velocity,
+    weight=CROSS_IMPACT_REWARD_WEIGHTS["impact_paddle_to_target_velocity"],
+    params={**dict(state_params), "speed_scale": 2.0},
+  )
+  cfg.rewards["impact_paddle_normal_alignment"] = RewardTermCfg(
+    func=mdp.impact_paddle_normal_alignment,
+    weight=CROSS_IMPACT_REWARD_WEIGHTS["impact_paddle_normal_alignment"],
+    params=dict(state_params),
+  )
+  cfg.rewards["impact_paddle_normal_velocity"] = RewardTermCfg(
+    func=mdp.impact_paddle_normal_velocity,
+    weight=CROSS_IMPACT_REWARD_WEIGHTS["impact_paddle_normal_velocity"],
+    params={**dict(state_params), "speed_scale": 1.5},
+  )
+  cfg.rewards["impact_contact_centering"] = RewardTermCfg(
+    func=mdp.impact_contact_centering,
+    weight=CROSS_IMPACT_REWARD_WEIGHTS["impact_contact_centering"],
+    params={**dict(state_params), "distance_std": 0.20},
+  )
+  cfg.rewards["followthrough_velocity"] = RewardTermCfg(
+    func=mdp.followthrough_velocity,
+    weight=CROSS_IMPACT_REWARD_WEIGHTS["followthrough_velocity"],
+    params={**dict(state_params), "speed_scale": 2.0},
+  )
+
+
+def _add_impact_window_metrics(cfg: ManagerBasedRlEnvCfg) -> None:
+  state_params = _state_params()
+  cfg.metrics["impact/window_active"] = MetricsTermCfg(
+    func=mdp.impact_window_active_metric,
+    reduce="mean",
+    params=dict(state_params),
+  )
+  cfg.metrics["impact/window_count"] = MetricsTermCfg(
+    func=mdp.impact_window_count_metric,
+    reduce="last",
+    params=dict(state_params),
+  )
+  cfg.metrics["impact/paddle_speed"] = MetricsTermCfg(
+    func=mdp.impact_paddle_speed_metric,
+    reduce="last",
+    params=dict(state_params),
+  )
+  cfg.metrics["impact/velocity_to_target"] = MetricsTermCfg(
+    func=mdp.impact_velocity_to_target_metric,
+    reduce="last",
+    params=dict(state_params),
+  )
+  cfg.metrics["impact/velocity_along_normal"] = MetricsTermCfg(
+    func=mdp.impact_velocity_along_normal_metric,
+    reduce="last",
+    params=dict(state_params),
+  )
+  cfg.metrics["impact/normal_to_target"] = MetricsTermCfg(
+    func=mdp.impact_normal_to_target_metric,
+    reduce="last",
+    params=dict(state_params),
+  )
+  cfg.metrics["impact/center_distance"] = MetricsTermCfg(
+    func=mdp.impact_center_distance_metric,
+    reduce="last",
+    params=dict(state_params),
+  )
+  cfg.metrics["impact/followthrough_velocity"] = MetricsTermCfg(
+    func=mdp.impact_followthrough_velocity_metric,
+    reduce="last",
+    params=dict(state_params),
+  )
+
+
 def _apply_hit_window_energy_relaxation(cfg: ManagerBasedRlEnvCfg) -> None:
   state_params = _state_params()
   cfg.rewards["latent_action_rate_l2"] = RewardTermCfg(
@@ -819,6 +909,14 @@ def make_pingpong_latent_cross_strike_quality_env_cfg() -> ManagerBasedRlEnvCfg:
   return cfg
 
 
+def make_pingpong_latent_cross_impact_env_cfg() -> ManagerBasedRlEnvCfg:
+  """Create a Cross ablation with impact-window paddle behavior rewards."""
+  cfg = make_pingpong_latent_cross_strike_quality_env_cfg()
+  _add_impact_window_rewards(cfg)
+  _add_impact_window_metrics(cfg)
+  return cfg
+
+
 def make_pingpong_latent_cross_strike_quality_energy_relax_env_cfg() -> (
   ManagerBasedRlEnvCfg
 ):
@@ -840,11 +938,13 @@ __all__ = [
   "CROSS_POST_HIT_BALL_VELOCITY_DIRECTION_WEIGHT",
   "CROSS_POST_HIT_X_PROGRESS_WEIGHT",
   "CROSS_ROBOT_BALL_CONTACT_WEIGHT",
+  "CROSS_IMPACT_REWARD_WEIGHTS",
   "CROSS_STRIKE_QUALITY_REWARD_WEIGHTS",
   "DECODER_STATE_TERMS",
   "ACTION_REGULARIZATION_CURRICULUM_STAGE_WEIGHTS",
   "make_pingpong_latent_cross_diag_env_cfg",
   "make_pingpong_latent_cross_env_cfg",
+  "make_pingpong_latent_cross_impact_env_cfg",
   "make_pingpong_latent_env_cfg",
   "make_pingpong_latent_return_env_cfg",
   "make_pingpong_latent_cross_strike_quality_energy_relax_env_cfg",

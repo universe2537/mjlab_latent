@@ -1,3 +1,73 @@
+## 2026-07-02 - Pingpong Cross Impact-Window Guidance
+
+### 目标
+
+为 Pingpong Cross 新增一条击球窗口内的球拍行为引导实验线，避免策略只依赖
+post-hit 球行为奖励学习“挡球”，而是在 legal hit 前后直接引导球拍中心、法向、
+速度和 follow-through。
+
+### 计划
+
+- [x] 在 `PingpongRallyState` 中缓存 impact-window 几何和速度诊断。
+- [x] 新增 impact-window paddle behavior rewards。
+- [x] 新增 `Mjlab-Pingpong-Cross-Impact-Unitree-G1` ablation task。
+- [x] 注册 G1 env / PPO config，并保持旧 Cross / StrikeQuality reward keys 不变。
+- [x] 增加状态机和配置测试，运行窄验证。
+
+### 预期改动
+
+新增 Impact task 复用 Cross loose regularization 和 StrikeQuality post-hit rewards，
+额外启用 `impact_paddle_to_target_velocity`、
+`impact_paddle_normal_alignment`、`impact_paddle_normal_velocity`、
+`impact_contact_centering`、`followthrough_velocity`。默认 checkpoint 仍不写死，
+训练时通过 `--agent.load-checkpoint-file` 显式传入。
+
+### 进展记录
+
+- `PingpongRallyState` 增加 impact-window active gate、固定保守出球目标、球拍
+  center/normal/velocity、ball state、desired outgoing direction、center
+  distance、velocity-to-target、velocity-along-normal、normal-to-target 和
+  follow-through velocity 诊断。
+- Impact active window 定义为自方落台后、首次 legal hit/fault 前、球拍近场；
+  legal hit step 总是纳入窗口，避免几何中心距离门控漏掉真实接触。
+- 新任务 ID：`Mjlab-Pingpong-Cross-Impact-Unitree-G1`。
+- 新 experiment/run：`g1_pingpong_latent_cross_impact` /
+  `pingpong_cross_impact_from_hit`。
+- 新 metrics：`impact/window_active`、`impact/window_count`、
+  `impact/velocity_to_target`、`impact/velocity_along_normal`、
+  `impact/normal_to_target`、`impact/center_distance`、
+  `impact/followthrough_velocity`。
+- 2026-07-02 启动训练时先用 GPU `4,5,6,7`、每卡 `10240` env 做 smoke；
+  smoke 暴露旧 reward 签名未接收新增 state 参数的问题。已让
+  `approach_ball` 和 `paddle_towards_ball` 接收共享 state `**params`，并新增
+  签名兼容测试。
+- 用户要求停止并清理每卡 `10240` env 的长训；已删除 run 目录
+  `logs/rsl_rl/g1_pingpong_latent_cross_impact/pingpong_cross_impact_hitbest_10240pergpu_gpu4_7_20260702_105707_2026-07-02_10-57-35`
+  和 launch record
+  `logs/rsl_rl/_codex_launch_records/pingpong_cross_impact_4567_20260702_105707`。
+- 当前活跃长训改为 GPU `4,5,6,7`、每卡 `15360` env（`512*30`，总
+  `61440` env），tmux
+  `pingpong_cross_impact_4567_15360_20260702_110128`，run:
+  `logs/rsl_rl/g1_pingpong_latent_cross_impact/pingpong_cross_impact_hitbest_15360pergpu_gpu4_7_20260702_110128_2026-07-02_11-01-52`。
+  启动后首批指标正常写入，`impact/window_active` 约 `0.12`，
+  `impact/velocity_to_target` 约 `0.36`。
+
+### 验证记录
+
+- `UV_CACHE_DIR=/tmp/uv-cache FORCE_CPU=1 uv run pytest tests/test_pingpong_state.py tests/test_pingpong_task.py -q`
+  通过：19 passed。
+- `UV_CACHE_DIR=/tmp/uv-cache uv run ty check src/mjlab/tasks/pingpong tests/test_pingpong_state.py tests/test_pingpong_task.py`
+  通过。
+- `UV_CACHE_DIR=/tmp/uv-cache uv run ruff check src/mjlab/tasks/pingpong tests/test_pingpong_state.py tests/test_pingpong_task.py`
+  通过。
+
+### 下一步
+
+先用 4096 env 做短训 smoke，确认 `impact/window_active`、`impact/velocity_to_target`、
+`impact/velocity_along_normal` 和 `impact/normal_to_target` 有非零学习信号，再上
+16384 env 长训。最终仍以 `crossed_net_count`、`opponent_table_bounce_count` 和
+`legal_return_count` 是否从 0 出现为判断标准。
+
 ## 2026-06-20 18:13 - Pingpong V1 Task
 
 ### 目标

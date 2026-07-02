@@ -46,6 +46,11 @@ _PINGPONG_RALLY_STATE_ATTR = "_pingpong_rally_state"
 _MIN_BALLISTIC_TIME = 1.0e-4
 _MAX_BALLISTIC_NET_TIME = 1.5
 _MAX_BALLISTIC_LANDING_TIME = 2.5
+_DEFAULT_IMPACT_WINDOW_DISTANCE = 0.45
+_DEFAULT_IMPACT_FOLLOWTHROUGH_STEPS = 6
+_DEFAULT_IMPACT_TARGET_X = -0.5 * TABLE_HALF_LENGTH
+_DEFAULT_IMPACT_TARGET_Y = 0.0
+_DEFAULT_IMPACT_TARGET_Z = NET_TOP_Z + 0.20
 
 
 def _sensor_contact_now(
@@ -90,6 +95,11 @@ class PingpongRallyState:
     y_limits: tuple[float, float] = (-1.25, 1.25),
     z_limits: tuple[float, float] = (0.05, 2.5),
     bounce_z_tolerance: float = 0.05,
+    impact_window_distance: float = _DEFAULT_IMPACT_WINDOW_DISTANCE,
+    impact_followthrough_steps: int = _DEFAULT_IMPACT_FOLLOWTHROUGH_STEPS,
+    impact_target_x: float = _DEFAULT_IMPACT_TARGET_X,
+    impact_target_y: float = _DEFAULT_IMPACT_TARGET_Y,
+    impact_target_z: float = _DEFAULT_IMPACT_TARGET_Z,
   ) -> None:
     self._env = env
     self.paddle_sensor_name = paddle_sensor_name
@@ -111,6 +121,11 @@ class PingpongRallyState:
     self.y_limits = y_limits
     self.z_limits = z_limits
     self.bounce_z_tolerance = bounce_z_tolerance
+    self.impact_window_distance = impact_window_distance
+    self.impact_followthrough_steps = impact_followthrough_steps
+    self.impact_target_x = impact_target_x
+    self.impact_target_y = impact_target_y
+    self.impact_target_z = impact_target_z
     self._last_step = -1
 
     num_envs = env.num_envs
@@ -168,11 +183,31 @@ class PingpongRallyState:
     self.hit_paddle_normal_alignment = zeros_float()
     self.hit_paddle_velocity_along_normal = zeros_float()
 
+    # Impact-window diagnostics are updated while the ball is close to the paddle
+    # after the legal self-table bounce. Scalars are left latched so episode
+    # metrics can report the last meaningful pre-contact / contact value.
+    self.impact_window_active = zeros_bool()
+    self.followthrough_active = zeros_bool()
+    self.impact_window_count = zeros_long()
+    self.impact_paddle_center = zeros_vec3()
+    self.impact_paddle_normal = zeros_vec3()
+    self.impact_paddle_velocity = zeros_vec3()
+    self.impact_ball_pos = zeros_vec3()
+    self.impact_ball_velocity = zeros_vec3()
+    self.impact_desired_outgoing_dir = zeros_vec3()
+    self.impact_center_distance = zeros_float()
+    self.impact_paddle_speed = zeros_float()
+    self.impact_velocity_to_target = zeros_float()
+    self.impact_velocity_along_normal = zeros_float()
+    self.impact_normal_to_target = zeros_float()
+    self.impact_followthrough_velocity = zeros_float()
+
     self._prev_paddle_contact = zeros_bool()
     self._prev_net_contact = zeros_bool()
     self._prev_vz = zeros_float()
     self._prev_x = zeros_float()
     self.prev_ball_x = zeros_float()
+    self._followthrough_steps_remaining = zeros_long()
 
   def reset(self, env_ids: torch.Tensor | slice | None = None) -> None:
     if env_ids is None:
@@ -202,11 +237,27 @@ class PingpongRallyState:
     self.hit_paddle_speed[env_ids] = 0.0
     self.hit_paddle_normal_alignment[env_ids] = 0.0
     self.hit_paddle_velocity_along_normal[env_ids] = 0.0
+    self.impact_window_active[env_ids] = False
+    self.followthrough_active[env_ids] = False
+    self.impact_window_count[env_ids] = 0
+    self.impact_paddle_center[env_ids] = 0.0
+    self.impact_paddle_normal[env_ids] = 0.0
+    self.impact_paddle_velocity[env_ids] = 0.0
+    self.impact_ball_pos[env_ids] = 0.0
+    self.impact_ball_velocity[env_ids] = 0.0
+    self.impact_desired_outgoing_dir[env_ids] = 0.0
+    self.impact_center_distance[env_ids] = 0.0
+    self.impact_paddle_speed[env_ids] = 0.0
+    self.impact_velocity_to_target[env_ids] = 0.0
+    self.impact_velocity_along_normal[env_ids] = 0.0
+    self.impact_normal_to_target[env_ids] = 0.0
+    self.impact_followthrough_velocity[env_ids] = 0.0
     self._prev_paddle_contact[env_ids] = False
     self._prev_net_contact[env_ids] = False
     self._prev_vz[env_ids] = 0.0
     self._prev_x[env_ids] = 0.0
     self.prev_ball_x[env_ids] = 0.0
+    self._followthrough_steps_remaining[env_ids] = 0
     self._last_step = -1
 
   def update(self) -> None:
@@ -307,6 +358,14 @@ class PingpongRallyState:
     self.successful_return_count += opponent_bounce_edge.long()
     self.episode_fault_count += fault_edge.long()
 
+    self._record_impact_window_diagnostics(
+      ball_pos,
+      ball_vel,
+      self_bounce_edge,
+      legal_paddle_edge,
+      opponent_bounce_edge,
+      fault_edge,
+    )
     self._record_hit_diagnostics(ball_pos, ball_vel, legal_paddle_edge)
 
     self.has_self_bounce |= self_bounce_edge
@@ -334,6 +393,116 @@ class PingpongRallyState:
     self.prev_ball_x[:] = prev_x
     self._prev_x[:] = ball_x
     self._last_step = step
+
+  def _desired_outgoing_dir(self, ball_pos: torch.Tensor) -> torch.Tensor:
+    target = torch.empty_like(ball_pos)
+    target[:, 0] = self.impact_target_x
+    target[:, 1] = self.impact_target_y
+    target[:, 2] = self.impact_target_z
+    return torch.nn.functional.normalize(target - ball_pos, dim=-1, eps=1.0e-6)
+
+  def _paddle_kinematics(
+    self,
+  ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor] | None:
+    try:
+      robot = self._env.scene[self.robot_cfg.name]
+    except (KeyError, TypeError, AttributeError):
+      return None
+    geom_ids = getattr(self.paddle_geom_cfg, "geom_ids", None)
+    data = getattr(robot, "data", None)
+    if data is None or geom_ids is None:
+      return None
+
+    try:
+      geom_pos_w = data.geom_pos_w[:, geom_ids]
+      geom_vel_w = data.geom_lin_vel_w[:, geom_ids]
+      geom_quat_w = data.geom_quat_w[:, geom_ids]
+    except (AttributeError, IndexError, TypeError):
+      return None
+
+    paddle_center_w = geom_pos_w.mean(dim=1) - self._env.scene.env_origins
+    paddle_vel_w = geom_vel_w.mean(dim=1)
+    paddle_quat_w = geom_quat_w[:, 0]
+    normal_local = torch.zeros_like(paddle_vel_w)
+    # MuJoCo cylinder height is local z; the paddle proxy is a thin cylinder.
+    normal_local[:, 2] = 1.0
+    normal_w = quat_apply(paddle_quat_w, normal_local)
+    normal_w = torch.nn.functional.normalize(normal_w, dim=-1, eps=1.0e-6)
+    return paddle_center_w, paddle_vel_w, normal_w
+
+  def _record_impact_window_diagnostics(
+    self,
+    ball_pos: torch.Tensor,
+    ball_vel: torch.Tensor,
+    self_bounce_edge: torch.Tensor,
+    legal_hit: torch.Tensor,
+    opponent_bounce_edge: torch.Tensor,
+    fault_edge: torch.Tensor,
+  ) -> None:
+    self.impact_window_active[:] = False
+    self.followthrough_active[:] = False
+
+    kinematics = self._paddle_kinematics()
+    if kinematics is None:
+      return
+    paddle_center_w, paddle_vel_w, normal_w = kinematics
+    desired_dir = self._desired_outgoing_dir(ball_pos)
+    normal_dot = torch.sum(normal_w * desired_dir, dim=-1)
+    oriented_normal = torch.where(normal_dot.unsqueeze(-1) >= 0.0, normal_w, -normal_w)
+
+    center_delta = ball_pos - paddle_center_w
+    center_distance = torch.linalg.vector_norm(center_delta, dim=-1)
+    near_paddle = center_distance <= self.impact_window_distance
+    before_first_hit = (self.has_self_bounce | self_bounce_edge) & ~self.has_paddle_hit
+    not_done = ~opponent_bounce_edge & ~fault_edge
+    impact_active = before_first_hit & not_done & (near_paddle | legal_hit)
+
+    remaining = torch.where(
+      legal_hit,
+      torch.full_like(self._followthrough_steps_remaining, self.impact_followthrough_steps),
+      self._followthrough_steps_remaining,
+    )
+    followthrough_active = (
+      (remaining > 0)
+      & (legal_hit | self.has_paddle_hit)
+      & ~opponent_bounce_edge
+      & ~fault_edge
+    )
+
+    velocity_to_target = torch.sum(paddle_vel_w * desired_dir, dim=-1)
+    velocity_along_normal = torch.sum(paddle_vel_w * oriented_normal, dim=-1)
+    normal_to_target = torch.sum(oriented_normal * desired_dir, dim=-1).clamp(0.0, 1.0)
+    paddle_speed = torch.linalg.vector_norm(paddle_vel_w, dim=-1)
+
+    self.impact_paddle_center[:] = paddle_center_w
+    self.impact_paddle_normal[:] = oriented_normal
+    self.impact_paddle_velocity[:] = paddle_vel_w
+    self.impact_ball_pos[:] = ball_pos
+    self.impact_ball_velocity[:] = ball_vel
+    self.impact_desired_outgoing_dir[:] = desired_dir
+
+    self.impact_window_active[:] = impact_active
+    self.followthrough_active[:] = followthrough_active
+    self.impact_window_count += impact_active.long()
+    self.impact_center_distance[impact_active] = center_distance[impact_active]
+    self.impact_paddle_speed[impact_active] = paddle_speed[impact_active]
+    self.impact_velocity_to_target[impact_active] = velocity_to_target[impact_active]
+    self.impact_velocity_along_normal[impact_active] = velocity_along_normal[
+      impact_active
+    ]
+    self.impact_normal_to_target[impact_active] = normal_to_target[impact_active]
+    self.impact_followthrough_velocity[followthrough_active] = velocity_to_target[
+      followthrough_active
+    ]
+    self._followthrough_steps_remaining[:] = torch.where(
+      followthrough_active,
+      torch.clamp(remaining - 1, min=0),
+      torch.where(
+        opponent_bounce_edge | fault_edge,
+        torch.zeros_like(remaining),
+        remaining,
+      ),
+    )
 
   def _record_hit_diagnostics(
     self,
@@ -407,28 +576,10 @@ class PingpongRallyState:
     return landing_xy, valid
 
   def _record_paddle_hit_diagnostics(self, legal_hit: torch.Tensor) -> None:
-    try:
-      robot = self._env.scene[self.robot_cfg.name]
-    except (KeyError, TypeError, AttributeError):
+    kinematics = self._paddle_kinematics()
+    if kinematics is None:
       return
-    geom_ids = getattr(self.paddle_geom_cfg, "geom_ids", None)
-    data = getattr(robot, "data", None)
-    if data is None or geom_ids is None:
-      return
-
-    try:
-      geom_vel_w = data.geom_lin_vel_w[:, geom_ids]
-      geom_quat_w = data.geom_quat_w[:, geom_ids]
-    except (AttributeError, IndexError, TypeError):
-      return
-
-    paddle_vel_w = geom_vel_w.mean(dim=1)
-    paddle_quat_w = geom_quat_w[:, 0]
-    normal_local = torch.zeros_like(paddle_vel_w)
-    # MuJoCo cylinder height is local z; the paddle proxy is a thin cylinder.
-    normal_local[:, 2] = 1.0
-    normal_w = quat_apply(paddle_quat_w, normal_local)
-    normal_w = torch.nn.functional.normalize(normal_w, dim=-1)
+    _, paddle_vel_w, normal_w = kinematics
     opponent_dir = torch.zeros_like(normal_w)
     opponent_dir[:, 0] = -1.0
     normal_dot = torch.sum(normal_w * opponent_dir, dim=-1)
@@ -551,6 +702,11 @@ def get_pingpong_rally_state(
   y_limits: tuple[float, float] = (-1.25, 1.25),
   z_limits: tuple[float, float] = (0.05, 2.5),
   bounce_z_tolerance: float = 0.05,
+  impact_window_distance: float = _DEFAULT_IMPACT_WINDOW_DISTANCE,
+  impact_followthrough_steps: int = _DEFAULT_IMPACT_FOLLOWTHROUGH_STEPS,
+  impact_target_x: float = _DEFAULT_IMPACT_TARGET_X,
+  impact_target_y: float = _DEFAULT_IMPACT_TARGET_Y,
+  impact_target_z: float = _DEFAULT_IMPACT_TARGET_Z,
 ) -> PingpongRallyState:
   state = getattr(env, _PINGPONG_RALLY_STATE_ATTR, None)
   if isinstance(state, PingpongRallyState):
@@ -576,6 +732,11 @@ def get_pingpong_rally_state(
     y_limits=y_limits,
     z_limits=z_limits,
     bounce_z_tolerance=bounce_z_tolerance,
+    impact_window_distance=impact_window_distance,
+    impact_followthrough_steps=impact_followthrough_steps,
+    impact_target_x=impact_target_x,
+    impact_target_y=impact_target_y,
+    impact_target_z=impact_target_z,
   )
   setattr(env, _PINGPONG_RALLY_STATE_ATTR, state)
   return state
@@ -610,6 +771,17 @@ class PingpongRallyStateTerm:
       y_limits=cfg.params.get("y_limits", (-1.25, 1.25)),
       z_limits=cfg.params.get("z_limits", (0.05, 2.5)),
       bounce_z_tolerance=float(cfg.params.get("bounce_z_tolerance", 0.05)),
+      impact_window_distance=float(
+        cfg.params.get("impact_window_distance", _DEFAULT_IMPACT_WINDOW_DISTANCE)
+      ),
+      impact_followthrough_steps=int(
+        cfg.params.get(
+          "impact_followthrough_steps", _DEFAULT_IMPACT_FOLLOWTHROUGH_STEPS
+        )
+      ),
+      impact_target_x=float(cfg.params.get("impact_target_x", _DEFAULT_IMPACT_TARGET_X)),
+      impact_target_y=float(cfg.params.get("impact_target_y", _DEFAULT_IMPACT_TARGET_Y)),
+      impact_target_z=float(cfg.params.get("impact_target_z", _DEFAULT_IMPACT_TARGET_Z)),
     )
 
   def reset(self, env_ids: torch.Tensor | slice | None = None) -> None:

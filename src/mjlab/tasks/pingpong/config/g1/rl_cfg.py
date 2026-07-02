@@ -94,6 +94,14 @@ def unitree_g1_pingpong_cross_strike_quality_ppo_runner_cfg() -> (
   return cfg
 
 
+def unitree_g1_pingpong_cross_impact_ppo_runner_cfg() -> TennisLatentOnPolicyRunnerCfg:
+  """Create PPO config for the impact-window paddle-behavior Cross ablation."""
+  cfg = unitree_g1_pingpong_cross_strike_quality_ppo_runner_cfg()
+  cfg.experiment_name = "g1_pingpong_latent_cross_impact"
+  cfg.run_name = "pingpong_cross_impact_from_hit"
+  return cfg
+
+
 def unitree_g1_pingpong_cross_strike_quality_energy_relax_ppo_runner_cfg() -> (
   TennisLatentOnPolicyRunnerCfg
 ):
@@ -122,6 +130,7 @@ __all__ = [
   "DEFAULT_CROSS_RESUME_CHECKPOINT",
   "DEFAULT_RETURN_RESUME_CHECKPOINT",
   "unitree_g1_pingpong_cross_diag_ppo_runner_cfg",
+  "unitree_g1_pingpong_cross_impact_ppo_runner_cfg",
   "unitree_g1_pingpong_cross_ppo_runner_cfg",
   "unitree_g1_pingpong_cross_strike_quality_energy_relax_ppo_runner_cfg",
   "unitree_g1_pingpong_cross_strike_quality_ppo_runner_cfg",

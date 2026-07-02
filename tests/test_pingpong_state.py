@@ -88,6 +88,23 @@ def _make_state(env: Any) -> PingpongRallyState:
   )
 
 
+def _set_paddle_robot(
+  env: Any,
+  *,
+  pos: tuple[float, float, float],
+  vel: tuple[float, float, float],
+  quat: tuple[float, float, float, float],
+) -> None:
+  robot = SimpleNamespace(
+    data=SimpleNamespace(
+      geom_pos_w=torch.tensor([[pos]], dtype=torch.float32),
+      geom_lin_vel_w=torch.tensor([[vel]], dtype=torch.float32),
+      geom_quat_w=torch.tensor([[quat]], dtype=torch.float32),
+    )
+  )
+  env.scene["robot"] = robot
+
+
 def test_pingpong_state_counts_legal_single_return() -> None:
   env, ball, paddle_sensor, _, _ = _make_env()
   state = _make_state(env)
@@ -268,3 +285,75 @@ def test_pingpong_state_body_contact_overrides_same_step_paddle_hit() -> None:
   assert not state.paddle_hit_edge[0]
   assert not state.has_paddle_hit[0]
   assert state.paddle_hit_count[0] == 0
+
+
+def test_pingpong_state_records_impact_window_and_followthrough() -> None:
+  env, ball, paddle_sensor, _, _ = _make_env()
+  state = _make_state(env)
+  paddle_face_toward_opponent = (0.70710677, 0.0, -0.70710677, 0.0)
+
+  _set_paddle_robot(
+    env,
+    pos=(0.85, 0.0, 1.05),
+    vel=(-1.6, 0.0, 0.0),
+    quat=paddle_face_toward_opponent,
+  )
+  state.update()
+  assert not state.impact_window_active[0]
+  assert state.impact_desired_outgoing_dir.shape == (1, 3)
+
+  env.common_step_counter = 1
+  _set_paddle_robot(
+    env,
+    pos=(1.45, 0.0, 1.40),
+    vel=(-1.6, 0.0, 0.0),
+    quat=paddle_face_toward_opponent,
+  )
+  ball.data.root_link_pos_w[:] = torch.tensor([[0.65, 0.0, BALL_CENTER_TABLE_Z]])
+  ball.data.root_link_lin_vel_w[:] = torch.tensor([[2.0, 0.0, 1.0]])
+  state.update()
+  assert state.self_bounce_edge[0]
+  assert not state.impact_window_active[0]
+
+  env.common_step_counter = 2
+  _set_paddle_robot(
+    env,
+    pos=(0.86, 0.0, 1.05),
+    vel=(-1.6, 0.0, 0.0),
+    quat=paddle_face_toward_opponent,
+  )
+  ball.data.root_link_pos_w[:] = torch.tensor([[0.88, 0.0, 1.06]])
+  ball.data.root_link_lin_vel_w[:] = torch.tensor([[1.2, 0.0, 0.2]])
+  state.update()
+  assert state.impact_window_active[0]
+  assert state.impact_window_count[0] == 1
+  assert state.impact_center_distance[0] < 0.05
+  assert state.impact_velocity_to_target[0] > 1.0
+  assert state.impact_velocity_along_normal[0] > 1.0
+  assert state.impact_normal_to_target[0] > 0.9
+  assert state.impact_paddle_speed.shape == (1,)
+
+  env.common_step_counter = 3
+  paddle_sensor.data.force[:] = 5.0
+  ball.data.root_link_pos_w[:] = torch.tensor([[0.88, 0.0, 1.06]])
+  ball.data.root_link_lin_vel_w[:] = torch.tensor([[-2.5, 0.0, 2.0]])
+  state.update()
+  assert state.paddle_hit_edge[0]
+  assert state.impact_window_active[0]
+  assert state.followthrough_active[0]
+  assert state.impact_followthrough_velocity[0] > 1.0
+
+  env.common_step_counter = 4
+  paddle_sensor.data.force.zero_()
+  _set_paddle_robot(
+    env,
+    pos=(0.75, 0.0, 1.05),
+    vel=(-1.2, 0.0, 0.0),
+    quat=paddle_face_toward_opponent,
+  )
+  ball.data.root_link_pos_w[:] = torch.tensor([[0.70, 0.0, 1.10]])
+  ball.data.root_link_lin_vel_w[:] = torch.tensor([[-2.0, 0.0, 1.2]])
+  state.update()
+  assert not state.impact_window_active[0]
+  assert state.followthrough_active[0]
+  assert state.impact_followthrough_velocity[0] > 0.5

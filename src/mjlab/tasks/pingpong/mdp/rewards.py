@@ -110,6 +110,7 @@ class paddle_to_ball_after_bounce_dense(PingpongRallyStateTerm):
     z_limits: tuple[float, float] = (0.05, 2.5),
     bounce_z_tolerance: float = 0.05,
     gravity: float = 9.81,
+    **params,
   ) -> torch.Tensor:
     del (
       paddle_sensor_name,
@@ -128,6 +129,7 @@ class paddle_to_ball_after_bounce_dense(PingpongRallyStateTerm):
       y_limits,
       z_limits,
       bounce_z_tolerance,
+      params,
     )
     state = self.state
     delta_b = racket_to_ball_b(env, paddle_cfg, ball_cfg, robot_cfg)
@@ -167,6 +169,7 @@ class paddle_towards_ball_velocity(PingpongRallyStateTerm):
     z_limits: tuple[float, float] = (0.05, 2.5),
     bounce_z_tolerance: float = 0.05,
     gravity: float = 9.81,
+    **params,
   ) -> torch.Tensor:
     del (
       paddle_sensor_name,
@@ -185,6 +188,7 @@ class paddle_towards_ball_velocity(PingpongRallyStateTerm):
       y_limits,
       z_limits,
       bounce_z_tolerance,
+      params,
     )
     state = self.state
     delta_b = racket_to_ball_b(env, paddle_cfg, ball_cfg, robot_cfg)
@@ -359,6 +363,93 @@ class strike_post_hit_speed(PingpongRallyStateTerm):
     return speed_reward * state.hit_post_vx_toward_opponent_ratio * active.float()
 
 
+class impact_paddle_to_target_velocity(PingpongRallyStateTerm):
+  """Reward active paddle velocity toward the intended outgoing direction."""
+
+  def __init__(self, cfg: RewardTermCfg, env: ManagerBasedRlEnv):
+    super().__init__(cfg, env)
+
+  def __call__(
+    self,
+    env: ManagerBasedRlEnv,
+    speed_scale: float = 2.0,
+    **params,
+  ) -> torch.Tensor:
+    del env, params
+    state = self.state
+    speed = torch.clamp(state.impact_velocity_to_target, min=0.0)
+    reward = torch.tanh(speed / speed_scale)
+    return reward * state.impact_window_active.float()
+
+
+class impact_paddle_normal_alignment(PingpongRallyStateTerm):
+  """Reward the paddle face normal aligning with the desired outgoing direction."""
+
+  def __init__(self, cfg: RewardTermCfg, env: ManagerBasedRlEnv):
+    super().__init__(cfg, env)
+
+  def __call__(self, env: ManagerBasedRlEnv, **params) -> torch.Tensor:
+    del env, params
+    state = self.state
+    return state.impact_normal_to_target * state.impact_window_active.float()
+
+
+class impact_paddle_normal_velocity(PingpongRallyStateTerm):
+  """Reward the paddle moving through the ball along its effective face normal."""
+
+  def __init__(self, cfg: RewardTermCfg, env: ManagerBasedRlEnv):
+    super().__init__(cfg, env)
+
+  def __call__(
+    self,
+    env: ManagerBasedRlEnv,
+    speed_scale: float = 1.5,
+    **params,
+  ) -> torch.Tensor:
+    del env, params
+    state = self.state
+    speed = torch.clamp(state.impact_velocity_along_normal, min=0.0)
+    reward = torch.tanh(speed / speed_scale)
+    return reward * state.impact_window_active.float()
+
+
+class impact_contact_centering(PingpongRallyStateTerm):
+  """Reward keeping the ball near the paddle center only during impact setup."""
+
+  def __init__(self, cfg: RewardTermCfg, env: ManagerBasedRlEnv):
+    super().__init__(cfg, env)
+
+  def __call__(
+    self,
+    env: ManagerBasedRlEnv,
+    distance_std: float = 0.20,
+    **params,
+  ) -> torch.Tensor:
+    del env, params
+    state = self.state
+    reward = torch.exp(-(state.impact_center_distance**2) / distance_std**2)
+    return reward * state.impact_window_active.float()
+
+
+class followthrough_velocity(PingpongRallyStateTerm):
+  """Reward continuing the stroke toward the return target after legal contact."""
+
+  def __init__(self, cfg: RewardTermCfg, env: ManagerBasedRlEnv):
+    super().__init__(cfg, env)
+
+  def __call__(
+    self,
+    env: ManagerBasedRlEnv,
+    speed_scale: float = 2.0,
+    **params,
+  ) -> torch.Tensor:
+    del env, params
+    state = self.state
+    speed = torch.clamp(state.impact_followthrough_velocity, min=0.0)
+    reward = torch.tanh(speed / speed_scale)
+    return reward * state.followthrough_active.float()
+
+
 class pre_hit_action_rate_l2(PingpongRallyStateTerm):
   """Action-rate penalty that relaxes only after the legal paddle hit."""
 
@@ -412,6 +503,11 @@ class opponent_table_bounce_event(PingpongRallyStateTerm):
 
 __all__ = [
   "crossed_net_event",
+  "followthrough_velocity",
+  "impact_contact_centering",
+  "impact_paddle_normal_alignment",
+  "impact_paddle_normal_velocity",
+  "impact_paddle_to_target_velocity",
   "opponent_table_bounce_event",
   "paddle_hit_event",
   "paddle_to_ball_after_bounce_dense",

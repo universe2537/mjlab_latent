@@ -19,6 +19,7 @@ from mjlab.entity import EntityCfg
 from mjlab.tasks.pingpong.pingpong_env_cfg import (
   make_pingpong_latent_cross_diag_env_cfg,
   make_pingpong_latent_cross_env_cfg,
+  make_pingpong_latent_cross_impact_env_cfg,
   make_pingpong_latent_cross_strike_quality_energy_relax_env_cfg,
   make_pingpong_latent_cross_strike_quality_env_cfg,
   make_pingpong_latent_env_cfg,
@@ -254,6 +255,12 @@ def unitree_g1_pingpong_latent_cross_strike_quality_env_cfg(play: bool = False):
   return _apply_g1_pingpong_common(cfg, play=play)
 
 
+def unitree_g1_pingpong_latent_cross_impact_env_cfg(play: bool = False):
+  """Create G1 Cross task with impact-window paddle behavior rewards."""
+  cfg = make_pingpong_latent_cross_impact_env_cfg()
+  return _apply_g1_pingpong_common(cfg, play=play)
+
+
 def unitree_g1_pingpong_latent_cross_strike_quality_energy_relax_env_cfg(
   play: bool = False,
 ):
@@ -270,6 +277,7 @@ __all__ = [
   "get_g1_w_pingpong_paddle_spec",
   "unitree_g1_pingpong_latent_cross_diag_env_cfg",
   "unitree_g1_pingpong_latent_cross_env_cfg",
+  "unitree_g1_pingpong_latent_cross_impact_env_cfg",
   "unitree_g1_pingpong_latent_cross_strike_quality_energy_relax_env_cfg",
   "unitree_g1_pingpong_latent_cross_strike_quality_env_cfg",
   "unitree_g1_pingpong_latent_hit_env_cfg",

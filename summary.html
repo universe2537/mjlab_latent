@@ -47,6 +47,71 @@
     commands, failures, or next steps change.
   </p>
 
+  <h2>2026-07-02 Pingpong Cross Impact-Window Guidance</h2>
+  <ul>
+    <li>
+      New ablation task:
+      <code>Mjlab-Pingpong-Cross-Impact-Unitree-G1</code>. It inherits the
+      Cross loose regularization and StrikeQuality post-hit rewards, then adds
+      impact-window paddle behavior rewards so the policy is guided before and
+      around legal contact instead of only by post-hit ball behavior.
+    </li>
+    <li>
+      <code>PingpongRallyState</code> now caches impact-window paddle center,
+      paddle normal, paddle velocity, ball state, desired outgoing direction,
+      center distance, velocity-to-target, velocity-along-normal,
+      normal-to-target, and short follow-through velocity. The active window is
+      after the self-table bounce, before the first legal hit/fault, and near
+      the paddle; legal hit steps are included even if the distance gate is
+      imperfect.
+    </li>
+    <li>
+      New reward weights for the Impact task:
+      <code>impact_paddle_to_target_velocity=15</code>,
+      <code>impact_paddle_normal_alignment=8</code>,
+      <code>impact_paddle_normal_velocity=8</code>,
+      <code>impact_contact_centering=5</code>, and
+      <code>followthrough_velocity=5</code>. Old Cross and StrikeQuality reward
+      keys remain unchanged.
+    </li>
+    <li>
+      New Impact metrics include <code>impact/window_active</code>,
+      <code>impact/window_count</code>, <code>impact/velocity_to_target</code>,
+      <code>impact/velocity_along_normal</code>,
+      <code>impact/normal_to_target</code>,
+      <code>impact/center_distance</code>, and
+      <code>impact/followthrough_velocity</code>. Watch these together with
+      <code>hit/post_vx_toward_opponent_ratio</code>,
+      <code>hit/pred_net_clearance_positive</code>, and final
+      crossed/opponent-table/legal-return counts.
+    </li>
+    <li>
+      Validation on implementation day:
+      <code>UV_CACHE_DIR=/tmp/uv-cache FORCE_CPU=1 uv run pytest tests/test_pingpong_state.py tests/test_pingpong_task.py -q</code>,
+      <code>UV_CACHE_DIR=/tmp/uv-cache uv run ty check src/mjlab/tasks/pingpong tests/test_pingpong_state.py tests/test_pingpong_task.py</code>,
+      and
+      <code>UV_CACHE_DIR=/tmp/uv-cache uv run ruff check src/mjlab/tasks/pingpong tests/test_pingpong_state.py tests/test_pingpong_task.py</code>
+      all passed.
+    </li>
+    <li>
+      Active run after smoke and cleanup: tmux
+      <code>pingpong_cross_impact_4567_15360_20260702_110128</code>, task
+      <code>Mjlab-Pingpong-Cross-Impact-Unitree-G1</code>, physical GPUs
+      <code>4,5,6,7</code>, <code>15360</code> envs per GPU
+      (<code>512*30</code>, total <code>61440</code> envs), warm-starting from
+      <code>logs/rsl_rl/g1_pingpong_latent_hit/v3_collision_2026-06-24_15-53-52/model_4500.pt</code>
+      with <code>--agent.reset-resume-progress True</code>. Logdir:
+      <code>logs/rsl_rl/g1_pingpong_latent_cross_impact/pingpong_cross_impact_hitbest_15360pergpu_gpu4_7_20260702_110128_2026-07-02_11-01-52</code>.
+      Launch record:
+      <code>logs/rsl_rl/_codex_launch_records/pingpong_cross_impact_4567_15360_20260702_110128</code>.
+    </li>
+    <li>
+      The earlier <code>10240</code> env/GPU long-run attempt
+      <code>pingpong_cross_impact_hitbest_10240pergpu_gpu4_7_20260702_105707_2026-07-02_10-57-35</code>
+      and its launch record were stopped and deleted at the user's request.
+    </li>
+  </ul>
+
   <h2>2026-06-29 Pingpong Cross Hit-to-Return Diagnostics</h2>
   <ul>
     <li>

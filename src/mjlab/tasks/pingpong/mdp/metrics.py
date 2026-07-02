@@ -277,6 +277,44 @@ def hit_paddle_velocity_along_normal_metric(
   return _state(env, **params).hit_paddle_velocity_along_normal
 
 
+def impact_window_active_metric(env: ManagerBasedRlEnv, **params) -> torch.Tensor:
+  return _state(env, **params).impact_window_active.float()
+
+
+def impact_window_count_metric(env: ManagerBasedRlEnv, **params) -> torch.Tensor:
+  return _state(env, **params).impact_window_count.float()
+
+
+def impact_paddle_speed_metric(env: ManagerBasedRlEnv, **params) -> torch.Tensor:
+  return _state(env, **params).impact_paddle_speed
+
+
+def impact_velocity_to_target_metric(
+  env: ManagerBasedRlEnv, **params
+) -> torch.Tensor:
+  return _state(env, **params).impact_velocity_to_target
+
+
+def impact_velocity_along_normal_metric(
+  env: ManagerBasedRlEnv, **params
+) -> torch.Tensor:
+  return _state(env, **params).impact_velocity_along_normal
+
+
+def impact_normal_to_target_metric(env: ManagerBasedRlEnv, **params) -> torch.Tensor:
+  return _state(env, **params).impact_normal_to_target
+
+
+def impact_center_distance_metric(env: ManagerBasedRlEnv, **params) -> torch.Tensor:
+  return _state(env, **params).impact_center_distance
+
+
+def impact_followthrough_velocity_metric(
+  env: ManagerBasedRlEnv, **params
+) -> torch.Tensor:
+  return _state(env, **params).impact_followthrough_velocity
+
+
 __all__ = [
   "crossed_net_count_metric",
   "fault_count_metric",
@@ -301,6 +339,14 @@ __all__ = [
   "hit_pred_landing_y_metric",
   "hit_pred_net_clearance_metric",
   "hit_pred_net_clearance_positive_metric",
+  "impact_center_distance_metric",
+  "impact_followthrough_velocity_metric",
+  "impact_normal_to_target_metric",
+  "impact_paddle_speed_metric",
+  "impact_velocity_along_normal_metric",
+  "impact_velocity_to_target_metric",
+  "impact_window_active_metric",
+  "impact_window_count_metric",
   "legal_return_count_metric",
   "opponent_table_bounce_count_metric",
   "paddle_hit_count_metric",
