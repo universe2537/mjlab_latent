@@ -1,3 +1,42 @@
+## 2026-07-03 - Table-Tennis Distillation Launch
+
+### 目标
+
+用 table-tennis tracking teacher `model_18000.pt` 启动 low-level latent
+distillation，生成后续可供 Pingpong frozen decoder action 使用的 decoder
+checkpoint。用户要求将环境数放大到初始 distillation 的 `2.5x`，即
+`18432 -> 46080`。
+
+### 启动记录
+
+- Active tmux session: `table_tennis_distill_v1_46080env_gpu0_20260703`
+- Task: `Mjlab-Distill-TableTennis-Unitree-G1`
+- GPU: host GPU 0 exposed as `cuda:0`
+- Env count: `46080`
+- Teacher checkpoint:
+  `logs/rsl_rl/g1_tracking_table_tennis/table_tennis_tracking_v1_18432env_gpu2_2026-07-02_17-39-35/model_18000.pt`
+- Run name: `table_tennis_distill_v1_46080env_from_tracking18000`
+- Output:
+  `logs/rsl_rl/g1_distillation_table_tennis/table_tennis_distill_v1_46080env_from_tracking18000_2026-07-03_10-14-26`
+- Command:
+  `CUDA_VISIBLE_DEVICES=0 UV_CACHE_DIR=/tmp/uv-cache MPLCONFIGDIR=/tmp/mplconfig uv run train Mjlab-Distill-TableTennis-Unitree-G1 --env.scene.num-envs 46080 --gpu-ids "[0]" --agent.teacher-checkpoint logs/rsl_rl/g1_tracking_table_tennis/table_tennis_tracking_v1_18432env_gpu2_2026-07-02_17-39-35/model_18000.pt --agent.teacher-action-prob 1.0 --agent.experiment-name g1_distillation_table_tennis --agent.run-name table_tennis_distill_v1_46080env_from_tracking18000`
+
+### 初始状态
+
+- Resolved config confirms `teacher_task_id=Mjlab-Tracking-TableTennis-Unitree-G1`,
+  `teacher_action_prob=1.0`, action shape `29`, and state terms
+  `base_lin_vel, base_ang_vel, joint_pos, joint_vel, actions`.
+- `model_0.pt` and an ONNX export were written.
+- At iteration `10/29999`, loss dropped from `2.069` to `0.020`, replay buffer
+  filled to `1048576`, and GPU 0 was using about `18.6GB`.
+- The previous `18432`-env trial
+  `table_tennis_distill_v1_from_tracking18000_2026-07-03_10-10-17` was stopped
+  at about iteration `140` before `model_250.pt`; it has only `model_0.pt` and
+  logs.
+- Do not update Pingpong `DEFAULT_DECODER_CHECKPOINT` to the tracking teacher.
+  Switch Pingpong action only after a distillation decoder checkpoint is selected
+  and validated.
+
 ## 2026-07-02 - Table-Tennis Tracking 18432-Env Relaunch
 
 ### 目标
@@ -24,6 +63,26 @@
   `190k steps/s`.
 - Initial terminations are still dominated by `ee_body_pos`, so this run should
   be watched before selecting a teacher checkpoint.
+
+### Held-out test_001 check
+
+- Checkpoint:
+  `logs/rsl_rl/g1_tracking_table_tennis/table_tennis_tracking_v1_18432env_gpu2_2026-07-02_17-39-35/model_1500.pt`
+- Motion:
+  `artifacts/table_tennis/test_001/motion.npz`
+- Rollout: `600` control steps, no termination or truncation.
+- Mean errors: `anchor_pos=0.033m`, `anchor_rot=0.041rad`,
+  `body_pos=0.026m`, `body_rot=0.145rad`, `joint_pos_l2=0.787rad`,
+  `body_lin_vel=0.091`, `body_ang_vel=0.372`.
+- Preview:
+  `outputs/table_tennis_test001_tracking_model1500.mp4`
+- 2026-07-03 follow-up with `model_17500.pt`: `600` control steps, no
+  termination or truncation. Mean errors improved to `body_pos=0.019m`,
+  `body_rot=0.091rad`, `joint_pos_l2=0.414rad`, with `anchor_pos=0.034m` and
+  `anchor_rot=0.044rad`.
+- 2026-07-03 video with `model_18000.pt` on `test_001`:
+  `outputs/table_tennis_test001_tracking_model18000_h264.mp4`. It is
+  H.264/yuv420p, `960x540`, `50fps`, `12s`.
 
 ## 2026-07-02 - Table-Tennis Tracking Training Launch
 

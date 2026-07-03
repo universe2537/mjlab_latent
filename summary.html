@@ -47,6 +47,41 @@
     commands, failures, or next steps change.
   </p>
 
+  <h2>2026-07-03 Table-Tennis Distillation Training</h2>
+  <ul>
+    <li>
+      Active tmux session:
+      <code>table_tennis_distill_v1_46080env_gpu0_20260703</code>. It runs
+      <code>Mjlab-Distill-TableTennis-Unitree-G1</code> on host GPU 0 with
+      <code>46080</code> envs, i.e. <code>2.5x</code> the initial
+      distillation env count.
+    </li>
+    <li>
+      Teacher checkpoint:
+      <code>logs/rsl_rl/g1_tracking_table_tennis/table_tennis_tracking_v1_18432env_gpu2_2026-07-02_17-39-35/model_18000.pt</code>.
+      The resolved config confirms
+      <code>teacher_task_id=Mjlab-Tracking-TableTennis-Unitree-G1</code>,
+      <code>teacher_action_prob=1.0</code>, action shape <code>29</code>, and
+      deployment state terms
+      <code>base_lin_vel, base_ang_vel, joint_pos, joint_vel, actions</code>.
+    </li>
+    <li>
+      Run dir:
+      <code>logs/rsl_rl/g1_distillation_table_tennis/table_tennis_distill_v1_46080env_from_tracking18000_2026-07-03_10-14-26</code>.
+      Early check confirmed <code>Number of environments=46080</code>; loss
+      dropped from <code>2.069</code> at iteration <code>0</code> to
+      <code>0.020</code> at iteration <code>10</code>, replay buffer filled to
+      <code>1048576</code>, and GPU 0 used about <code>18.6GB</code>. The
+      previous <code>18432</code>-env trial
+      <code>table_tennis_distill_v1_from_tracking18000_2026-07-03_10-10-17</code>
+      was stopped at about iteration <code>140</code> before <code>model_250.pt</code>
+      was written; it only has <code>model_0.pt</code> and logs.
+      Do not point Pingpong <code>DEFAULT_DECODER_CHECKPOINT</code> at the
+      tracking teacher; only switch it after a distillation decoder checkpoint is
+      selected and validated.
+    </li>
+  </ul>
+
   <h2>2026-07-02 Table-Tennis Tracking Training</h2>
   <ul>
     <li>
@@ -63,6 +98,30 @@
       First check reached iteration <code>1/30000</code> at about
       <code>190k steps/s</code>; early terminations are dominated by
       <code>ee_body_pos</code>, so monitor before selecting a teacher checkpoint.
+    </li>
+    <li>
+      Held-out <code>test_001</code> validation with
+      <code>model_1500.pt</code> ran for <code>600</code> control steps without
+      termination or truncation. Mean errors were
+      <code>anchor_pos=0.033m</code>, <code>anchor_rot=0.041rad</code>,
+      <code>body_pos=0.026m</code>, <code>body_rot=0.145rad</code>, and
+      <code>joint_pos_l2=0.787rad</code>. H.264 preview:
+      <code>outputs/table_tennis_test001_tracking_model1500.mp4</code>.
+    </li>
+    <li>
+      On 2026-07-03, the same held-out <code>test_001</code> check with
+      <code>model_17500.pt</code> also ran for <code>600</code> control steps
+      without termination or truncation. Mean errors improved to
+      <code>body_pos=0.019m</code>, <code>body_rot=0.091rad</code>, and
+      <code>joint_pos_l2=0.414rad</code>; <code>anchor_pos=0.034m</code> and
+      <code>anchor_rot=0.044rad</code> stayed stable.
+    </li>
+    <li>
+      Recorded <code>test_001</code> with <code>model_18000.pt</code> to
+      <code>outputs/table_tennis_test001_tracking_model18000_h264.mp4</code>.
+      The file is H.264/yuv420p, <code>960x540</code>, <code>50fps</code>, and
+      <code>12s</code>; <code>outputs/table_tennis_test001_tracking_latest.mp4</code>
+      points to it.
     </li>
   </ul>
 
