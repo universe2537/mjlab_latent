@@ -47,6 +47,138 @@
     commands, failures, or next steps change.
   </p>
 
+  <h2>2026-07-06 Pingpong Cross-StrikeQuality PACE Reward</h2>
+  <ul>
+    <li>
+      <code>Mjlab-Pingpong-Cross-StrikeQuality-Unitree-G1</code> now enables
+      conservative PACE-style post-hit prediction rewards using the existing
+      <code>PingpongRallyState</code> predictions:
+      <code>strike_pred_net_clearance=40.0</code>,
+      <code>strike_pred_landing_inside=80.0</code>, and
+      <code>strike_post_hit_speed=30.0</code>.
+    </li>
+    <li>
+      The ordinary <code>Mjlab-Pingpong-Cross-Unitree-G1</code> baseline is
+      unchanged. No base stance, base velocity, latent decoder, checkpoint, or
+      task-registration change was made. Cross-Impact and
+      Cross-StrikeQualityEnergyRelax continue to inherit Cross-StrikeQuality
+      and only apply their own extra differences.
+    </li>
+    <li>
+      Validation passed:
+      <code>FORCE_CPU=1 UV_CACHE_DIR=/tmp/uv-cache uv run pytest tests/test_pingpong_task.py -q</code>
+      and
+      <code>UV_CACHE_DIR=/tmp/uv-cache uv run ty check src/mjlab/tasks/pingpong tests/test_pingpong_task.py</code>.
+    </li>
+    <li>
+      Formal training is running in tmux
+      <code>pingpong_cross_sq_pace_15360_gpu0_20260706</code> with
+      <code>15360</code> envs on host GPU <code>0</code>, warm-started from Hit
+      V3 clean <code>model_3500.pt</code> and using the absolute tennis decoder
+      checkpoint under <code>/data0/universe/home_moved/mjlab_latent/logs/rsl_rl/g1_distillation/...</code>.
+      Run:
+      <code>logs/rsl_rl/g1_pingpong_latent_cross_strike_quality/pingpong_cross_strike_quality_pace_from_hit_v3_clean3500_15360env_gpu0_2026-07-06_15-15-31</code>.
+      Early check showed about <code>61k</code> steps/s and GPU0 total memory
+      <code>18918MiB / 24564MiB</code>. Failed/smoke/test records from the
+      earlier 10240/4096/512 attempts were removed.
+    </li>
+  </ul>
+
+  <h2>2026-07-05 Table-Tennis Latent Analysis</h2>
+  <ul>
+    <li>
+      New local diagnostic folder: <code>latent_analysis/</code>. Run
+      <code>UV_CACHE_DIR=/tmp/uv-cache MPLCONFIGDIR=/tmp/mplconfig uv run python latent_analysis/analyze_latent_space.py --checkpoint /data0/universe/home_moved/mjlab_latent/logs/rsl_rl/g1_distillation_table_tennis/table_tennis_distill_v1_46080env_from_tracking18000_2026-07-03_10-14-26/model_30000.pt --motion-root artifacts/table_tennis --output-dir latent_analysis/outputs --samples-per-motion 1024</code>.
+    </li>
+    <li>
+      The script is read-only with respect to training and checkpoints. It uses
+      a CPU teacher-forced reference-state probe over all local table-tennis
+      motions, then reports TensorBoard scalar summaries, active latent
+      dimensions, prior/posterior alignment, teacher-action reconstruction
+      errors, PCA plots, and a <code>usable</code> /
+      <code>usable_with_caution</code> / <code>not_ready</code> verdict.
+    </li>
+    <li>
+      Outputs are written under <code>latent_analysis/outputs/</code>, including
+      <code>metrics_summary.json</code>, <code>latent_stats.json</code>,
+      <code>reconstruction_metrics.json</code>,
+      <code>per_motion_metrics.csv</code>, diagnostic PNGs, and
+      <code>report.md</code>/<code>report.html</code>. This does not update
+      Pingpong <code>DEFAULT_DECODER_CHECKPOINT</code>; closed-loop play
+      validation is still required before switching the decoder.
+    </li>
+    <li>
+      First full run over all 13 table-tennis motions collected
+      <code>1024</code> samples per motion (<code>13312</code> total). Verdict:
+      <code>not_ready</code>. Active latent dimensions were <code>0/16</code>,
+      prior/posterior mean L2 was <code>0.00735</code>, KL mean was
+      <code>0.000346</code>, and posterior/prior action MSE were nearly
+      identical. Reconstruction MSE was <code>0.0691</code> globally,
+      <code>0.0714</code> on train motions, <code>0.0527</code> on held-out
+      <code>test_001</code>, and <code>0.0607</code> on diagnostic
+      <code>zhengshou_002_badend</code>. Training event loss was lower
+      (<code>prior_action_loss final 0.01531</code>), so the next check should
+      be closed-loop play or a distillation objective/config change to prevent
+      latent collapse.
+    </li>
+  </ul>
+
+  <h2>2026-07-05 Tennis Default Latent Checkpoint Analysis</h2>
+  <ul>
+    <li>
+      <code>latent_analysis/analyze_latent_space.py</code> now also accepts
+      <code>--task-id</code>, <code>--analysis-label</code>, and
+      <code>--motion-pattern</code>, so the same diagnostic can run on the
+      default Tennis decoder without copying the script.
+    </li>
+    <li>
+      Analyzed checkpoint:
+      <code>/data0/universe/home_moved/mjlab_latent/logs/rsl_rl/g1_distillation/distill_cloud_unitree_racket_tennis_2026-05-12_09-35-14/model_30000.pt</code>
+      with <code>Mjlab-Distill-Flat-Unitree-G1</code> and
+      <code>artifacts/tennis_random_*/motion.npz</code>. Outputs:
+      <code>latent_analysis/outputs_tennis/</code>.
+    </li>
+    <li>
+      Full run collected <code>1024</code> samples per tennis motion
+      (<code>4096</code> total). Verdict: <code>not_ready</code>. Latent was
+      more active than table-tennis (<code>8/16</code> active dims), but
+      prior/posterior alignment was poor: KL mean <code>6.18</code>,
+      mean L2 <code>1.16</code>. Reconstruction MSE was
+      <code>0.0835</code> posterior and <code>0.1033</code> prior globally.
+      TensorBoard final <code>prior_action_loss</code> was much lower
+      (<code>0.01719</code>), so the offline reference-state probe is stricter
+      and the checkpoint should not be treated as a well-aligned latent prior.
+    </li>
+  </ul>
+
+  <h2>2026-07-05 Table-Tennis Distillation V2 KL-Aligned</h2>
+  <ul>
+    <li>
+      New run launched in tmux session
+      <code>table_tennis_distill_v2_kl_aligned_gpu1_20260705</code> on host GPU
+      <code>1</code> with <code>46080</code> envs. Output:
+      <code>logs/rsl_rl/g1_distillation_table_tennis/table_tennis_distill_v2_46080env_kl_aligned_from_tracking18000_gpu1_2026-07-05_23-43-32</code>.
+    </li>
+    <li>
+      Only KL schedule was aligned to the tennis decoder run:
+      <code>kl_loss_weight=0.001</code>,
+      <code>kl_loss_weight_end=0.005</code>,
+      <code>kl_loss_anneal_start=2500</code>,
+      <code>kl_loss_anneal_end=10000</code>. Teacher checkpoint, motion files,
+      robot asset, state/target terms, latent dim, batch size, buffer, and
+      teacher-action schedule were left unchanged.
+    </li>
+    <li>
+      Initial progress: <code>iter 0</code> loss <code>2.05281</code>,
+      KL <code>4.09406</code>, <code>kl_w=0.001</code>; by
+      <code>iter 20</code>, loss <code>0.01336</code>, prior_action
+      <code>0.01302</code>, KL <code>0.16503</code>. The failed sandbox smoke
+      run under <code>logs/rsl_rl/g1_distillation_table_tennis_smoke/</code>
+      happened because sandboxed Torch could not see CUDA and is not a valid
+      training run.
+    </li>
+  </ul>
+
   <h2>2026-07-03 Table-Tennis Distillation Training</h2>
   <ul>
     <li>
@@ -1035,6 +1167,40 @@
       <code>pingpong_cross_impact_from_hit_15360_20260702_172724</code>.
       Run dir:
       <code>/data0/universe/home_moved/mjlab_latent/logs/rsl_rl/g1_pingpong_latent_cross_impact/pingpong_cross_impact_from_hit_15360pergpu_gpu4_7_20260702_172724_2026-07-02_17-28-34</code>.
+    </li>
+  </ul>
+
+  <h2>Table-tennis Distill Play Video</h2>
+  <ul>
+    <li>
+      On 2026-07-06, <code>play-distill.py</code> gained a non-interactive
+      video path using the project <code>VideoRecorder</code>. New flags include
+      <code>--video</code>, <code>--video-folder</code>,
+      <code>--video-length</code>, <code>--video-width</code>,
+      <code>--video-height</code>, and <code>--video-name-prefix</code>.
+    </li>
+    <li>
+      A posterior expected-z tracking replay was recorded for the requested v1
+      decoder on
+      <code>artifacts/table_tennis/test_001/motion.npz</code> with decoder
+      <code>/data0/universe/home_moved/mjlab_latent/logs/rsl_rl/g1_distillation_table_tennis/table_tennis_distill_v1_46080env_from_tracking18000_2026-07-03_10-14-26/model_30000.pt</code>.
+      A v2 <code>model_1750.pt</code> video was recorded first by mistake and
+      should not be treated as the requested decoder check.
+    </li>
+    <li>
+      Video:
+      <code>outputs/play_distill_table_tennis_v1_model30000_test001_posterior/table_tennis_distill_v1_model30000_test001_posterior-step-0.mp4</code>.
+      Convenience symlink:
+      <code>outputs/table_tennis_distill_v1_model30000_test001_play_distill.mp4</code>.
+      Metadata confirmed H.264/yuv420p, 50 FPS, 960x540, 12 seconds.
+    </li>
+    <li>
+      Teacher tracking reference for the same <code>test_001</code> motion uses
+      <code>/data0/universe/home_moved/mjlab_latent/logs/rsl_rl/g1_tracking_table_tennis/table_tennis_tracking_v1_18432env_gpu2_2026-07-02_17-39-35/model_18000.pt</code>.
+      Video:
+      <code>outputs/play_tracking_table_tennis_teacher_model18000_test001/videos/play/rl-video-step-0.mp4</code>.
+      Convenience symlink:
+      <code>outputs/table_tennis_teacher_tracking_model18000_test001.mp4</code>.
     </li>
   </ul>
 

@@ -18,6 +18,7 @@ render_robots.py
 benchmark_results/
 /contact_test/
 outputs/
+latent_analysis/outputs*/
 table_data/
 
 # Documentation outputs.

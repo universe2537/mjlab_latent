@@ -115,7 +115,11 @@ CROSS_ROBOT_BALL_CONTACT_WEIGHT = -75.0
 CROSS_POST_HIT_X_PROGRESS_WEIGHT = 60.0
 CROSS_POST_HIT_BALL_VELOCITY_DIRECTION_WEIGHT = 120.0
 CROSS_LAND_OPPONENT_WEIGHT = 1200.0
-CROSS_STRIKE_QUALITY_REWARD_WEIGHTS: dict[str, float] = {}
+CROSS_STRIKE_QUALITY_REWARD_WEIGHTS: dict[str, float] = {
+  "strike_pred_net_clearance": 40.0,
+  "strike_pred_landing_inside": 80.0,
+  "strike_post_hit_speed": 30.0,
+}
 CROSS_IMPACT_REWARD_WEIGHTS: dict[str, float] = {}
 
 OUT_X_LIMITS = (-TABLE_HALF_LENGTH - 0.75, TABLE_HALF_LENGTH + 1.10)
@@ -752,7 +756,29 @@ def make_pingpong_latent_env_cfg() -> ManagerBasedRlEnvCfg:
 
 
 def _add_strike_quality_rewards(cfg: ManagerBasedRlEnvCfg) -> None:
-  del cfg
+  state_params = _state_params()
+  cfg.rewards["strike_pred_net_clearance"] = RewardTermCfg(
+    func=mdp.strike_pred_net_clearance,
+    weight=CROSS_STRIKE_QUALITY_REWARD_WEIGHTS["strike_pred_net_clearance"],
+    params={
+      **dict(state_params),
+      "clearance_margin": 0.03,
+      "clearance_scale": 0.18,
+    },
+  )
+  cfg.rewards["strike_pred_landing_inside"] = RewardTermCfg(
+    func=mdp.strike_pred_landing_inside,
+    weight=CROSS_STRIKE_QUALITY_REWARD_WEIGHTS["strike_pred_landing_inside"],
+    params=dict(state_params),
+  )
+  cfg.rewards["strike_post_hit_speed"] = RewardTermCfg(
+    func=mdp.strike_post_hit_speed,
+    weight=CROSS_STRIKE_QUALITY_REWARD_WEIGHTS["strike_post_hit_speed"],
+    params={
+      **dict(state_params),
+      "speed_scale": 4.0,
+    },
+  )
 
 
 def _add_impact_window_rewards(cfg: ManagerBasedRlEnvCfg) -> None:

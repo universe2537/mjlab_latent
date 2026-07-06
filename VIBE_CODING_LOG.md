@@ -1,3 +1,236 @@
+## 2026-07-06 - Pingpong Cross-StrikeQuality PACE-Style Reward Shaping
+
+### 目标
+
+只在 `Mjlab-Pingpong-Cross-StrikeQuality-Unitree-G1` 中接入 PACE-style
+击球后预测质量 reward，保留普通 `Mjlab-Pingpong-Cross-Unitree-G1` baseline
+不变，本轮不加入 base 站位或速度 reward。
+
+### 计划
+
+- [x] 保守启用已有预测型 reward：过网 clearance、对方台面落点、击球后速度。
+- [x] 复用 `PingpongRallyState` 已有预测结果，不新增独立球路预测器。
+- [x] 保持 Cross-Impact 和 Cross-StrikeQualityEnergyRelax 继续继承
+  Cross-StrikeQuality，只叠加各自原有差异。
+- [x] 更新配置测试并运行窄验证。
+
+### 实现记录
+
+- `CROSS_STRIKE_QUALITY_REWARD_WEIGHTS` 现在启用：
+  `strike_pred_net_clearance=40.0`，
+  `strike_pred_landing_inside=80.0`，
+  `strike_post_hit_speed=30.0`。
+- `_add_strike_quality_rewards()` 向 StrikeQuality cfg 添加三项 reward term；
+  普通 Cross 的 reward 配置保持不变。
+- 验证命令：
+  `FORCE_CPU=1 UV_CACHE_DIR=/tmp/uv-cache uv run pytest tests/test_pingpong_task.py -q`
+  和
+  `UV_CACHE_DIR=/tmp/uv-cache uv run ty check src/mjlab/tasks/pingpong tests/test_pingpong_task.py`
+  均通过。
+
+### 训练环境数与 GPU 选择
+
+- 历史 Pingpong env count：
+  - Hit V1：`8192` env，GPU `2,4`。
+  - Hit V3/V4 clean/collision：常用 `10240` env（`512*20`），GPU
+    `1,2`。
+  - Cross stable：`16384` env，GPU `4,6`。
+  - Cross-Diag / Cross-StrikeQuality 旧线：`16384` env，GPU `0,1`。
+  - Cross-Impact 长训：先试每卡 `10240` env，后改为每卡 `15360`
+    env（`512*30`），GPU `4,5,6,7`，总 `61440` env。
+- 当前机器状态（2026-07-06 15:07）：GPU `1` 正在跑
+  table-tennis distillation，约 `18.6GB`；GPU `2-7` 均已有较大训练或渲染
+  占用；GPU `0` 只有约 `2.1GB` 既有图形/Isaac 进程占用，是唯一适合新
+  Pingpong 测试的卡。
+- 对本次 PACE-style StrikeQuality reward，建议分两档：
+  - 快速测试 / smoke：单卡 GPU `0` 跑 `4096` env。理由是先确认新 reward
+    term、checkpoint load、CUDA/EGL/Warp 初始化和指标写入都稳定，避免在已拥挤
+    的机器上直接抢占多卡。
+  - 稳定后长训：优先恢复到旧 Cross/StrikeQuality 的 `16384` env 双卡配置；
+    如果后续空出 GPU `4-7`，再考虑 Impact 线验证过的每卡 `15360` env。
+- 启动尝试记录：
+  - 直接按 `command.md` 风格启动单卡 `10240` env tmux：
+    `pingpong_cross_strike_quality_pace_gpu0_20260706`，run
+    `logs/rsl_rl/g1_pingpong_latent_cross_strike_quality/pingpong_cross_strike_quality_pace_from_hit_v3_clean3500_10240env_gpu0_2026-07-06_15-06-37`。
+    该 run 只写出 `params/agent.yaml` 和 `params/env.yaml`，tmux 随后退出，尚未
+    进入 PPO iteration。
+  - sandbox 内前台 `512` env smoke 捕获到：
+    `RuntimeError: No CUDA GPUs are available`，Warp 也报告 CUDA driver not
+    available。这是当前 sandbox GPU 可见性问题；正式训练需要在有 GPU 权限的
+    tmux/host 环境中启动。
+  - host 前台 `512` env、`max_iterations=1` smoke 在添加绝对 decoder
+    checkpoint override 后通过。该 smoke 确认：
+    reward 表包含 `strike_pred_net_clearance=40.0`、
+    `strike_pred_landing_inside=80.0`、`strike_post_hit_speed=30.0`，并能从
+    Hit V3 clean `model_3500.pt` 加载 actor/critic。
+- 当前测试训练：
+  - Tmux session: `pingpong_cross_sq_pace_4096_gpu0_20260706`
+  - Task: `Mjlab-Pingpong-Cross-StrikeQuality-Unitree-G1`
+  - Env count: `4096`
+  - GPU: host GPU `0` exposed as `cuda:0`
+  - Run:
+    `logs/rsl_rl/g1_pingpong_latent_cross_strike_quality/pingpong_cross_strike_quality_pace_from_hit_v3_clean3500_4096env_gpu0_2026-07-06_15-11-36`
+  - Launch record:
+    `logs/rsl_rl/_codex_launch_records/pingpong_cross_sq_pace_4096_gpu0_20260706/COMMAND.md`
+  - Stdout capture:
+    `logs/rsl_rl/_codex_launch_records/pingpong_cross_sq_pace_4096_gpu0_20260706/stdout.log`
+  - Command used absolute decoder checkpoint:
+    `/data0/universe/home_moved/mjlab_latent/logs/rsl_rl/g1_distillation/distill_cloud_unitree_racket_tennis_2026-05-12_09-35-14/model_30000.pt`
+    because the default relative decoder path does not exist under the current
+    workspace `logs/`.
+  - Early live check at 2026-07-06 15:12 confirmed the run was active at
+    iteration `3528/43500`, about `43.7k` steps/s. Host GPU `0` total memory
+    was `7118MiB / 24564MiB`, with the Pingpong training process using about
+    `4950MiB`; remaining GPU `0` memory was mostly existing Isaac/graphics
+    processes. Initial PACE-style rewards were nonzero:
+    `Episode_Reward/strike_pred_net_clearance ~= 0.40`,
+    `strike_pred_landing_inside ~= 0.03`,
+    `strike_post_hit_speed ~= 0.24`.
+- 正式训练替换：
+  - 用户确认约 `20GB` 可用后，停止 `4096` env 测试 session，GPU `0`
+    回到约 `2163MiB / 24564MiB` 占用。
+  - 正式训练改为单卡 `15360` env（`512*30`），原因是它接近已有
+    Cross-Impact 每卡长训验证过的高吞吐档位，同时比单卡 `16384` 多留一点显存
+    余量。
+  - Tmux session: `pingpong_cross_sq_pace_15360_gpu0_20260706`
+  - Run:
+    `logs/rsl_rl/g1_pingpong_latent_cross_strike_quality/pingpong_cross_strike_quality_pace_from_hit_v3_clean3500_15360env_gpu0_2026-07-06_15-15-31`
+  - Launch record:
+    `logs/rsl_rl/_codex_launch_records/pingpong_cross_sq_pace_15360_gpu0_20260706/COMMAND.md`
+  - Stdout:
+    `logs/rsl_rl/_codex_launch_records/pingpong_cross_sq_pace_15360_gpu0_20260706/stdout.log`
+  - 早期检查：iteration `3506/43500`，约 `61k` steps/s；GPU `0` 总占用
+    `18918MiB / 24564MiB`，训练进程约 `16750MiB`，剩余约 `5.6GB`。
+  - 已清理本轮无关记录：失败的 `10240` env params-only run、失败的
+    `4096` env run、停止的 `4096` env test run、两个 `512` env smoke run、
+    4096 test launch record，以及对应的两个 smoke/test W&B offline run
+    `offline-run-20260706_151055-b72qo23t` 和
+    `offline-run-20260706_151140-68zveryz`。正式 `15360` run 和
+    `offline-run-20260706_151540-f5tc872d` 保留。
+
+## 2026-07-05 - Table-Tennis Latent Analysis Diagnostic
+
+### 目标
+
+为 table-tennis distillation checkpoint 新增离线 latent-space 诊断，固定分析
+`model_30000.pt`，覆盖 `artifacts/table_tennis` 下 train、held-out
+`test_001` 和 diagnostic `zhengshou_002_badend` motion，不修改 Pingpong 默认
+decoder。
+
+### 计划
+
+- [x] 新建 `latent_analysis/`，包含主脚本、README 和输出目录。
+- [x] 解析 distillation TensorBoard event，生成 final/best/last100 指标摘要。
+- [x] 通过 distillation env 进行 CPU teacher-forced reference-state 采样，提取
+  posterior/prior latent、teacher action、prior/posterior reconstruction。
+- [x] 输出 latent 统计、重构误差、PCA/诊断图和 verdict report。
+- [x] 运行脚本生成本地结果并做窄验证。
+
+### 实现记录
+
+- `latent_analysis/analyze_latent_space.py` 默认使用
+  `/data0/universe/home_moved/mjlab_latent/logs/rsl_rl/g1_distillation_table_tennis/table_tennis_distill_v1_46080env_from_tracking18000_2026-07-03_10-14-26/model_30000.pt`。
+- 采样方式是 teacher-forced reference-state probe：平衡设置各 motion/frame，
+  warmup 后用 tracking teacher action 推进一步，再对同一 actor obs 计算
+  `q(z|state,target)`、`p(z|state)`、posterior/prior decode action。
+- 输出写入 `latent_analysis/outputs/`，包括 JSON、CSV、PNG、`report.md` 和
+  `report.html`。
+
+### 诊断结果
+
+- 正式命令：
+  `UV_CACHE_DIR=/tmp/uv-cache MPLCONFIGDIR=/tmp/mplconfig uv run python latent_analysis/analyze_latent_space.py --checkpoint /data0/universe/home_moved/mjlab_latent/logs/rsl_rl/g1_distillation_table_tennis/table_tennis_distill_v1_46080env_from_tracking18000_2026-07-03_10-14-26/model_30000.pt --motion-root artifacts/table_tennis --output-dir latent_analysis/outputs --samples-per-motion 1024`
+- 采样结果：13 个 motion 各 1024 个样本，总计 13312。
+- Verdict: `not_ready`。核心原因是 latent 使用塌缩：active dims `0/16`，
+  posterior/prior mean L2 `0.00735`，KL mean `0.000346`，posterior/prior
+  action MSE 几乎相同。
+- Teacher-action reconstruction：global prior MSE `0.0691`，train prior MSE
+  `0.0714`，held-out `test_001` prior MSE `0.0527`，diagnostic
+  `zhengshou_002_badend` prior MSE `0.0607`。
+- TensorBoard final metrics still look much lower：final loss `0.01532`，
+  final prior_action_loss `0.01531`，last100 prior_action_loss `0.01578`。
+  这说明训练日志上的 on-policy/rollout 分布与 reference-state 离线 probe
+  存在差异，需要继续做闭环 play 或修改蒸馏目标后再选 decoder。
+
+## 2026-07-05 - Tennis Default Latent Checkpoint Diagnostic
+
+### 目标
+
+按 table-tennis latent diagnostic 同样流程，分析当前 Tennis/Pingpong 默认引用的
+tennis latent decoder checkpoint，不修改默认 decoder。
+
+### 实现记录
+
+- 将 `latent_analysis/analyze_latent_space.py` 泛化为可指定
+  `--task-id`、`--analysis-label` 和 `--motion-pattern`，默认 table-tennis 行为
+  保持不变。
+- Tennis 分析对象：
+  `/data0/universe/home_moved/mjlab_latent/logs/rsl_rl/g1_distillation/distill_cloud_unitree_racket_tennis_2026-05-12_09-35-14/model_30000.pt`。
+- 对应 task：`Mjlab-Distill-Flat-Unitree-G1`；motion：
+  `artifacts/tennis_random_*/motion.npz`。
+
+### 诊断结果
+
+- 正式命令：
+  `UV_CACHE_DIR=/tmp/uv-cache MPLCONFIGDIR=/tmp/mplconfig uv run python latent_analysis/analyze_latent_space.py --analysis-label tennis-default --task-id Mjlab-Distill-Flat-Unitree-G1 --checkpoint /data0/universe/home_moved/mjlab_latent/logs/rsl_rl/g1_distillation/distill_cloud_unitree_racket_tennis_2026-05-12_09-35-14/model_30000.pt --motion-root artifacts --motion-pattern 'tennis_random_*/motion.npz' --output-dir latent_analysis/outputs_tennis --samples-per-motion 1024`
+- 输出：`latent_analysis/outputs_tennis/`。
+- 采样结果：4 个 tennis motion 各 1024 个样本，总计 4096。
+- Verdict: `not_ready`。latent 比 table-tennis 更活跃，active dims `8/16`，
+  但 prior/posterior 对齐差，KL mean `6.18`，posterior/prior mean L2 `1.16`。
+- Teacher-action reconstruction：global posterior MSE `0.0835`，global prior
+  MSE `0.1033`。各 motion prior MSE：`tennis_random_001=0.1078`，
+  `002=0.1051`，`003=0.1131`，`004=0.0870`。
+- TensorBoard final metrics：loss `0.01669`，action_loss `0.01483`，
+  prior_action_loss `0.01719`，kl_loss `0.3721`。离线 reference-state probe
+  明显更严格，说明该 decoder 虽然部署上可被高层使用，但不应被当作
+  “latent prior 压缩良好”的 checkpoint。
+
+## 2026-07-05 - Table-Tennis Distillation V2 KL-Aligned Launch
+
+### 目标
+
+重新启动 table-tennis low-level distillation，只对齐 tennis 默认 decoder 的 KL
+schedule，不修改 teacher、motion、asset、state/target terms 或 Pingpong 默认
+decoder。
+
+### 启动记录
+
+- Tmux session:
+  `table_tennis_distill_v2_kl_aligned_gpu1_20260705`
+- Task: `Mjlab-Distill-TableTennis-Unitree-G1`
+- Host GPU: `1` exposed as `cuda:0`
+- Env count: `46080`
+- Teacher checkpoint:
+  `/data0/universe/home_moved/mjlab_latent/logs/rsl_rl/g1_tracking_table_tennis/table_tennis_tracking_v1_18432env_gpu2_2026-07-02_17-39-35/model_18000.pt`
+- Run:
+  `logs/rsl_rl/g1_distillation_table_tennis/table_tennis_distill_v2_46080env_kl_aligned_from_tracking18000_gpu1_2026-07-05_23-43-32`
+- Command:
+  `CUDA_VISIBLE_DEVICES=1 UV_CACHE_DIR=/tmp/uv-cache MPLCONFIGDIR=/tmp/mplconfig uv run train Mjlab-Distill-TableTennis-Unitree-G1 --env.scene.num-envs 46080 --gpu-ids '[0]' --agent.teacher-checkpoint /data0/universe/home_moved/mjlab_latent/logs/rsl_rl/g1_tracking_table_tennis/table_tennis_tracking_v1_18432env_gpu2_2026-07-02_17-39-35/model_18000.pt --agent.kl-loss-weight 0.001 --agent.kl-loss-weight-end 0.005 --agent.kl-loss-anneal-start 2500 --agent.kl-loss-anneal-end 10000 --agent.experiment-name g1_distillation_table_tennis --agent.run-name table_tennis_distill_v2_46080env_kl_aligned_from_tracking18000_gpu1`
+
+### 参数对齐
+
+- 对齐 tennis 的 KL schedule：
+  `kl_loss_weight=0.001`,
+  `kl_loss_weight_end=0.005`,
+  `kl_loss_anneal_start=2500`,
+  `kl_loss_anneal_end=10000`。
+- 保持 table-tennis teacher、motion、robot asset、state terms、target terms、
+  latent dim、batch size、buffer 和 teacher-action schedule 不变。
+- Resolved `params/agent.yaml` confirmed the above overrides.
+
+### 初始状态
+
+- Sandbox 内直接跑 CUDA smoke failed: `RuntimeError: No CUDA GPUs are available`。
+  原因是 sandbox 内 `torch` 看不到 CUDA；正式训练已通过 sandbox 外 tmux 启动。
+  失败 smoke run 目录：
+  `logs/rsl_rl/g1_distillation_table_tennis_smoke/smoke_kl_aligned_cli_2026-07-05_23-43-00`
+  不是有效训练。
+- `iter 0`: loss `2.05281`, action `2.04871`, prior_action `2.07290`,
+  KL `4.09406`, `kl_w=0.001`, buffer `737280`。
+- `iter 20`: loss `0.01336`, action `0.01320`, prior_action `0.01302`,
+  KL `0.16503`, `kl_w=0.001`, buffer `1048576`。
+- 训练初期显存约 `18.6GB` on host GPU 1。
+
 ## 2026-07-03 - Table-Tennis Distillation Launch
 
 ### 目标
@@ -809,3 +1042,47 @@ paddle 可以碰到约一半来球，但过网、对方落台和合法回球均�
 先看 `paddle_hit_count` 是否回升，同时 `robot_ball_contact_count` /
 `fault_reason/body_ball` 是否下降；若 hit 回升但 `legal_return_count` 长期不动，
 再恢复或重做更直接的 impact-window paddle behavior rewards。
+
+## 2026-07-06 01:30 - Table-tennis distill play video
+
+### 目标
+
+用 `play-distill.py` 直接加载 v1 table-tennis decoder，录制 `test_001`
+motion tracking 的 mp4，便于检查低层 decoder 的动作跟踪质量。先前误录过一版
+v2 `model_1750.pt`，但本次应以 v1 `model_30000.pt` 视频为准。
+
+### 改动
+
+- `play-distill.py` 新增非交互视频录制参数：
+  `--video`、`--video-folder`、`--video-length`、`--video-width`、
+  `--video-height` 和 `--video-name-prefix`。
+- 录制路径复用项目 `VideoRecorder`，普通 native/viser viewer 播放路径不变。
+
+### 录制对象
+
+- Checkpoint:
+  `/data0/universe/home_moved/mjlab_latent/logs/rsl_rl/g1_distillation_table_tennis/table_tennis_distill_v1_46080env_from_tracking18000_2026-07-03_10-14-26/model_30000.pt`
+- Motion:
+  `artifacts/table_tennis/test_001/motion.npz`
+- Latent:
+  posterior expected z，`state_dim=93`，`target_dim=67`，`latent_dim=16`
+- Render:
+  `MUJOCO_GL=egl`，`CUDA_VISIBLE_DEVICES=7`，`960x540`，`600` frames
+
+### 产物
+
+- Actual video:
+  `outputs/play_distill_table_tennis_v1_model30000_test001_posterior/table_tennis_distill_v1_model30000_test001_posterior-step-0.mp4`
+- Convenience symlink:
+  `outputs/table_tennis_distill_v1_model30000_test001_play_distill.mp4`
+- Teacher tracking reference video:
+  `outputs/play_tracking_table_tennis_teacher_model18000_test001/videos/play/rl-video-step-0.mp4`
+- Teacher convenience symlink:
+  `outputs/table_tennis_teacher_tracking_model18000_test001.mp4`
+
+### 验证
+
+- `UV_CACHE_DIR=/tmp/uv-cache uv run ruff check play-distill.py`
+- `UV_CACHE_DIR=/tmp/uv-cache uv run ty check play-distill.py`
+- `imageio` metadata confirms codec `h264`, pixel format `yuv420p`,
+  `50.0` FPS, duration `12.0s`, size `960x540`, and non-empty first frame.

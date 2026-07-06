@@ -99,6 +99,9 @@ Added
 Changed
 ^^^^^^^
 
+- Enabled conservative PACE-style post-hit prediction rewards on
+  ``Mjlab-Pingpong-Cross-StrikeQuality-Unitree-G1`` while leaving the baseline
+  Pingpong Cross task unchanged.
 - Simplified Pingpong Cross reward shaping around the current return plan.
   Cross now uses a predicted hit-point pre-hit reward, matched post-hit
   ``x_progress`` and current-velocity direction rewards with the same lateral

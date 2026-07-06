@@ -389,6 +389,7 @@ def test_pingpong_hit_and_cross_success_terms() -> None:
   assert "hit/paddle_velocity_along_normal" in cross_cfg.metrics
   assert "strike_pred_net_clearance" not in cross_cfg.rewards
   assert "strike_pred_landing_inside" not in cross_cfg.rewards
+  assert "strike_post_hit_speed" not in cross_cfg.rewards
   assert "impact_paddle_to_target_velocity" not in cross_cfg.rewards
   assert "robot_table_contact" not in cross_cfg.terminations
   assert cross_cfg.terminations["bad_orientation"].params["limit_angle"] < 1.0
@@ -411,9 +412,9 @@ def test_pingpong_hit_and_cross_success_terms() -> None:
   for reward_name, loose_weight in CROSS_LOOSE_REGULARIZATION_WEIGHTS.items():
     assert strike_cfg.rewards[reward_name].weight == loose_weight
   assert "strike_outgoing_ball_velocity" not in strike_cfg.rewards
-  assert "strike_pred_net_clearance" not in strike_cfg.rewards
-  assert "strike_pred_landing_inside" not in strike_cfg.rewards
-  assert "strike_post_hit_speed" not in strike_cfg.rewards
+  assert "strike_pred_net_clearance" in strike_cfg.rewards
+  assert "strike_pred_landing_inside" in strike_cfg.rewards
+  assert "strike_post_hit_speed" in strike_cfg.rewards
   assert "impact_paddle_to_target_velocity" not in strike_cfg.rewards
   assert "impact/velocity_to_target" not in strike_cfg.metrics
 

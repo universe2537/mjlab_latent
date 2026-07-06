@@ -21,6 +21,7 @@ from mjlab.tasks.distillation.rl import OnlineDistillationRunner
 from mjlab.tasks.registry import load_env_cfg, load_rl_cfg, load_runner_cls
 from mjlab.utils.os import get_wandb_checkpoint_path
 from mjlab.utils.torch import configure_torch_backends
+from mjlab.utils.wrappers import VideoRecorder
 from mjlab.viewer import NativeMujocoViewer, ViserPlayViewer
 
 DEFAULT_TASK_ID = "Mjlab-Distill-Flat-Unitree-G1"
@@ -42,6 +43,12 @@ class PlayDistillConfig:
   log_root: str = "logs/rsl_rl"
   latent_source: Literal["posterior", "prior"] = "posterior"
   use_expected_z: bool = True
+  video: bool = False
+  video_folder: str | None = None
+  video_length: int = 600
+  video_height: int | None = None
+  video_width: int | None = None
+  video_name_prefix: str = "play-distill"
 
 
 def _motion_file_refs(motion_files: str | tuple[str, ...] | None) -> tuple[str, ...]:
@@ -86,9 +93,7 @@ def _find_latest_local_checkpoint(log_root_path: Path) -> Path:
     checkpoints = sorted(run_dir.glob("model_*.pt"), key=_checkpoint_step)
     if checkpoints:
       return checkpoints[-1]
-  raise FileNotFoundError(
-    f"No checkpoints found under local log root: {log_root_path}"
-  )
+  raise FileNotFoundError(f"No checkpoints found under local log root: {log_root_path}")
 
 
 def _resolve_checkpoint(
@@ -156,7 +161,9 @@ def _restore_obs_slicer(
         "Checkpoint state_indices length does not match model state_dim: "
         f"{state_indices.numel()} vs {runner.model.state_dim}."
       )
-    if state_indices.numel() and int(state_indices.max().item()) >= runner.slicer.obs_dim:
+    if (
+      state_indices.numel() and int(state_indices.max().item()) >= runner.slicer.obs_dim
+    ):
       raise ValueError("Checkpoint state_indices exceed current observation dimension.")
     runner.slicer.state_indices = state_indices.to(runner.device)
 
@@ -166,8 +173,13 @@ def _restore_obs_slicer(
         "Checkpoint target_indices length does not match model target_dim: "
         f"{target_indices.numel()} vs {runner.model.target_dim}."
       )
-    if target_indices.numel() and int(target_indices.max().item()) >= runner.slicer.obs_dim:
-      raise ValueError("Checkpoint target_indices exceed current observation dimension.")
+    if (
+      target_indices.numel()
+      and int(target_indices.max().item()) >= runner.slicer.obs_dim
+    ):
+      raise ValueError(
+        "Checkpoint target_indices exceed current observation dimension."
+      )
     runner.slicer.target_indices = target_indices.to(runner.device)
 
 
@@ -191,17 +203,14 @@ def _configure_motion_command(cfg: PlayDistillConfig, env_cfg) -> None:
 
   cli_motion_files = _validate_local_files(cfg.motion_files, label="motion_files")
   if cli_motion_files:
-    motion_cmd.motion_files = cli_motion_files  # type: ignore[union-attr]
+    motion_cmd.motion_files = cli_motion_files
     print(f"[INFO] Using {len(cli_motion_files)} local motion file(s) from CLI")
     return
 
   configured_local_files = _existing_local_files(motion_cmd.motion_files)
   if configured_local_files:
-    motion_cmd.motion_files = configured_local_files  # type: ignore[union-attr]
-    print(
-      "[INFO] Using "
-      f"{len(configured_local_files)} configured local motion file(s)"
-    )
+    motion_cmd.motion_files = configured_local_files
+    print(f"[INFO] Using {len(configured_local_files)} configured local motion file(s)")
     return
 
   if cfg.wandb_run_path is None:
@@ -213,11 +222,13 @@ def _configure_motion_command(cfg: PlayDistillConfig, env_cfg) -> None:
 
   api = wandb.Api()
   wandb_run = api.run(str(cfg.wandb_run_path))
-  artifact = next((item for item in wandb_run.used_artifacts() if item.type == "motions"), None)
+  artifact = next(
+    (item for item in wandb_run.used_artifacts() if item.type == "motions"), None
+  )
   if artifact is None:
     raise RuntimeError("No motion artifact found in the W&B run.")
   motion_path = str(Path(artifact.download()) / "motion.npz")
-  motion_cmd.motion_files = motion_path  # type: ignore[union-attr]
+  motion_cmd.motion_files = motion_path
   print(f"[INFO] Using motion artifact: {motion_path}")
 
 
@@ -247,7 +258,9 @@ class DistillationPlayPolicy:
 
     latent = dist.mean if self.use_expected_z else dist.sample()
     if not self._printed_once:
-      latent_mode = "expected z (distribution mean)" if self.use_expected_z else "sampled z"
+      latent_mode = (
+        "expected z (distribution mean)" if self.use_expected_z else "sampled z"
+      )
       print(
         "[INFO] Playback latent source: "
         f"{self.latent_source}, mode: {latent_mode}, latent_dim={latent.shape[-1]}"
@@ -275,13 +288,39 @@ def run_play_distill(cfg: PlayDistillConfig) -> None:
   if cfg.num_envs is not None:
     env_cfg.scene.num_envs = cfg.num_envs
 
+  if cfg.video_length <= 0:
+    raise ValueError(f"video_length must be positive, got {cfg.video_length}.")
+  if cfg.video_height is not None:
+    env_cfg.viewer.height = cfg.video_height
+  if cfg.video_width is not None:
+    env_cfg.viewer.width = cfg.video_width
+
   _configure_motion_command(cfg, env_cfg)
   checkpoint_path = _resolve_checkpoint(cfg, experiment_name=agent_cfg.experiment_name)
   checkpoint = _load_checkpoint(checkpoint_path, device=device)
   runner_cfg = _runner_cfg_from_checkpoint(checkpoint, agent_cfg)
   clip_actions = runner_cfg.get("clip_actions", agent_cfg.clip_actions)
 
-  env = ManagerBasedRlEnv(cfg=env_cfg, device=device)
+  env = ManagerBasedRlEnv(
+    cfg=env_cfg,
+    device=device,
+    render_mode="rgb_array" if cfg.video else None,
+  )
+  video_folder = (
+    Path(cfg.video_folder)
+    if cfg.video_folder is not None
+    else checkpoint_path.parent / "videos" / "play_distill"
+  )
+  if cfg.video:
+    print(f"[INFO] Recording video to: {video_folder}")
+    env = VideoRecorder(
+      env,
+      video_folder=video_folder,
+      step_trigger=lambda step: step == 0,
+      video_length=cfg.video_length,
+      name_prefix=cfg.video_name_prefix,
+      disable_logger=True,
+    )
   wrapped_env = RslRlVecEnvWrapper(env, clip_actions=clip_actions)
 
   try:
@@ -308,9 +347,7 @@ def run_play_distill(cfg: PlayDistillConfig) -> None:
     )
 
     if cfg.viewer == "auto":
-      has_display = bool(
-        os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")
-      )
+      has_display = bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
       resolved_viewer = "native" if has_display else "viser"
     else:
       resolved_viewer = cfg.viewer
@@ -320,6 +357,15 @@ def run_play_distill(cfg: PlayDistillConfig) -> None:
       f"{cfg.task_id} with state_dim={runner.slicer.state_dim}, "
       f"target_dim={runner.slicer.target_dim}, latent_dim={runner.model.latent_dim}"
     )
+
+    if cfg.video:
+      obs = wrapped_env.get_observations()
+      for _ in range(cfg.video_length):
+        with torch.no_grad():
+          actions = policy(obs)
+        obs, _, _, _ = wrapped_env.step(actions)
+      print(f"[INFO] Saved video(s) under: {video_folder}")
+      return
 
     if resolved_viewer == "native":
       NativeMujocoViewer(wrapped_env, policy).run()
