@@ -1,6 +1,7 @@
 """Unitree G1 PPO configuration for table-tennis latent-control tasks."""
 
 from mjlab.rl import RslRlModelCfg, RslRlPpoAlgorithmCfg
+from mjlab.tasks.pingpong.rl import PingpongPaceOnPolicyRunnerCfg
 from mjlab.tasks.tennis.rl import TennisLatentOnPolicyRunnerCfg
 
 DEFAULT_CROSS_RESUME_CHECKPOINT = ""
@@ -128,6 +129,47 @@ def unitree_g1_pingpong_return_ppo_runner_cfg() -> TennisLatentOnPolicyRunnerCfg
   return cfg
 
 
+def unitree_g1_pingpong_pace_ppo_runner_cfg() -> PingpongPaceOnPolicyRunnerCfg:
+  """Create PPO config for the PACE-style direct joint-control baseline."""
+  return PingpongPaceOnPolicyRunnerCfg(
+    actor=RslRlModelCfg(
+      hidden_dims=(512, 256, 128),
+      activation="elu",
+      obs_normalization=True,
+      distribution_cfg={
+        "class_name": "GaussianDistribution",
+        "init_std": 1.0,
+        "std_type": "scalar",
+      },
+    ),
+    critic=RslRlModelCfg(
+      hidden_dims=(512, 256, 128),
+      activation="elu",
+      obs_normalization=True,
+    ),
+    algorithm=RslRlPpoAlgorithmCfg(
+      value_loss_coef=1.0,
+      use_clipped_value_loss=True,
+      clip_param=0.2,
+      entropy_coef=0.01,
+      num_learning_epochs=5,
+      num_mini_batches=4,
+      learning_rate=1.0e-3,
+      schedule="adaptive",
+      gamma=0.99,
+      lam=0.95,
+      desired_kl=0.01,
+      max_grad_norm=1.0,
+    ),
+    experiment_name="g1_pingpong_pace",
+    run_name="pingpong_pace_scratch",
+    save_interval=250,
+    num_steps_per_env=24,
+    max_iterations=10000,
+    clip_actions=100.0,
+  )
+
+
 __all__ = [
   "DEFAULT_CROSS_RESUME_CHECKPOINT",
   "DEFAULT_RETURN_RESUME_CHECKPOINT",
@@ -137,5 +179,6 @@ __all__ = [
   "unitree_g1_pingpong_cross_strike_quality_energy_relax_ppo_runner_cfg",
   "unitree_g1_pingpong_cross_strike_quality_ppo_runner_cfg",
   "unitree_g1_pingpong_latent_ppo_runner_cfg",
+  "unitree_g1_pingpong_pace_ppo_runner_cfg",
   "unitree_g1_pingpong_return_ppo_runner_cfg",
 ]

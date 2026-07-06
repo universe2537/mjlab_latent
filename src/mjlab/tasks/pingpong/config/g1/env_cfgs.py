@@ -11,6 +11,7 @@ from mjlab.asset_zoo.robots.unitree_g1_w_pingpong_paddle import (
   get_g1_w_pingpong_paddle_robot_cfg,
   get_g1_w_pingpong_paddle_spec,
 )
+from mjlab.envs.mdp.actions import JointPositionActionCfg
 from mjlab.tasks.pingpong.pingpong_env_cfg import (
   add_pingpong_paddle_ball_contact_pair,
   make_pingpong_latent_cross_diag_env_cfg,
@@ -20,6 +21,7 @@ from mjlab.tasks.pingpong.pingpong_env_cfg import (
   make_pingpong_latent_cross_strike_quality_env_cfg,
   make_pingpong_latent_env_cfg,
   make_pingpong_latent_return_env_cfg,
+  make_pingpong_pace_env_cfg,
 )
 from mjlab.tasks.pingpong.scene import get_pingpong_ball_cfg, get_pingpong_table_cfg
 from mjlab.tasks.tennis.mdp import FrozenDecoderLatentJointPositionActionCfg
@@ -93,6 +95,29 @@ def unitree_g1_pingpong_latent_cross_strike_quality_energy_relax_env_cfg(
   return _apply_g1_pingpong_common(cfg, play=play)
 
 
+def unitree_g1_pingpong_pace_env_cfg(play: bool = False):
+  """Create G1 PACE-style direct joint-control table-tennis task."""
+  cfg = make_pingpong_pace_env_cfg()
+  cfg.scene.entities = {
+    "robot": get_g1_w_pingpong_paddle_robot_cfg(),
+    "ball": get_pingpong_ball_cfg(),
+    "table": get_pingpong_table_cfg(),
+  }
+  cfg.scene.spec_fn = add_pingpong_paddle_ball_contact_pair
+  cfg.viewer.body_name = "torso_link"
+  cfg.viewer.elevation = -16.0
+  cfg.viewer.azimuth = 135.0
+
+  action = cfg.actions["joint_pos"]
+  assert isinstance(action, JointPositionActionCfg)
+  action.scale = G1_W_RACKET_ACTION_SCALE
+
+  if play:
+    cfg.episode_length_s = int(1e9)
+    cfg.observations["actor"].enable_corruption = False
+  return cfg
+
+
 __all__ = [
   "DEFAULT_DECODER_CHECKPOINT",
   "PINGPONG_PADDLE_HANDLE_HALF_LENGTH",
@@ -108,4 +133,5 @@ __all__ = [
   "unitree_g1_pingpong_latent_cross_strike_quality_env_cfg",
   "unitree_g1_pingpong_latent_hit_env_cfg",
   "unitree_g1_pingpong_latent_return_env_cfg",
+  "unitree_g1_pingpong_pace_env_cfg",
 ]

@@ -47,6 +47,44 @@
     commands, failures, or next steps change.
   </p>
 
+  <h2>2026-07-06 Pingpong PACE Baseline Task</h2>
+  <ul>
+    <li>
+      Added independent baseline task
+      <code>Mjlab-Pingpong-PACE-Unitree-G1</code>. It uses direct
+      <code>JointPositionActionCfg</code> over all 29 G1 joints with
+      <code>G1_W_RACKET_ACTION_SCALE</code> and <code>clip_actions=100.0</code>;
+      it does not use the frozen latent decoder.
+    </li>
+    <li>
+      The task keeps current Pingpong table/ball/contact/success definitions,
+      but replaces the latent actor contract with PACE-style table-local
+      observations, privileged future critic terms, a learned ball predictor,
+      and direct-joint stability/task rewards.
+    </li>
+    <li>
+      Runner is <code>PingpongPaceOnPolicyRunner</code>. It trains a small MLP
+      predictor from 5 recent ball positions to future ball pose during the
+      first 20 PPO iterations, logs <code>predictor_mse</code>, and saves
+      <code>pred_state_dict</code>, <code>pred_optimizer_state_dict</code>, and
+      <code>pred_cfg</code> into checkpoints.
+    </li>
+    <li>
+      Validation passed:
+      <code>FORCE_CPU=1 UV_CACHE_DIR=/tmp/uv-cache uv run pytest tests/test_pingpong_task.py tests/test_pingpong_state.py -q</code>,
+      <code>UV_CACHE_DIR=/tmp/uv-cache uv run ty check src/mjlab/tasks/pingpong tests/test_pingpong_task.py</code>,
+      and CPU smoke train with
+      <code>CUDA_VISIBLE_DEVICES= ... uv run train Mjlab-Pingpong-PACE-Unitree-G1 --agent.max-iterations 1 --env.scene.num-envs 2 --agent.upload-model False</code>.
+      The smoke run produced actor obs <code>105</code>, critic obs
+      <code>120</code>, action dim <code>29</code>, and
+      <code>predictor_mse ~= 1.0167</code>.
+    </li>
+    <li>
+      Current CLI uses <code>--env.scene.num-envs</code> rather than
+      <code>--env.num-envs</code> for training env count overrides.
+    </li>
+  </ul>
+
   <h2>2026-07-06 Pingpong Cross-StrikeQuality PACE Reward</h2>
   <ul>
     <li>

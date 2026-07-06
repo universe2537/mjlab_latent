@@ -12,6 +12,7 @@ from mjlab.tasks.tennis.mdp.rewards import (  # noqa: F401
 from .ball_providers import *  # noqa: F403
 from .metrics import *  # noqa: F403
 from .observations import *  # noqa: F403
+from .pace import *  # noqa: F403
 from .rewards import *  # noqa: F403
 from .state import *  # noqa: F403
 from .terminations import *  # noqa: F403

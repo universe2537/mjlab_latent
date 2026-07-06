@@ -5,6 +5,8 @@ import mujoco
 import torch
 
 import mjlab.tasks  # noqa: F401
+from mjlab.asset_zoo.robots import G1_W_RACKET_ACTION_SCALE
+from mjlab.envs.mdp.actions import JointPositionActionCfg
 from mjlab.scene import Scene
 from mjlab.sensor import ContactSensorCfg
 from mjlab.tasks.distillation.rl.config import DistillationRunnerCfg
@@ -34,6 +36,7 @@ from mjlab.tasks.pingpong.pingpong_env_cfg import (
   CROSS_ROBOT_BALL_CONTACT_WEIGHT,
   CROSS_STRIKE_QUALITY_REWARD_WEIGHTS,
   DECODER_STATE_TERMS,
+  PACE_TASK_REWARD_WEIGHTS,
   PADDLE_BALL_PAIR_CONDIM,
   PADDLE_BALL_PAIR_FRICTION,
   PADDLE_BALL_PAIR_GEOM1,
@@ -43,7 +46,11 @@ from mjlab.tasks.pingpong.pingpong_env_cfg import (
   PADDLE_BALL_PAIR_SOLIMP,
   PADDLE_BALL_PAIR_SOLREF,
 )
-from mjlab.tasks.registry import list_tasks, load_env_cfg, load_rl_cfg
+from mjlab.tasks.pingpong.rl import (
+  PingpongPaceOnPolicyRunner,
+  PingpongPaceOnPolicyRunnerCfg,
+)
+from mjlab.tasks.registry import list_tasks, load_env_cfg, load_rl_cfg, load_runner_cls
 from mjlab.tasks.tennis.mdp import FrozenDecoderLatentJointPositionActionCfg
 from mjlab.tasks.tennis.rl import TennisLatentOnPolicyRunnerCfg
 from mjlab.tasks.tennis.rl.runner import reset_actor_distribution_std
@@ -77,12 +84,14 @@ def test_pingpong_tasks_registered() -> None:
   assert "Mjlab-Pingpong-Cross-Impact-Unitree-G1" in list_tasks()
   assert "Mjlab-Pingpong-Cross-StrikeQualityEnergyRelax-Unitree-G1" in list_tasks()
   assert "Mjlab-Pingpong-Return-Unitree-G1" in list_tasks()
+  assert "Mjlab-Pingpong-PACE-Unitree-G1" in list_tasks()
 
 
 def test_pingpong_task_scene_compiles() -> None:
   for task_id in (
     "Mjlab-Pingpong-Hit-Unitree-G1",
     "Mjlab-Pingpong-Cross-Unitree-G1",
+    "Mjlab-Pingpong-PACE-Unitree-G1",
   ):
     cfg = load_env_cfg(task_id)
     scene = Scene(cfg.scene, device="cpu")
@@ -211,6 +220,54 @@ def test_pingpong_env_uses_frozen_decoder_action() -> None:
   assert tuple(action.decoder_state_terms) == tuple(table_distill_cfg.state_terms)
 
 
+def test_pingpong_pace_env_uses_direct_joint_action() -> None:
+  cfg = load_env_cfg("Mjlab-Pingpong-PACE-Unitree-G1")
+  assert "joint_pos" in cfg.actions
+  assert "latent_joint_pos" not in cfg.actions
+  action = cfg.actions["joint_pos"]
+  assert isinstance(action, JointPositionActionCfg)
+  assert tuple(action.actuator_names) == (".*",)
+  assert action.use_default_offset is True
+  assert action.scale == G1_W_RACKET_ACTION_SCALE
+
+  actor_terms = cfg.observations["actor"].terms
+  for term_name in (
+    "base_ang_vel",
+    "projected_gravity",
+    "joint_pos",
+    "joint_vel",
+    "actions",
+    "ball_pos",
+    "robot_pos",
+    "ball_prediction",
+    "rel_target_base_xy",
+    "heading",
+  ):
+    assert term_name in actor_terms
+  assert actor_terms["actions"].params["action_name"] == "joint_pos"
+
+  critic_terms = cfg.observations["critic"].terms
+  for term_name in (
+    "future_ball_pose",
+    "paddle_touch_point",
+    "robot_future_delta",
+    "future_time",
+    "rally_flags",
+  ):
+    assert term_name in critic_terms
+
+  for reward_name, reward_weight in PACE_TASK_REWARD_WEIGHTS.items():
+    assert cfg.rewards[reward_name].weight == reward_weight
+  assert cfg.curriculum["ball_target_region"].params["success_term_name"] == (
+    "legal_return_success"
+  )
+
+  cross_cfg = load_env_cfg("Mjlab-Pingpong-Cross-Unitree-G1")
+  strike_cfg = load_env_cfg("Mjlab-Pingpong-Cross-StrikeQuality-Unitree-G1")
+  assert not any(name.startswith("pace_") for name in cross_cfg.rewards)
+  assert not any(name.startswith("pace_") for name in strike_cfg.rewards)
+
+
 def test_pingpong_rl_configs_load() -> None:
   hit_cfg = cast(
     TennisLatentOnPolicyRunnerCfg,
@@ -294,6 +351,26 @@ def test_pingpong_rl_configs_load() -> None:
   assert return_cfg.clip_actions == 2.5
   assert return_cfg.reset_actor_std == 0.8
   assert return_cfg.max_iterations == 40000
+
+  pace_cfg = cast(
+    PingpongPaceOnPolicyRunnerCfg,
+    load_rl_cfg("Mjlab-Pingpong-PACE-Unitree-G1"),
+  )
+  assert pace_cfg.class_name == "PingpongPaceOnPolicyRunner"
+  assert pace_cfg.experiment_name == "g1_pingpong_pace"
+  assert pace_cfg.run_name == "pingpong_pace_scratch"
+  assert pace_cfg.clip_actions == 100.0
+  assert pace_cfg.max_iterations == 10000
+  assert pace_cfg.predictor["history_len"] == 5
+  assert pace_cfg.predictor["traj_max_len"] == 128
+  assert pace_cfg.predictor["hidden_sizes"] == [64, 64]
+  assert pace_cfg.predictor["lr"] == 5.0e-4
+  assert pace_cfg.predictor["epochs_per_update"] == 1
+  assert pace_cfg.predictor["batch_size"] == 1024
+  assert pace_cfg.predictor["train_until_iters"] == 20
+  assert load_runner_cls("Mjlab-Pingpong-PACE-Unitree-G1") is (
+    PingpongPaceOnPolicyRunner
+  )
 
 
 def test_pingpong_hit_and_cross_success_terms() -> None:

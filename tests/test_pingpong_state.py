@@ -4,6 +4,14 @@ from typing import Any
 import torch
 
 from mjlab.managers.scene_entity_config import SceneEntityCfg
+from mjlab.tasks.pingpong.mdp.pace import (
+  get_pingpong_pace_prediction_state,
+  pace_ball_prediction_table,
+  pace_future_base_vel_target,
+  pace_future_pass_net,
+  pace_relative_target_base_xy,
+  update_pingpong_pace_prediction,
+)
 from mjlab.tasks.pingpong.mdp.state import (
   FAULT_ILLEGAL_BODY_BALL_CONTACT,
   FAULT_ILLEGAL_PRE_BOUNCE_HIT,
@@ -88,6 +96,40 @@ def _make_state(env: Any) -> PingpongRallyState:
   )
 
 
+def _make_pace_params() -> dict[str, Any]:
+  return {
+    "paddle_sensor_name": "paddle_ball_contact",
+    "net_sensor_name": "pingpong_ball_net_contact",
+    "body_ball_sensor_name": "robot_ball_contact",
+    "ball_cfg": SceneEntityCfg("ball"),
+    "robot_cfg": SceneEntityCfg("robot"),
+    "force_threshold": 1.0,
+    "table_z": BALL_CENTER_TABLE_Z,
+    "net_top_z": NET_TOP_Z,
+    "self_x_limits": (0.0, 1.37),
+    "opponent_x_limits": (-1.37, 0.0),
+    "table_y_limits": (-0.7625, 0.7625),
+    "x_limits": (-2.1, 2.4),
+    "y_limits": (-1.25, 1.25),
+    "z_limits": (0.05, 2.5),
+    "bounce_z_tolerance": 0.055,
+  }
+
+
+def _add_pace_robot(env: Any) -> Any:
+  robot = SimpleNamespace(
+    data=SimpleNamespace(
+      root_link_pos_w=torch.tensor([[1.55, 0.0, 0.74]], dtype=torch.float32),
+      root_link_lin_vel_w=torch.zeros(1, 3, dtype=torch.float32),
+      root_link_ang_vel_b=torch.zeros(1, 3, dtype=torch.float32),
+      heading_w=torch.zeros(1, dtype=torch.float32),
+    )
+  )
+  env.scene["robot"] = robot
+  env.episode_length_buf = torch.ones(1, dtype=torch.long)
+  return robot
+
+
 def _set_paddle_robot(
   env: Any,
   *,
@@ -103,6 +145,53 @@ def _set_paddle_robot(
     )
   )
   env.scene["robot"] = robot
+
+
+def test_pingpong_pace_prediction_state_shapes_and_hook() -> None:
+  env, _, _, _, _ = _make_env()
+  _add_pace_robot(env)
+  params = _make_pace_params()
+
+  state = get_pingpong_pace_prediction_state(env, **params)
+  state.update()
+
+  assert state.ball_future_pose.shape == (1, 3)
+  assert state.target_base_xy.shape == (1, 2)
+  assert state.robot_future_vel.shape == (1, 3)
+  assert torch.isfinite(state.ball_future_pose).all()
+  assert torch.isfinite(state.target_base_xy).all()
+  assert torch.isfinite(state.robot_future_vel).all()
+  assert pace_relative_target_base_xy(env, **params).shape == (1, 2)
+  torch.testing.assert_close(
+    pace_ball_prediction_table(env, **params),
+    torch.zeros(1, 3),
+  )
+
+  learned_prediction = torch.tensor([[0.25, -0.10, 1.20]], dtype=torch.float32)
+  update_pingpong_pace_prediction(env, learned_prediction, **params)
+  torch.testing.assert_close(
+    pace_ball_prediction_table(env, **params),
+    learned_prediction,
+  )
+
+
+def test_pingpong_pace_invalid_rewards_are_finite() -> None:
+  env, ball, _, _, _ = _make_env()
+  _add_pace_robot(env)
+  params = _make_pace_params()
+  ball.data.root_link_pos_w[:] = torch.tensor([[1.20, 0.0, 0.8]])
+  ball.data.root_link_lin_vel_w[:] = torch.tensor([[-1.0, 0.0, -0.2]])
+  env.common_step_counter = 1
+
+  rewards = torch.stack(
+    (
+      pace_future_base_vel_target(env, **params),
+      pace_future_pass_net(env, **params),
+    ),
+    dim=-1,
+  )
+  assert torch.isfinite(rewards).all()
+  assert rewards.shape == (1, 2)
 
 
 def test_pingpong_state_counts_legal_single_return() -> None:

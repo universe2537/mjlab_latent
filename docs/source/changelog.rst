@@ -19,6 +19,11 @@ Added
   racket-equipped G1. The v1 tasks use programmatic table, net, ball, and
   paddle collision geometry, reuse the frozen tennis latent decoder, and
   track legal single-return events through a dedicated pingpong rally state.
+- Added ``Mjlab-Pingpong-PACE-Unitree-G1`` as an independent direct-joint
+  table-tennis baseline for G1. It keeps the current Pingpong ball/table/success
+  definitions while using PACE-style table-local observations, a learned ball
+  prediction runner, and direct joint-position rewards instead of the frozen
+  latent decoder.
 - Added ``Mjlab-Pingpong-Cross-Unitree-G1`` as the named table-tennis
   over-net return task. It succeeds when a legal paddle hit crosses the net
   and first lands on the opponent table; the older Return task remains as a

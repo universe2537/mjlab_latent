@@ -7,6 +7,7 @@ import math
 import mujoco
 
 from mjlab.envs import ManagerBasedRlEnvCfg
+from mjlab.envs.mdp.actions import JointPositionActionCfg
 from mjlab.managers.action_manager import ActionTermCfg
 from mjlab.managers.curriculum_manager import CurriculumTermCfg
 from mjlab.managers.event_manager import EventTermCfg
@@ -121,6 +122,15 @@ CROSS_STRIKE_QUALITY_REWARD_WEIGHTS: dict[str, float] = {
   "strike_post_hit_speed": 30.0,
 }
 CROSS_IMPACT_REWARD_WEIGHTS: dict[str, float] = {}
+PACE_TASK_REWARD_WEIGHTS: dict[str, float] = {
+  "pace_contact": 150.0,
+  "pace_future_ee_target": 2.0,
+  "pace_future_body_target": 5.0,
+  "pace_future_base_vel_target": 5.0,
+  "pace_future_landing_distance": 60.0,
+  "pace_future_pass_net": 100.0,
+  "pace_table_success": 100.0,
+}
 
 OUT_X_LIMITS = (-TABLE_HALF_LENGTH - 0.75, TABLE_HALF_LENGTH + 1.10)
 OUT_Y_LIMITS = (-TABLE_HALF_WIDTH - 0.50, TABLE_HALF_WIDTH + 0.50)
@@ -216,6 +226,128 @@ def _ball_provider_cfg() -> TableTennisFeederCfg:
       vy_abs_max=2.0,
     ),
   )
+
+
+def _pace_observation_terms() -> dict[str, ObservationGroupCfg]:
+  state_params = _state_params()
+  proprio_actor = {
+    "base_ang_vel": ObservationTermCfg(
+      func=mdp.builtin_sensor,
+      params={"sensor_name": "robot/imu_ang_vel"},
+      noise=Unoise(n_min=-0.2, n_max=0.2),
+    ),
+    "projected_gravity": ObservationTermCfg(
+      func=mdp.projected_gravity,
+      params={"asset_cfg": _ROBOT_CFG},
+      noise=Unoise(n_min=-0.05, n_max=0.05),
+    ),
+    "joint_pos": ObservationTermCfg(
+      func=mdp.joint_pos_rel,
+      params={"asset_cfg": _ROBOT_CFG, "biased": True},
+      noise=Unoise(n_min=-0.01, n_max=0.01),
+    ),
+    "joint_vel": ObservationTermCfg(
+      func=mdp.joint_vel_rel,
+      params={"asset_cfg": _ROBOT_CFG},
+      noise=Unoise(n_min=-1.5, n_max=1.5),
+    ),
+    "actions": ObservationTermCfg(
+      func=mdp.last_action,
+      params={"action_name": "joint_pos"},
+    ),
+    "ball_pos": ObservationTermCfg(
+      func=mdp.pace_ball_position_table,
+      params={"ball_cfg": _BALL_CFG},
+      noise=Unoise(n_min=-0.01, n_max=0.01),
+    ),
+    "robot_pos": ObservationTermCfg(
+      func=mdp.pace_robot_position_table,
+      params={"robot_cfg": _ROBOT_CFG},
+    ),
+    "ball_prediction": ObservationTermCfg(
+      func=mdp.pace_ball_prediction_table,
+      params=dict(state_params),
+      noise=Unoise(n_min=-0.01, n_max=0.01),
+    ),
+    "rel_target_base_xy": ObservationTermCfg(
+      func=mdp.pace_relative_target_base_xy,
+      params=dict(state_params),
+    ),
+    "heading": ObservationTermCfg(
+      func=mdp.pace_heading,
+      params={"robot_cfg": _ROBOT_CFG},
+    ),
+  }
+  critic_terms = {
+    "base_ang_vel": ObservationTermCfg(
+      func=mdp.builtin_sensor,
+      params={"sensor_name": "robot/imu_ang_vel"},
+    ),
+    "projected_gravity": ObservationTermCfg(
+      func=mdp.projected_gravity,
+      params={"asset_cfg": _ROBOT_CFG},
+    ),
+    "joint_pos": ObservationTermCfg(
+      func=mdp.joint_pos_rel,
+      params={"asset_cfg": _ROBOT_CFG, "biased": False},
+    ),
+    "joint_vel": ObservationTermCfg(
+      func=mdp.joint_vel_rel,
+      params={"asset_cfg": _ROBOT_CFG},
+    ),
+    "actions": ObservationTermCfg(
+      func=mdp.last_action,
+      params={"action_name": "joint_pos"},
+    ),
+    "ball_pos": ObservationTermCfg(
+      func=mdp.pace_ball_position_table,
+      params={"ball_cfg": _BALL_CFG},
+    ),
+    "robot_pos": ObservationTermCfg(
+      func=mdp.pace_robot_position_table,
+      params={"robot_cfg": _ROBOT_CFG},
+    ),
+    "ball_velocity": ObservationTermCfg(
+      func=mdp.ball_velocity_b,
+      params={"ball_cfg": _BALL_CFG, "robot_cfg": _ROBOT_CFG},
+    ),
+    "ball_prediction": ObservationTermCfg(
+      func=mdp.pace_ball_prediction_table,
+      params=dict(state_params),
+    ),
+    "future_ball_pose": ObservationTermCfg(
+      func=mdp.pace_future_ball_pose_table,
+      params=dict(state_params),
+    ),
+    "paddle_touch_point": ObservationTermCfg(
+      func=mdp.pace_paddle_touch_point_table,
+      params={"paddle_cfg": _PADDLE_CFG},
+    ),
+    "robot_future_delta": ObservationTermCfg(
+      func=mdp.pace_robot_future_delta,
+      params=dict(state_params),
+    ),
+    "future_time": ObservationTermCfg(
+      func=mdp.pace_future_time,
+      params=dict(state_params),
+    ),
+    "rally_flags": ObservationTermCfg(
+      func=mdp.pace_rally_flags,
+      params=dict(state_params),
+    ),
+  }
+  return {
+    "actor": ObservationGroupCfg(
+      proprio_actor,
+      concatenate_terms=True,
+      enable_corruption=True,
+    ),
+    "critic": ObservationGroupCfg(
+      critic_terms,
+      concatenate_terms=True,
+      enable_corruption=False,
+    ),
+  }
 
 
 def make_pingpong_latent_env_cfg() -> ManagerBasedRlEnvCfg:
@@ -934,6 +1066,172 @@ def make_pingpong_latent_cross_strike_quality_energy_relax_env_cfg() -> (
   return cfg
 
 
+def make_pingpong_pace_env_cfg() -> ManagerBasedRlEnvCfg:
+  """Create the PACE-style direct joint-control table-tennis return task."""
+  cfg = make_pingpong_latent_cross_env_cfg()
+  state_params = _state_params()
+  feet_cfg = SceneEntityCfg("robot", body_names=(".*ankle_roll_link",))
+  ankle_cfg = SceneEntityCfg(
+    "robot",
+    joint_names=(".*_ankle_pitch_joint", ".*_ankle_roll_joint"),
+  )
+  left_arm_cfg = SceneEntityCfg(
+    "robot",
+    joint_names=("left_shoulder_.*", "left_elbow_joint"),
+  )
+  right_arm_cfg = SceneEntityCfg(
+    "robot",
+    joint_names=("right_shoulder_.*", "right_elbow_joint"),
+  )
+  hip_cfg = SceneEntityCfg(
+    "robot",
+    joint_names=(".*_hip_yaw_joint", ".*_hip_roll_joint"),
+  )
+  waist_cfg = SceneEntityCfg("robot", joint_names=("waist_.*_joint",))
+
+  cfg.observations = _pace_observation_terms()
+  cfg.actions = {
+    "joint_pos": JointPositionActionCfg(
+      entity_name="robot",
+      actuator_names=(".*",),
+      scale=0.25,
+      use_default_offset=True,
+    )
+  }
+  cfg.rewards = {
+    "lin_vel_z_l2": RewardTermCfg(
+      func=mdp.pace_lin_vel_z_l2,
+      weight=-1.0,
+      params={"robot_cfg": _ROBOT_CFG},
+    ),
+    "ang_vel_xy_l2": RewardTermCfg(
+      func=mdp.pace_ang_vel_xy_l2,
+      weight=-0.05,
+      params={"robot_cfg": _ROBOT_CFG},
+    ),
+    "ang_vel_z_l2": RewardTermCfg(
+      func=mdp.pace_ang_vel_z_l2,
+      weight=-0.02,
+      params={"robot_cfg": _ROBOT_CFG},
+    ),
+    "energy": RewardTermCfg(
+      func=mdp.electrical_power_cost,
+      weight=-1.5e-3,
+      params={"asset_cfg": _ROBOT_CFG},
+    ),
+    "energy_ankle": RewardTermCfg(
+      func=mdp.electrical_power_cost,
+      weight=-2.0e-3,
+      params={"asset_cfg": ankle_cfg},
+    ),
+    "joint_acc_l2": RewardTermCfg(
+      func=mdp.joint_acc_l2,
+      weight=-1.25e-7,
+      params={"asset_cfg": _ROBOT_CFG},
+    ),
+    "action_rate_l2": RewardTermCfg(func=mdp.action_rate_l2, weight=-0.025),
+    "robot_table_contact": RewardTermCfg(
+      func=mdp.robot_table_contact_penalty,
+      weight=-80.0,
+      params={
+        "sensor_name": _ROBOT_TABLE_SENSOR,
+        "force_threshold": 1.0,
+        "max_count": 4.0,
+      },
+    ),
+    "robot_ball_contact": RewardTermCfg(
+      func=mdp.robot_ball_contact_penalty,
+      weight=-80.0,
+      params={
+        "sensor_name": _ROBOT_BALL_SENSOR,
+        "force_threshold": HIT_FORCE_THRESHOLD,
+        "max_count": 4.0,
+      },
+    ),
+    "robot_table_proximity_x": RewardTermCfg(
+      func=mdp.pace_robot_table_proximity_x,
+      weight=-20.0,
+      params={"robot_cfg": _ROBOT_CFG, "min_distance": 0.15},
+    ),
+    "flat_orientation_l2": RewardTermCfg(
+      func=mdp.flat_orientation_l2,
+      weight=-1.5,
+      params={"asset_cfg": _ROBOT_CFG},
+    ),
+    "termination_penalty": RewardTermCfg(func=mdp.is_terminated, weight=-1000.0),
+    "feet_slide": RewardTermCfg(
+      func=mdp.pace_feet_slide,
+      weight=-1.5,
+      params={"feet_cfg": feet_cfg, "contact_height": 0.08},
+    ),
+    "joint_pos_limits": RewardTermCfg(
+      func=mdp.joint_pos_limits,
+      weight=-2.0,
+      params={"asset_cfg": _ROBOT_CFG},
+    ),
+    "joint_deviation_hip": RewardTermCfg(
+      func=mdp.pace_joint_deviation_l1,
+      weight=-0.2,
+      params={"asset_cfg": hip_cfg},
+    ),
+    "joint_deviation_left_arm": RewardTermCfg(
+      func=mdp.pace_joint_deviation_l1,
+      weight=-0.2,
+      params={"asset_cfg": left_arm_cfg},
+    ),
+    "joint_deviation_right_arm": RewardTermCfg(
+      func=mdp.pace_joint_deviation_l1,
+      weight=-0.05,
+      params={"asset_cfg": right_arm_cfg},
+    ),
+    "joint_deviation_torso": RewardTermCfg(
+      func=mdp.pace_joint_deviation_l1,
+      weight=-0.2,
+      params={"asset_cfg": waist_cfg},
+    ),
+    "pace_contact": RewardTermCfg(
+      func=mdp.pace_contact,
+      weight=PACE_TASK_REWARD_WEIGHTS["pace_contact"],
+      params=dict(state_params),
+    ),
+    "pace_future_ee_target": RewardTermCfg(
+      func=mdp.pace_future_ee_target,
+      weight=PACE_TASK_REWARD_WEIGHTS["pace_future_ee_target"],
+      params={**dict(state_params), "std_ee": 0.5, "threshold": 0.15},
+    ),
+    "pace_future_body_target": RewardTermCfg(
+      func=mdp.pace_future_body_target,
+      weight=PACE_TASK_REWARD_WEIGHTS["pace_future_body_target"],
+      params={**dict(state_params), "std_ro": 0.5, "threshold": 0.05},
+    ),
+    "pace_future_base_vel_target": RewardTermCfg(
+      func=mdp.pace_future_base_vel_target,
+      weight=PACE_TASK_REWARD_WEIGHTS["pace_future_base_vel_target"],
+      params={**dict(state_params), "vel_std": 1.2, "threshold": 0.1},
+    ),
+    "pace_future_landing_distance": RewardTermCfg(
+      func=mdp.pace_future_landing_distance,
+      weight=PACE_TASK_REWARD_WEIGHTS["pace_future_landing_distance"],
+      params={**dict(state_params), "threshold": 3.0},
+    ),
+    "pace_future_pass_net": RewardTermCfg(
+      func=mdp.pace_future_pass_net,
+      weight=PACE_TASK_REWARD_WEIGHTS["pace_future_pass_net"],
+      params={**dict(state_params), "std_h": 0.4, "z_target": NET_TOP_Z + 0.35},
+    ),
+    "pace_table_success": RewardTermCfg(
+      func=mdp.pace_table_success,
+      weight=PACE_TASK_REWARD_WEIGHTS["pace_table_success"],
+      params=dict(state_params),
+    ),
+  }
+  cfg.curriculum.pop("action_regularization", None)
+  cfg.curriculum["ball_target_region"].params["success_term_name"] = (
+    "legal_return_success"
+  )
+  return cfg
+
+
 def make_pingpong_latent_return_env_cfg() -> ManagerBasedRlEnvCfg:
   """Create the legacy legal-return alias for the pingpong Cross task."""
   return make_pingpong_latent_cross_env_cfg()
@@ -951,6 +1249,7 @@ __all__ = [
   "CROSS_IMPACT_REWARD_WEIGHTS",
   "CROSS_STRIKE_QUALITY_REWARD_WEIGHTS",
   "DECODER_STATE_TERMS",
+  "PACE_TASK_REWARD_WEIGHTS",
   "ACTION_REGULARIZATION_CURRICULUM_STAGE_WEIGHTS",
   "make_pingpong_latent_cross_diag_env_cfg",
   "make_pingpong_latent_cross_env_cfg",
@@ -959,4 +1258,5 @@ __all__ = [
   "make_pingpong_latent_return_env_cfg",
   "make_pingpong_latent_cross_strike_quality_energy_relax_env_cfg",
   "make_pingpong_latent_cross_strike_quality_env_cfg",
+  "make_pingpong_pace_env_cfg",
 ]

@@ -1,3 +1,58 @@
+## 2026-07-06 - Pingpong PACE Baseline Task
+
+### 目标
+
+新增独立 `Mjlab-Pingpong-PACE-Unitree-G1` baseline，用 direct joint-position
+action、PACE-style learned ball predictor 和 PACE reward 思路对比现有 latent
+Cross / StrikeQuality；不修改现有 Hit、Cross、StrikeQuality、decoder 或
+distillation checkpoint。
+
+### 计划
+
+- [x] 新增 PACE env factory 和 G1 task registration。
+- [x] 使用 `JointPositionActionCfg` + `G1_W_RACKET_ACTION_SCALE`，移除 frozen
+  latent decoder action。
+- [x] 新增 table-local PACE observation、prediction state、reward helpers。
+- [x] 新增 `PingpongPaceOnPolicyRunner` 和 predictor checkpoint keys。
+- [x] 补配置、state/prediction 和 runner config 测试。
+- [x] 跑 CPU smoke train 验证真实训练 loop。
+
+### 实现记录
+
+- 新 task ID：`Mjlab-Pingpong-PACE-Unitree-G1`。
+- 默认 experiment / run：
+  `g1_pingpong_pace` / `pingpong_pace_scratch`。
+- runner：`PingpongPaceOnPolicyRunner`，会在 rollout 中记录最近球位历史，
+  训练 5 帧 history -> future ball pose 的 MLP predictor，并在 checkpoint
+  中额外保存 `pred_state_dict`、`pred_optimizer_state_dict`、`pred_cfg`。
+- actor obs shape smoke 为 `105`，critic obs shape 为 `120`；action shape 为
+  `29` direct joint-position。
+- PACE core reward 权重：
+  `pace_contact=150`、`pace_future_ee_target=2`、
+  `pace_future_body_target=5`、`pace_future_base_vel_target=5`、
+  `pace_future_landing_distance=60`、`pace_future_pass_net=100`、
+  `pace_table_success=100`。
+- 普通 `Cross` 和 `Cross-StrikeQuality` 未接入 `pace_*` reward；PACE 仅作为
+  独立 baseline task。
+
+### 验证记录
+
+- 编译检查通过：
+  `UV_CACHE_DIR=/tmp/uv-cache uv run python -m py_compile ...`
+- 单测通过：
+  `FORCE_CPU=1 UV_CACHE_DIR=/tmp/uv-cache uv run pytest tests/test_pingpong_task.py tests/test_pingpong_state.py -q`
+  -> `23 passed`。
+- 类型检查通过：
+  `UV_CACHE_DIR=/tmp/uv-cache uv run ty check src/mjlab/tasks/pingpong tests/test_pingpong_task.py`
+  -> `All checks passed!`。
+- CPU smoke train 通过：
+  `CUDA_VISIBLE_DEVICES= FORCE_CPU=1 WANDB_MODE=offline UV_CACHE_DIR=/tmp/uv-cache MPLCONFIGDIR=/tmp/mplconfig uv run train Mjlab-Pingpong-PACE-Unitree-G1 --agent.max-iterations 1 --env.scene.num-envs 2 --agent.upload-model False`。
+  该 run 写入
+  `logs/rsl_rl/g1_pingpong_pace/pingpong_pace_scratch_2026-07-06_20-33-59`，
+  第 0 iteration 记录 `predictor_mse ~= 1.0167`。
+- 计划中的 `--env.num-envs` 在当前 CLI 下无效，实际参数是
+  `--env.scene.num-envs`。
+
 ## 2026-07-06 - Pingpong Cross-StrikeQuality PACE-Style Reward Shaping
 
 ### 目标
