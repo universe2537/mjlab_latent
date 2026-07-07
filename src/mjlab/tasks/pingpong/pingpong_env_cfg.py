@@ -47,6 +47,7 @@ _PADDLE_BALL_SENSOR = "paddle_ball_contact"
 _BALL_NET_SENSOR = "pingpong_ball_net_contact"
 _ROBOT_TABLE_SENSOR = "robot_table_contact"
 _ROBOT_BALL_SENSOR = "robot_ball_contact"
+PACE_FOOT_CONTACT_SENSOR = "pace_foot_contact"
 
 PADDLE_BALL_PAIR_NAME = "pingpong_paddle_ball_contact_pair"
 PADDLE_BALL_PAIR_GEOM1 = "ball/pingpong_ball"
@@ -1071,6 +1072,8 @@ def make_pingpong_pace_env_cfg() -> ManagerBasedRlEnvCfg:
   cfg = make_pingpong_latent_cross_env_cfg()
   state_params = _state_params()
   feet_cfg = SceneEntityCfg("robot", body_names=(".*ankle_roll_link",))
+  left_foot_cfg = SceneEntityCfg("robot", body_names=("left_ankle_roll_link",))
+  right_foot_cfg = SceneEntityCfg("robot", body_names=("right_ankle_roll_link",))
   ankle_cfg = SceneEntityCfg(
     "robot",
     joint_names=(".*_ankle_pitch_joint", ".*_ankle_roll_joint"),
@@ -1098,6 +1101,21 @@ def make_pingpong_pace_env_cfg() -> ManagerBasedRlEnvCfg:
       use_default_offset=True,
     )
   }
+  foot_contact_sensor = ContactSensorCfg(
+    name=PACE_FOOT_CONTACT_SENSOR,
+    primary=ContactMatch(
+      mode="body",
+      pattern=("left_ankle_roll_link", "right_ankle_roll_link"),
+      entity="robot",
+    ),
+    secondary=None,
+    fields=("found", "force"),
+    reduce="netforce",
+    num_slots=1,
+    track_air_time=True,
+    history_length=4,
+  )
+  cfg.scene.sensors = (*cfg.scene.sensors, foot_contact_sensor)
   cfg.rewards = {
     "lin_vel_z_l2": RewardTermCfg(
       func=mdp.pace_lin_vel_z_l2,
@@ -1159,10 +1177,62 @@ def make_pingpong_pace_env_cfg() -> ManagerBasedRlEnvCfg:
       params={"asset_cfg": _ROBOT_CFG},
     ),
     "termination_penalty": RewardTermCfg(func=mdp.is_terminated, weight=-1000.0),
+    "pace_fly": RewardTermCfg(
+      func=mdp.pace_fly,
+      weight=-2.5,
+      params={"sensor_name": PACE_FOOT_CONTACT_SENSOR, "force_threshold": 1.0},
+    ),
+    "pace_hit_unstable_support": RewardTermCfg(
+      func=mdp.pace_hit_unstable_support,
+      weight=-10.0,
+      params={
+        **dict(state_params),
+        "sensor_name": PACE_FOOT_CONTACT_SENSOR,
+        "force_threshold": 0.1,
+      },
+    ),
+    "pace_feet_orientation_left": RewardTermCfg(
+      func=mdp.pace_body_orientation_l2,
+      weight=-4.0,
+      params={"body_cfg": left_foot_cfg},
+    ),
+    "pace_feet_orientation_right": RewardTermCfg(
+      func=mdp.pace_body_orientation_l2,
+      weight=-4.0,
+      params={"body_cfg": right_foot_cfg},
+    ),
     "feet_slide": RewardTermCfg(
-      func=mdp.pace_feet_slide,
+      func=mdp.pace_feet_slide_contact,
       weight=-1.5,
-      params={"feet_cfg": feet_cfg, "contact_height": 0.08},
+      params={
+        "feet_cfg": feet_cfg,
+        "sensor_name": PACE_FOOT_CONTACT_SENSOR,
+        "force_threshold": 1.0,
+      },
+    ),
+    "feet_force": RewardTermCfg(
+      func=mdp.pace_feet_force,
+      weight=-3.0e-3,
+      params={
+        "sensor_name": PACE_FOOT_CONTACT_SENSOR,
+        "threshold": 500.0,
+        "max_reward": 400.0,
+      },
+    ),
+    "feet_stumble": RewardTermCfg(
+      func=mdp.pace_feet_stumble,
+      weight=-2.0,
+      params={"sensor_name": PACE_FOOT_CONTACT_SENSOR},
+    ),
+    "pace_feet_too_near": RewardTermCfg(
+      func=mdp.pace_feet_too_near,
+      weight=-1.5,
+      params={"feet_cfg": feet_cfg, "threshold": 0.20},
+    ),
+    "pace_feet_really_too_near": RewardTermCfg(
+      func=mdp.pace_feet_too_near,
+      weight=-10.0,
+      params={"feet_cfg": feet_cfg, "threshold": 0.15},
     ),
     "joint_pos_limits": RewardTermCfg(
       func=mdp.joint_pos_limits,
@@ -1250,6 +1320,7 @@ __all__ = [
   "CROSS_STRIKE_QUALITY_REWARD_WEIGHTS",
   "DECODER_STATE_TERMS",
   "PACE_TASK_REWARD_WEIGHTS",
+  "PACE_FOOT_CONTACT_SENSOR",
   "ACTION_REGULARIZATION_CURRICULUM_STAGE_WEIGHTS",
   "make_pingpong_latent_cross_diag_env_cfg",
   "make_pingpong_latent_cross_env_cfg",

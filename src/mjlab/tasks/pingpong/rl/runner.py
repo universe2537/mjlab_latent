@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import json
+import math
 import os
 import time
+from pathlib import Path
 from typing import Any
 
 import torch
@@ -111,14 +114,14 @@ class PingpongPaceOnPolicyRunner(MjlabOnPolicyRunner):
     for it in range(start_it, total_it):
       start = time.time()
       with torch.inference_mode():
-        for _ in range(self.cfg["num_steps_per_env"]):
+        for rollout_step in range(self.cfg["num_steps_per_env"]):
           actions = self.alg.act(obs)
           obs, rewards, dones, extras = self.env.step(actions.to(self.env.device))
           self._record_ball_positions()
           self._maybe_predict_and_update_env()
           obs = self.env.get_observations()
           if self.cfg.get("check_for_nan", True):
-            check_nan(obs, rewards, dones)
+            self._check_nan_with_diagnostics(obs, rewards, dones, it, rollout_step)
           obs, rewards, dones = (
             obs.to(self.device),
             rewards.to(self.device),
@@ -201,6 +204,291 @@ class PingpongPaceOnPolicyRunner(MjlabOnPolicyRunner):
     torch.save(saved_dict, path)
     if self.cfg["upload_model"]:
       self.logger.save_model(path, self.current_learning_iteration)
+
+  def _check_nan_with_diagnostics(
+    self,
+    obs: Any,
+    rewards: torch.Tensor,
+    dones: torch.Tensor,
+    iteration: int,
+    rollout_step: int,
+  ) -> None:
+    """Write term-level diagnostics before preserving the original NaN error."""
+    if not self._contains_nan(obs, rewards, dones):
+      check_nan(obs, rewards, dones)
+      return
+
+    path = self._write_nan_diagnostics(obs, rewards, dones, iteration, rollout_step)
+    if path is not None:
+      print(f"[PACE NaN diagnostic] wrote {path}", flush=True)
+    check_nan(obs, rewards, dones)
+
+  def _contains_nan(
+    self,
+    obs: Any,
+    rewards: torch.Tensor,
+    dones: torch.Tensor,
+  ) -> bool:
+    for _, tensor in obs.items():
+      if isinstance(tensor, torch.Tensor) and torch.isnan(tensor).any().item():
+        return True
+    return bool(torch.isnan(rewards).any().item() or torch.isnan(dones).any().item())
+
+  def _write_nan_diagnostics(
+    self,
+    obs: Any,
+    rewards: torch.Tensor,
+    dones: torch.Tensor,
+    iteration: int,
+    rollout_step: int,
+  ) -> Path | None:
+    log_dir = getattr(self.logger, "log_dir", None)
+    if log_dir is None:
+      return None
+
+    bad_env_ids = self._first_bad_env_ids(obs, rewards, dones)
+    payload = {
+      "error": (
+        "ValueError: The observation group 'actor' returned by the environment "
+        "contains NaN values. This usually indicates a bug in the environment's "
+        "step() or reset() function."
+      ),
+      "iteration": int(iteration),
+      "rollout_step": int(rollout_step),
+      "current_learning_iteration": int(self.current_learning_iteration),
+      "num_envs": int(self.env.num_envs),
+      "bad_env_ids": bad_env_ids,
+      "groups": self._observation_group_summaries(obs),
+      "terms": self._observation_term_summaries(obs),
+      "rewards": self._tensor_summary(rewards),
+      "dones": self._tensor_summary(dones.float()),
+      "env": self._env_state_snapshot(bad_env_ids),
+      "predictor": self._predictor_snapshot(bad_env_ids),
+    }
+
+    dump_dir = Path(str(log_dir)) / "diagnostics"
+    dump_dir.mkdir(parents=True, exist_ok=True)
+    dump_path = dump_dir / (
+      f"pace_nan_iter{int(iteration):06d}_step{int(rollout_step):03d}.json"
+    )
+    with dump_path.open("w", encoding="utf-8") as f:
+      json.dump(payload, f, indent=2, sort_keys=True)
+    return dump_path
+
+  def _first_bad_env_ids(
+    self,
+    obs: Any,
+    rewards: torch.Tensor,
+    dones: torch.Tensor,
+    max_envs: int = 8,
+  ) -> list[int]:
+    masks: list[torch.Tensor] = []
+    for _, tensor in obs.items():
+      if isinstance(tensor, torch.Tensor) and tensor.numel() > 0:
+        masks.append(self._row_nonfinite_mask(tensor))
+    masks.append(self._row_nonfinite_mask(rewards))
+    masks.append(self._row_nonfinite_mask(dones.float()))
+    if not masks:
+      return []
+    merged = masks[0].clone()
+    for mask in masks[1:]:
+      merged |= mask.to(device=merged.device)
+    ids = torch.nonzero(merged, as_tuple=False).flatten()[:max_envs]
+    return [int(i) for i in ids.detach().cpu().tolist()]
+
+  def _observation_group_summaries(self, obs: Any) -> dict[str, Any]:
+    groups: dict[str, Any] = {}
+    for name, tensor in obs.items():
+      if isinstance(tensor, torch.Tensor):
+        groups[str(name)] = self._tensor_summary(tensor)
+      else:
+        groups[str(name)] = {"type": type(tensor).__name__}
+    return groups
+
+  def _observation_term_summaries(self, obs: Any) -> dict[str, Any]:
+    env = self.env.unwrapped
+    manager = getattr(env, "observation_manager", None)
+    if manager is None:
+      return {}
+
+    term_names = getattr(manager, "active_terms", {})
+    term_dims = getattr(manager, "group_obs_term_dim", {})
+    group_concatenate = getattr(manager, "group_obs_concatenate", {})
+    summaries: dict[str, Any] = {}
+
+    for group_name, tensor in obs.items():
+      if not isinstance(tensor, torch.Tensor):
+        continue
+      group = str(group_name)
+      if not bool(group_concatenate.get(group, False)):
+        summaries[group] = {"error": "group is not concatenated"}
+        continue
+
+      idx = 0
+      group_terms: dict[str, Any] = {}
+      names = term_names.get(group, [])
+      dims = term_dims.get(group, [])
+      for term_name, shape in zip(names, dims, strict=False):
+        length = int(math.prod(shape))
+        term_tensor = tensor[:, idx : idx + length]
+        group_terms[str(term_name)] = self._tensor_summary(term_tensor)
+        idx += length
+      summaries[group] = group_terms
+    return summaries
+
+  def _env_state_snapshot(self, env_ids: list[int]) -> dict[str, Any]:
+    env = self.env.unwrapped
+    snapshot: dict[str, Any] = {
+      "common_step_counter": int(getattr(env, "common_step_counter", -1)),
+    }
+    episode_length = getattr(env, "episode_length_buf", None)
+    if isinstance(episode_length, torch.Tensor):
+      snapshot["episode_length_buf"] = self._select_rows(episode_length, env_ids)
+    action = getattr(getattr(env, "action_manager", None), "action", None)
+    if isinstance(action, torch.Tensor):
+      snapshot["last_action"] = self._select_rows(action, env_ids, max_cols=32)
+
+    scene = getattr(env, "scene", None)
+    for entity_name in ("robot", "ball"):
+      try:
+        entity = scene[entity_name] if scene is not None else None
+      except KeyError:
+        continue
+      if entity is None:
+        continue
+      data = getattr(entity, "data", None)
+      if data is None:
+        continue
+      entity_snapshot: dict[str, Any] = {}
+      for attr in (
+        "root_link_pos_w",
+        "root_link_quat_w",
+        "root_link_lin_vel_w",
+        "root_link_ang_vel_w",
+      ):
+        value = getattr(data, attr, None)
+        if isinstance(value, torch.Tensor):
+          entity_snapshot[attr] = self._select_rows(value, env_ids)
+      for attr in ("joint_pos", "joint_vel"):
+        value = getattr(data, attr, None)
+        if isinstance(value, torch.Tensor):
+          entity_snapshot[attr] = self._row_stats(value, env_ids)
+      snapshot[entity_name] = entity_snapshot
+    return snapshot
+
+  def _predictor_snapshot(self, env_ids: list[int]) -> dict[str, Any]:
+    snapshot: dict[str, Any] = {
+      "trained": bool(self._pred_trained),
+      "last_loss": self._last_pred_loss,
+      "traj_len": int(self._traj_len),
+      "traj_write_idx": int(self._traj_write_idx),
+    }
+    try:
+      state = get_pingpong_pace_prediction_state(self.env.unwrapped)
+    except RuntimeError:
+      return snapshot
+    for name in (
+      "ball_future_pose",
+      "ball_prediction",
+      "robot_future_delta",
+      "robot_future_vel",
+      "valid_mask",
+    ):
+      value = getattr(state, name, None)
+      if isinstance(value, torch.Tensor):
+        snapshot[name] = self._select_rows(value, env_ids)
+        snapshot[f"{name}_summary"] = self._tensor_summary(value)
+    return snapshot
+
+  def _tensor_summary(
+    self,
+    tensor: torch.Tensor,
+    max_bad_envs: int = 8,
+    max_bad_cols: int = 16,
+  ) -> dict[str, Any]:
+    data = tensor.detach()
+    nan_mask = torch.isnan(data)
+    inf_mask = torch.isinf(data)
+    nonfinite = ~torch.isfinite(data)
+    summary: dict[str, Any] = {
+      "shape": list(data.shape),
+      "nan_count": int(nan_mask.sum().item()),
+      "inf_count": int(inf_mask.sum().item()),
+      "nonfinite_count": int(nonfinite.sum().item()),
+    }
+    finite = data[torch.isfinite(data)]
+    if finite.numel() > 0:
+      summary["finite_min"] = float(finite.min().item())
+      summary["finite_max"] = float(finite.max().item())
+      summary["finite_mean"] = float(finite.float().mean().item())
+    if data.numel() == 0:
+      return summary
+
+    bad_rows = self._row_nonfinite_mask(data)
+    bad_ids = torch.nonzero(bad_rows, as_tuple=False).flatten()[:max_bad_envs]
+    summary["bad_env_ids"] = [int(i) for i in bad_ids.detach().cpu().tolist()]
+    bad_locations: dict[str, Any] = {}
+    flattened = data.reshape(data.shape[0], -1) if data.ndim > 0 else data.reshape(1, -1)
+    for env_id in summary["bad_env_ids"]:
+      row = flattened[env_id]
+      bad_cols = torch.nonzero(~torch.isfinite(row), as_tuple=False).flatten()
+      cols = bad_cols[:max_bad_cols].detach().cpu().tolist()
+      bad_locations[str(env_id)] = {
+        "cols": [int(i) for i in cols],
+        "values": [self._json_number(row[int(i)]) for i in cols],
+      }
+    if bad_locations:
+      summary["bad_locations"] = bad_locations
+    return summary
+
+  def _row_nonfinite_mask(self, tensor: torch.Tensor) -> torch.Tensor:
+    data = tensor.detach()
+    if data.ndim == 0:
+      return (~torch.isfinite(data)).reshape(1)
+    return (~torch.isfinite(data)).reshape(data.shape[0], -1).any(dim=1)
+
+  def _select_rows(
+    self,
+    tensor: torch.Tensor,
+    env_ids: list[int],
+    max_cols: int = 16,
+  ) -> dict[str, Any]:
+    if not env_ids:
+      return {"summary": self._tensor_summary(tensor)}
+    selected = tensor.detach()[env_ids]
+    rows = selected.reshape(selected.shape[0], -1)
+    values: dict[str, Any] = {}
+    for row_idx, env_id in enumerate(env_ids):
+      row = rows[row_idx, :max_cols]
+      values[str(env_id)] = [self._json_number(v) for v in row]
+    return {"shape": list(tensor.shape), "values": values}
+
+  def _row_stats(self, tensor: torch.Tensor, env_ids: list[int]) -> dict[str, Any]:
+    if not env_ids:
+      return {"summary": self._tensor_summary(tensor)}
+    selected = tensor.detach()[env_ids].reshape(len(env_ids), -1)
+    stats: dict[str, Any] = {"shape": list(tensor.shape), "rows": {}}
+    for row_idx, env_id in enumerate(env_ids):
+      row = selected[row_idx]
+      finite = row[torch.isfinite(row)]
+      row_stats: dict[str, Any] = {
+        "nan_count": int(torch.isnan(row).sum().item()),
+        "inf_count": int(torch.isinf(row).sum().item()),
+      }
+      if finite.numel() > 0:
+        row_stats["finite_min"] = float(finite.min().item())
+        row_stats["finite_max"] = float(finite.max().item())
+        row_stats["finite_mean"] = float(finite.float().mean().item())
+      stats["rows"][str(env_id)] = row_stats
+    return stats
+
+  def _json_number(self, value: torch.Tensor) -> float | str:
+    scalar = float(value.detach().cpu().item())
+    if math.isnan(scalar):
+      return "NaN"
+    if math.isinf(scalar):
+      return "Infinity" if scalar > 0 else "-Infinity"
+    return scalar
 
   def load(
     self,

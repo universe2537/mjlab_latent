@@ -24,6 +24,10 @@ Added
   definitions while using PACE-style table-local observations, a learned ball
   prediction runner, and direct joint-position rewards instead of the frozen
   latent decoder.
+- Added a PACE-only G1 foot contact sensor for Pingpong, with force history and
+  air/contact-time tracking on the left and right ankle-roll bodies, so
+  direct-joint PACE rewards can use actual foot support forces without changing
+  the latent Pingpong Cross tasks.
 - Added ``Mjlab-Pingpong-Cross-Unitree-G1`` as the named table-tennis
   over-net return task. It succeeds when a legal paddle hit crosses the net
   and first lands on the opponent table; the older Return task remains as a
@@ -104,6 +108,16 @@ Added
 Changed
 ^^^^^^^
 
+- Stabilized the direct-joint ``Mjlab-Pingpong-PACE-Unitree-G1`` baseline by
+  capping its G1 action scale at ``0.25``, lowering raw action clipping and
+  exploration, aligning its PPO horizon discount with the PACE reference, and
+  adding PACE-style foot-support penalties. The support, slide, force, and
+  stumble terms now read the PACE-only foot contact sensor instead of only
+  inferring support from foot height. The PACE runner now also writes term-level
+  NaN diagnostics
+  before re-raising the original environment-output error, and the PACE future
+  target state refreshes after auto-reset within the same step to avoid stale
+  pre-reset future targets leaking into actor observations.
 - Enabled conservative PACE-style post-hit prediction rewards on
   ``Mjlab-Pingpong-Cross-StrikeQuality-Unitree-G1`` while leaving the baseline
   Pingpong Cross task unchanged.

@@ -1240,10 +1240,191 @@
       Convenience symlink:
       <code>outputs/table_tennis_teacher_tracking_model18000_test001.mp4</code>.
     </li>
+    <li>
+      On 2026-07-07, v2 <code>model_30000.pt</code> was recorded on the same
+      <code>test_001</code> motion for posterior and prior decoder playback.
+      Three-panel comparison:
+      <code>outputs/table_tennis_v2_model30000_test001_teacher_posterior_prior_compare.mp4</code>.
+      Individual videos:
+      <code>outputs/table_tennis_distill_v2_model30000_test001_posterior.mp4</code>
+      and
+      <code>outputs/table_tennis_distill_v2_model30000_test001_prior.mp4</code>.
+      The comparison is H.264/yuv420p, 50 FPS, 2880x592, 12 seconds.
+    </li>
+    <li>
+      Also on 2026-07-07, v2 <code>model_30000.pt</code> was connected to
+      <code>Mjlab-Pingpong-Hit-Unitree-G1</code> without changing the default
+      Pingpong decoder constant, using the CLI decoder checkpoint override.
+      Active tmux:
+      <code>pingpong_hit_tt_decoder_v2_gpu1_20260707</code>.
+      Run:
+      <code>logs/rsl_rl/g1_pingpong_latent_hit_table_tennis_decoder/pingpong_hit_tt_decoder_v2_model30000_15360env_gpu1_20260707_2026-07-07_09-44-02</code>.
+      Early metrics showed nonzero paddle hits, rising to about
+      <code>paddle_hit_count=0.16</code>, but also high
+      <code>robot_ball_contact_count≈0.69</code> and
+      <code>fault_reason/body_ball≈0.53</code>.
+    </li>
+  </ul>
+
+  <h2>PACE Reference Audit</h2>
+  <ul>
+    <li>
+      On 2026-07-06, the official PACE reference repo was shallow-cloned to
+      <code>/tmp/PACE-ICRA2026</code> for inspection. The relevant files are
+      <code>legged_lab/envs/base/tt_env.py</code>,
+      <code>legged_lab/envs/base/tt_env_config.py</code>,
+      <code>legged_lab/envs/t1_tt/t1_tt_config.py</code>,
+      <code>legged_lab/mdp/rewards.py</code>, and
+      <code>rsl_rl/rsl_rl/runners/on_policy_predictor_regression_runner.py</code>.
+    </li>
+    <li>
+      PACE uses direct joint-position control, not a latent low-level decoder:
+      <code>processed_actions = clip(actions, -100, 100) * action_scale + default_joint_pos</code>.
+      Its T1 task controls 21 joints with global <code>action_scale=0.25</code>,
+      50 Hz control, scalar initial std <code>1.0</code>, and
+      <code>entropy_coef=0.006</code>.
+    </li>
+    <li>
+      Our v1 G1 PACE baseline matches the learned-predictor idea and the seven
+      core task rewards, but not the full original control envelope. The failed
+      GPU3 scratch run reached actor-observation NaNs after policy std grew;
+      likely causes are larger G1 per-joint action scales, 29 controlled joints,
+      effectively loose <code>clip_actions=100</code>, and missing PACE stability
+      penalties such as fly, hit-unstable-support, feet orientation/force/stumble,
+      feet-too-near, and paddle-head-too-near.
+    </li>
+  </ul>
+
+  <h2>PACE Baseline Stabilization</h2>
+  <ul>
+    <li>
+      On 2026-07-06, <code>Mjlab-Pingpong-PACE-Unitree-G1</code> was changed to
+      use a PACE-only G1 action scale:
+      <code>G1_PACE_ACTION_SCALE = min(G1_W_RACKET_ACTION_SCALE, 0.25)</code>.
+      This keeps latent Pingpong tasks on the original
+      <code>G1_W_RACKET_ACTION_SCALE</code> while reducing the direct-control
+      envelope that caused the failed PACE scratch run to reach NaNs.
+    </li>
+    <li>
+      PACE PPO was made conservative for G1: <code>clip_actions=2.5</code>,
+      actor <code>init_std=0.6</code>, <code>entropy_coef=0.002</code>,
+      <code>gamma=0.95</code>, and actor/critic hidden dims
+      <code>(512, 512, 128)</code>. Predictor settings are unchanged.
+    </li>
+    <li>
+      On 2026-07-07, PACE was extended with a dedicated
+      <code>pace_foot_contact</code> sensor on the left/right
+      <code>ankle_roll_link</code> bodies. It uses
+      <code>reduce="netforce"</code>, <code>history_length=4</code>, and
+      <code>track_air_time=True</code>. The PACE reward now uses force-based
+      <code>pace_fly</code>, <code>pace_hit_unstable_support</code>,
+      <code>feet_slide</code>, <code>feet_force</code>, and
+      <code>feet_stumble</code>, while keeping the foot orientation and
+      feet-too-near terms. Latent Cross/StrikeQuality do not get this sensor or
+      these foot-contact rewards.
+    </li>
+    <li>
+      The old GPU3 PACE scratch run was stopped and restarted from scratch to
+      pick up the foot-contact rewards: tmux
+      <code>pingpong_pace_foot_contact_12288_gpu3_20260707</code>, run dir
+      <code>logs/rsl_rl/g1_pingpong_pace/pingpong_pace_foot_contact_12288env_gpu3_2026-07-07_13-44-03</code>,
+      command uses <code>--env.scene.num-envs 12288</code>,
+      <code>CUDA_VISIBLE_DEVICES=3</code>, <code>--gpu-ids "[0]"</code>, and
+      <code>--agent.resume False</code>. At iteration 2, the new
+      <code>pace_fly</code>/<code>feet_force</code>/<code>feet_stumble</code>
+      reward lines were present, <code>nan_detection=0</code>, and
+      <code>Policy/mean_std</code> stayed near <code>0.60</code>.
+    </li>
+    <li>
+      Validation passed for
+      <code>tests/test_pingpong_task.py tests/test_pingpong_state.py</code>,
+      <code>ty check src/mjlab/tasks/pingpong ...</code>, and CPU smoke train
+      with explicit <code>--gpu-ids "[]"</code>. A GPU3 canary is running in
+      tmux <code>pingpong_pace_stable_canary_4096_gpu3_20260706</code>, run dir
+      <code>logs/rsl_rl/g1_pingpong_pace/pingpong_pace_stable_canary_4096env_gpu3_2026-07-06_23-10-26</code>,
+      W&amp;B id <code>h9859s2u</code>. At iteration 15, action std stayed near
+      <code>0.61</code> and <code>nan_detection=0</code>, but the scratch canary
+      later failed at iteration 592 with actor-observation NaN.
+    </li>
+    <li>
+      A formal scratch run was launched without any failed checkpoint resume:
+      tmux <code>pingpong_pace_stable_scratch_12288_gpu3_20260706</code>, run dir
+      <code>logs/rsl_rl/g1_pingpong_pace/pingpong_pace_stable_scratch_12288env_gpu3_2026-07-06_23-50-08</code>,
+      W&amp;B id <code>apqf2mva</code>. It used
+      <code>--agent.resume False</code> and no load-checkpoint options, reached
+      iteration 6 with <code>action std=0.60</code>, then exited with
+      actor-observation NaN. The remaining issue is therefore task/env NaN
+      robustness under large-env scratch training, not failed-ckpt inheritance.
+    </li>
+  </ul>
+
+  <h2>PACE NaN Root Cause</h2>
+  <ul>
+    <li>
+      On 2026-07-07, PACE actor NaN was reproduced with a diagnostic run:
+      <code>logs/rsl_rl/g1_pingpong_pace/pingpong_pace_nan_diag_12288env_gpu3_2026-07-07_09-25-33</code>.
+      The original error was
+      <code>ValueError: The observation group 'actor' returned by the environment contains NaN values.</code>
+      The diagnostic JSON
+      <code>diagnostics/pace_nan_iter000001_step013.json</code> showed only
+      actor <code>rel_target_base_xy</code> was NaN; critic
+      <code>future_ball_pose</code> and <code>robot_future_delta</code> were
+      also NaN, while action, joint state, base velocity, ball position, robot
+      position, and learned ball prediction were finite.
+    </li>
+    <li>
+      Root cause: <code>PingpongPacePredictionState.update()</code> cached by
+      global <code>common_step_counter</code>. Reward computation could cache a
+      pre-reset PACE future target, then <code>ManagerBasedRlEnv</code> auto-reset
+      the env without advancing the step counter; observation computation reused
+      that stale future target. The bad env had
+      <code>episode_length_buf=0</code> and zero last action, confirming it had
+      just reset.
+    </li>
+    <li>
+      Fix: PACE state now recomputes when any env has
+      <code>episode_length_buf == 0</code>, and
+      <code>_predict_incoming_future_pose()</code> finite-sanitizes future pose
+      and future time before exposing them to observations. Validation passed:
+      <code>25 passed</code> for pingpong tests, ty/ruff passed, and
+      <code>pingpong_pace_nan_diag_fixed_12288env_gpu3_2026-07-07_09-29-44</code>
+      ran 12288 envs for 20 iterations on GPU3 with no actor-observation NaN and
+      no diagnostic JSON written. Remaining PACE issue is behavior quality:
+      high body-ball faults, not the previous NaN crash.
+    </li>
   </ul>
 
   <h2>Next Steps</h2>
   <ul>
+    <li>
+      Current Pingpong PACE scratch run after the NaN fix:
+      <code>pingpong_pace_fixed_scratch_12288_gpu3_20260707</code> tmux session,
+      run dir
+      <code>logs/rsl_rl/g1_pingpong_pace/pingpong_pace_fixed_scratch_12288env_gpu3_2026-07-07_09-43-26</code>.
+      It was launched on host GPU3 with <code>12288</code> envs,
+      <code>--agent.resume False</code>, and run name
+      <code>pingpong_pace_fixed_scratch_12288env_gpu3</code>. Startup check:
+      iteration 10 had no actor-observation NaN, no
+      <code>diagnostics/pace_nan_*</code> JSON, GPU3 used about
+      <code>13.8 GiB</code> for the PACE process, and
+      <code>Policy/mean_std</code> stayed around <code>0.60</code> to
+      <code>0.61</code>. Early
+      behavior is still weak: body-ball faults remain high and legal returns
+      are still zero.
+    </li>
+    <li>
+      Previous Pingpong PACE baseline restart on 2026-07-06: the failed
+      <code>16*1024</code> and <code>14*1024</code> GPU3 run directories
+      <code>logs/rsl_rl/g1_pingpong_pace/pingpong_pace_scratch_16384env_gpu3_2026-07-06_20-39-11</code>
+      and
+      <code>logs/rsl_rl/g1_pingpong_pace/pingpong_pace_scratch_14336env_gpu3_2026-07-06_20-44-37</code>
+      were removed after their tmux sessions disappeared. Its replacement was
+      <code>pingpong_pace_12288_gpu3_20260706</code>, run dir
+      <code>logs/rsl_rl/g1_pingpong_pace/pingpong_pace_scratch_12288env_gpu3_2026-07-06_20-49-36</code>,
+      W&amp;B id <code>ysevx7op</code>. Iteration 0 completed at about
+      <code>41.3k</code> steps/sec using roughly
+      <code>20.5 / 24.6 GiB</code> on host GPU3.
+    </li>
     <li>
       Prefer training Hit-SONIC-Encoder first to verify the encoder-prior action
       manifold before trying Cross-SONIC-Encoder.

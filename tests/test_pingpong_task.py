@@ -12,6 +12,7 @@ from mjlab.sensor import ContactSensorCfg
 from mjlab.tasks.distillation.rl.config import DistillationRunnerCfg
 from mjlab.tasks.pingpong.config.g1.env_cfgs import (
   DEFAULT_DECODER_CHECKPOINT,
+  G1_PACE_ACTION_SCALE,
   PINGPONG_PADDLE_HANDLE_HALF_LENGTH,
   PINGPONG_PADDLE_HANDLE_RADIUS,
   PINGPONG_PADDLE_RADIUS,
@@ -36,6 +37,7 @@ from mjlab.tasks.pingpong.pingpong_env_cfg import (
   CROSS_ROBOT_BALL_CONTACT_WEIGHT,
   CROSS_STRIKE_QUALITY_REWARD_WEIGHTS,
   DECODER_STATE_TERMS,
+  PACE_FOOT_CONTACT_SENSOR,
   PACE_TASK_REWARD_WEIGHTS,
   PADDLE_BALL_PAIR_CONDIM,
   PADDLE_BALL_PAIR_FRICTION,
@@ -116,6 +118,10 @@ def test_pingpong_task_scene_compiles() -> None:
     assert any(name.startswith("pingpong_ball_net_contact") for name in sensor_names)
     assert any(name.startswith("robot_table_contact") for name in sensor_names)
     assert any(name.startswith("robot_ball_contact") for name in sensor_names)
+    has_foot_contact = any(
+      name.startswith(PACE_FOOT_CONTACT_SENSOR) for name in sensor_names
+    )
+    assert has_foot_contact is (task_id == "Mjlab-Pingpong-PACE-Unitree-G1")
 
 
 def test_pingpong_paddle_ball_explicit_contact_pair() -> None:
@@ -228,7 +234,13 @@ def test_pingpong_pace_env_uses_direct_joint_action() -> None:
   assert isinstance(action, JointPositionActionCfg)
   assert tuple(action.actuator_names) == (".*",)
   assert action.use_default_offset is True
-  assert action.scale == G1_W_RACKET_ACTION_SCALE
+  assert action.scale == G1_PACE_ACTION_SCALE
+  assert G1_PACE_ACTION_SCALE.keys() == G1_W_RACKET_ACTION_SCALE.keys()
+  assert max(G1_PACE_ACTION_SCALE.values()) <= 0.25
+  assert any(
+    G1_PACE_ACTION_SCALE[name] < G1_W_RACKET_ACTION_SCALE[name]
+    for name in G1_PACE_ACTION_SCALE
+  )
 
   actor_terms = cfg.observations["actor"].terms
   for term_name in (
@@ -258,6 +270,33 @@ def test_pingpong_pace_env_uses_direct_joint_action() -> None:
 
   for reward_name, reward_weight in PACE_TASK_REWARD_WEIGHTS.items():
     assert cfg.rewards[reward_name].weight == reward_weight
+  sensors = {sensor.name: sensor for sensor in cfg.scene.sensors}
+  foot_contact = sensors[PACE_FOOT_CONTACT_SENSOR]
+  assert isinstance(foot_contact, ContactSensorCfg)
+  assert foot_contact.primary.mode == "body"
+  assert foot_contact.primary.pattern == (
+    "left_ankle_roll_link",
+    "right_ankle_roll_link",
+  )
+  assert foot_contact.primary.entity == "robot"
+  assert foot_contact.secondary is None
+  assert foot_contact.fields == ("found", "force")
+  assert foot_contact.reduce == "netforce"
+  assert foot_contact.track_air_time is True
+  assert foot_contact.history_length == 4
+  expected_stability_rewards = {
+    "pace_fly": -2.5,
+    "pace_hit_unstable_support": -10.0,
+    "pace_feet_orientation_left": -4.0,
+    "pace_feet_orientation_right": -4.0,
+    "feet_slide": -1.5,
+    "feet_force": -3.0e-3,
+    "feet_stumble": -2.0,
+    "pace_feet_too_near": -1.5,
+    "pace_feet_really_too_near": -10.0,
+  }
+  for reward_name, reward_weight in expected_stability_rewards.items():
+    assert cfg.rewards[reward_name].weight == reward_weight
   assert cfg.curriculum["ball_target_region"].params["success_term_name"] == (
     "legal_return_success"
   )
@@ -266,6 +305,15 @@ def test_pingpong_pace_env_uses_direct_joint_action() -> None:
   strike_cfg = load_env_cfg("Mjlab-Pingpong-Cross-StrikeQuality-Unitree-G1")
   assert not any(name.startswith("pace_") for name in cross_cfg.rewards)
   assert not any(name.startswith("pace_") for name in strike_cfg.rewards)
+  for reward_name in ("feet_slide", "feet_force", "feet_stumble"):
+    assert reward_name not in cross_cfg.rewards
+    assert reward_name not in strike_cfg.rewards
+  assert PACE_FOOT_CONTACT_SENSOR not in {
+    sensor.name for sensor in cross_cfg.scene.sensors
+  }
+  assert PACE_FOOT_CONTACT_SENSOR not in {
+    sensor.name for sensor in strike_cfg.scene.sensors
+  }
 
 
 def test_pingpong_rl_configs_load() -> None:
@@ -359,7 +407,13 @@ def test_pingpong_rl_configs_load() -> None:
   assert pace_cfg.class_name == "PingpongPaceOnPolicyRunner"
   assert pace_cfg.experiment_name == "g1_pingpong_pace"
   assert pace_cfg.run_name == "pingpong_pace_scratch"
-  assert pace_cfg.clip_actions == 100.0
+  assert pace_cfg.actor.hidden_dims == (512, 512, 128)
+  assert pace_cfg.critic.hidden_dims == (512, 512, 128)
+  assert pace_cfg.actor.distribution_cfg is not None
+  assert pace_cfg.actor.distribution_cfg["init_std"] == 0.6
+  assert pace_cfg.algorithm.entropy_coef == 0.002
+  assert pace_cfg.algorithm.gamma == 0.95
+  assert pace_cfg.clip_actions == 2.5
   assert pace_cfg.max_iterations == 10000
   assert pace_cfg.predictor["history_len"] == 5
   assert pace_cfg.predictor["traj_max_len"] == 128

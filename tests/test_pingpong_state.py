@@ -7,8 +7,17 @@ from mjlab.managers.scene_entity_config import SceneEntityCfg
 from mjlab.tasks.pingpong.mdp.pace import (
   get_pingpong_pace_prediction_state,
   pace_ball_prediction_table,
+  pace_body_orientation_l2,
+  pace_feet_force,
+  pace_feet_slide_contact,
+  pace_feet_stumble,
+  pace_feet_too_near,
+  pace_fly,
+  pace_fly_height,
   pace_future_base_vel_target,
   pace_future_pass_net,
+  pace_hit_unstable_support,
+  pace_hit_unstable_support_height,
   pace_relative_target_base_xy,
   update_pingpong_pace_prediction,
 )
@@ -59,6 +68,13 @@ def _make_env() -> tuple[Any, Any, Any, Any, Any]:
       found=torch.zeros(1, 1, dtype=torch.float32),
     )
   )
+  foot_contact_sensor = SimpleNamespace(
+    data=SimpleNamespace(
+      force_history=torch.zeros(1, 2, 4, 3, dtype=torch.float32),
+      force=torch.zeros(1, 2, 3, dtype=torch.float32),
+      found=torch.zeros(1, 2, dtype=torch.float32),
+    )
+  )
   env = SimpleNamespace(
     num_envs=1,
     device="cpu",
@@ -70,6 +86,7 @@ def _make_env() -> tuple[Any, Any, Any, Any, Any]:
         "paddle_ball_contact": paddle_sensor,
         "pingpong_ball_net_contact": net_sensor,
         "robot_ball_contact": body_ball_sensor,
+        "pace_foot_contact": foot_contact_sensor,
       },
     ),
   )
@@ -123,6 +140,15 @@ def _add_pace_robot(env: Any) -> Any:
       root_link_lin_vel_w=torch.zeros(1, 3, dtype=torch.float32),
       root_link_ang_vel_b=torch.zeros(1, 3, dtype=torch.float32),
       heading_w=torch.zeros(1, dtype=torch.float32),
+      body_link_pos_w=torch.tensor(
+        [[[1.55, -0.08, 0.04], [1.55, 0.08, 0.04]]],
+        dtype=torch.float32,
+      ),
+      body_link_lin_vel_w=torch.zeros(1, 2, 3, dtype=torch.float32),
+      body_link_quat_w=torch.tensor(
+        [[[1.0, 0.0, 0.0, 0.0], [1.0, 0.0, 0.0, 0.0]]],
+        dtype=torch.float32,
+      ),
     )
   )
   env.scene["robot"] = robot
@@ -192,6 +218,189 @@ def test_pingpong_pace_invalid_rewards_are_finite() -> None:
   )
   assert torch.isfinite(rewards).all()
   assert rewards.shape == (1, 2)
+
+
+def test_pingpong_pace_prediction_refreshes_after_auto_reset_same_step() -> None:
+  env, ball, _, _, _ = _make_env()
+  _add_pace_robot(env)
+  params = _make_pace_params()
+  state = get_pingpong_pace_prediction_state(env, **params)
+
+  env.common_step_counter = 4
+  state.update()
+  state.ball_future_pose[:] = torch.nan
+  state.target_base_xy[:] = torch.nan
+  state.robot_future_pos[:] = torch.nan
+  state._last_step = env.common_step_counter
+
+  env.episode_length_buf.zero_()
+  ball.data.root_link_pos_w[:] = torch.tensor([[0.7, 0.0, 1.0]])
+  ball.data.root_link_lin_vel_w[:] = torch.tensor([[2.0, 0.0, -1.0]])
+  rel_target = pace_relative_target_base_xy(env, **params)
+
+  assert torch.isfinite(rel_target).all()
+  assert torch.isfinite(state.ball_future_pose).all()
+  assert torch.isfinite(state.target_base_xy).all()
+
+
+def test_pingpong_pace_height_stability_rewards_are_finite() -> None:
+  env, ball, paddle_sensor, _, _ = _make_env()
+  robot = _add_pace_robot(env)
+  params = _make_pace_params()
+  feet_cfg = SceneEntityCfg("robot")
+  feet_cfg.body_ids = [0, 1]
+  left_foot_cfg = SceneEntityCfg("robot")
+  left_foot_cfg.body_ids = [0]
+  right_foot_cfg = SceneEntityCfg("robot")
+  right_foot_cfg.body_ids = [1]
+
+  torch.testing.assert_close(
+    pace_fly_height(env, feet_cfg=feet_cfg, contact_height=0.08),
+    torch.zeros(1),
+  )
+  assert torch.isfinite(pace_body_orientation_l2(env, body_cfg=left_foot_cfg)).all()
+  torch.testing.assert_close(
+    pace_feet_too_near(env, feet_cfg=feet_cfg, threshold=0.20),
+    torch.tensor([0.04]),
+  )
+
+  robot.data.body_link_pos_w[..., 2] = 0.20
+  torch.testing.assert_close(
+    pace_fly_height(env, feet_cfg=feet_cfg, contact_height=0.08),
+    torch.ones(1),
+  )
+
+  torch.testing.assert_close(
+    pace_hit_unstable_support_height(
+      env,
+      feet_cfg=feet_cfg,
+      contact_height=0.08,
+      **params,
+    ),
+    torch.zeros(1),
+  )
+
+  env.common_step_counter = 1
+  ball.data.root_link_pos_w[:] = torch.tensor([[0.65, 0.0, BALL_CENTER_TABLE_Z]])
+  ball.data.root_link_lin_vel_w[:] = torch.tensor([[2.0, 0.0, 1.0]])
+  torch.testing.assert_close(
+    pace_hit_unstable_support_height(
+      env,
+      feet_cfg=feet_cfg,
+      contact_height=0.08,
+      **params,
+    ),
+    torch.zeros(1),
+  )
+
+  env.common_step_counter = 2
+  robot.data.body_link_pos_w[:, 0, 2] = 0.04
+  robot.data.body_link_pos_w[:, 1, 2] = 0.20
+  paddle_sensor.data.force[:] = 5.0
+  ball.data.root_link_pos_w[:] = torch.tensor([[0.85, 0.0, 1.05]])
+  ball.data.root_link_lin_vel_w[:] = torch.tensor([[-2.5, 0.0, 2.0]])
+  unstable = pace_hit_unstable_support_height(
+    env,
+    feet_cfg=feet_cfg,
+    contact_height=0.08,
+    **params,
+  )
+  torch.testing.assert_close(unstable, torch.ones(1))
+  assert torch.isfinite(
+    torch.stack(
+      (
+        pace_body_orientation_l2(env, body_cfg=left_foot_cfg),
+        pace_body_orientation_l2(env, body_cfg=right_foot_cfg),
+        pace_feet_too_near(env, feet_cfg=feet_cfg, threshold=0.15),
+      ),
+      dim=-1,
+    )
+  ).all()
+
+
+def test_pingpong_pace_contact_stability_rewards_are_finite() -> None:
+  env, ball, paddle_sensor, _, _ = _make_env()
+  robot = _add_pace_robot(env)
+  params = _make_pace_params()
+  sensor_name = "pace_foot_contact"
+  foot_sensor = env.scene[sensor_name]
+  feet_cfg = SceneEntityCfg("robot")
+  feet_cfg.body_ids = [0, 1]
+
+  torch.testing.assert_close(
+    pace_fly(env, sensor_name=sensor_name),
+    torch.ones(1),
+  )
+
+  foot_sensor.data.force_history[:, :, :, 2] = 20.0
+  foot_sensor.data.force[:, :, 2] = 20.0
+  foot_sensor.data.found[:] = 1.0
+  torch.testing.assert_close(
+    pace_fly(env, sensor_name=sensor_name),
+    torch.zeros(1),
+  )
+
+  robot.data.body_link_lin_vel_w[:] = torch.tensor(
+    [[[1.0, 0.0, 0.0], [0.0, 2.0, 0.0]]],
+    dtype=torch.float32,
+  )
+  torch.testing.assert_close(
+    pace_feet_slide_contact(env, feet_cfg=feet_cfg, sensor_name=sensor_name),
+    torch.tensor([5.0]),
+  )
+  assert torch.isfinite(
+    pace_feet_force(
+      env,
+      sensor_name=sensor_name,
+      threshold=10.0,
+      max_reward=400.0,
+    )
+  ).all()
+  assert torch.all(
+    pace_feet_force(
+      env,
+      sensor_name=sensor_name,
+      threshold=10.0,
+      max_reward=400.0,
+    )
+    > 0.0
+  )
+
+  foot_sensor.data.force_history.zero_()
+  foot_sensor.data.force_history[:, :, 0, 0] = 20.0
+  foot_sensor.data.force_history[:, :, 0, 2] = 1.0
+  torch.testing.assert_close(
+    pace_feet_stumble(env, sensor_name=sensor_name),
+    torch.ones(1),
+  )
+
+  foot_sensor.data.force_history.zero_()
+  foot_sensor.data.force.zero_()
+  foot_sensor.data.found.zero_()
+  torch.testing.assert_close(
+    pace_hit_unstable_support(env, sensor_name=sensor_name, **params),
+    torch.zeros(1),
+  )
+
+  env.common_step_counter = 1
+  ball.data.root_link_pos_w[:] = torch.tensor([[0.65, 0.0, BALL_CENTER_TABLE_Z]])
+  ball.data.root_link_lin_vel_w[:] = torch.tensor([[2.0, 0.0, 1.0]])
+  torch.testing.assert_close(
+    pace_hit_unstable_support(env, sensor_name=sensor_name, **params),
+    torch.zeros(1),
+  )
+
+  env.common_step_counter = 2
+  foot_sensor.data.force_history[:, 0, :, 2] = 20.0
+  foot_sensor.data.force[:, 0, 2] = 20.0
+  foot_sensor.data.found[:, 0] = 1.0
+  paddle_sensor.data.force[:] = 5.0
+  ball.data.root_link_pos_w[:] = torch.tensor([[0.85, 0.0, 1.05]])
+  ball.data.root_link_lin_vel_w[:] = torch.tensor([[-2.5, 0.0, 2.0]])
+  torch.testing.assert_close(
+    pace_hit_unstable_support(env, sensor_name=sensor_name, **params),
+    torch.ones(1),
+  )
 
 
 def test_pingpong_state_counts_legal_single_return() -> None:

@@ -16,6 +16,7 @@ from mjlab.tasks.pingpong.scene import (
   TABLE_HALF_LENGTH,
   TABLE_HALF_WIDTH,
 )
+from mjlab.utils.lab_api.math import quat_apply_inverse
 
 if TYPE_CHECKING:
   from mjlab.envs import ManagerBasedRlEnv
@@ -28,6 +29,7 @@ _PACE_STATE_ATTR = "_pingpong_pace_prediction_state"
 _DEFAULT_PADDLE_SENSOR = "paddle_ball_contact"
 _DEFAULT_NET_SENSOR = "pingpong_ball_net_contact"
 _DEFAULT_BODY_BALL_SENSOR = "robot_ball_contact"
+_DEFAULT_FOOT_SENSOR = "pace_foot_contact"
 
 _MIN_TIME = 1.0e-4
 _MAX_FUTURE_TIME = 1.5
@@ -182,10 +184,13 @@ def _predict_incoming_future_pose(
   future[:, 2] = torch.where(direct_valid, direct_z, edge_z)
   future_t = torch.where(direct_valid, direct_t, total_bounce_t)
   valid = direct_valid | bounce_valid
-  fallback = pos.clone()
+  fallback = torch.nan_to_num(pos, nan=0.0, posinf=0.0, neginf=0.0)
   fallback[:, 2] = torch.clamp(fallback[:, 2], min=table_z + _EDGE_CLEARANCE)
   future = torch.where(valid.unsqueeze(-1), future, fallback)
   future_t = torch.where(valid, future_t, torch.zeros_like(future_t))
+  future = torch.where(torch.isfinite(future), future, fallback)
+  future_t = torch.where(torch.isfinite(future_t), future_t, torch.zeros_like(future_t))
+  valid = valid & torch.isfinite(future).all(dim=-1) & torch.isfinite(future_t)
   return future, future_t, valid
 
 
@@ -257,7 +262,12 @@ class PingpongPacePredictionState:
 
   def update(self) -> None:
     step = int(self._env.common_step_counter)
-    if step == self._last_step:
+    episode_length_buf = getattr(self._env, "episode_length_buf", None)
+    reset_active = (
+      isinstance(episode_length_buf, torch.Tensor)
+      and bool((episode_length_buf == 0).any().item())
+    )
+    if step == self._last_step and not reset_active:
       return
 
     params = self._params
@@ -277,7 +287,10 @@ class PingpongPacePredictionState:
     future, future_t, future_valid = _predict_incoming_future_pose(
       ball_pos, ball_vel, table_z=table_z, net_x=net_x, gravity=gravity
     )
-    learned_episode_reset = self._env.episode_length_buf == 0
+    if isinstance(episode_length_buf, torch.Tensor):
+      learned_episode_reset = episode_length_buf == 0
+    else:
+      learned_episode_reset = torch.zeros(self._env.num_envs, dtype=torch.bool, device=self._env.device)
     if learned_episode_reset.any():
       self.ball_prediction[learned_episode_reset] = 0.0
 
@@ -492,6 +505,122 @@ def pace_robot_table_proximity_x(
   return torch.clamp(min_distance - distance, min=0.0)
 
 
+def _contact_force_history(
+  env: ManagerBasedRlEnv,
+  sensor_name: str = _DEFAULT_FOOT_SENSOR,
+) -> torch.Tensor:
+  sensor = env.scene[sensor_name]
+  data = sensor.data
+  force_history = getattr(data, "force_history", None)
+  if isinstance(force_history, torch.Tensor):
+    return torch.nan_to_num(force_history)
+
+  force = getattr(data, "force", None)
+  if isinstance(force, torch.Tensor):
+    return torch.nan_to_num(force).unsqueeze(2)
+
+  found = getattr(data, "found", None)
+  if isinstance(found, torch.Tensor):
+    return torch.zeros(
+      (*found.shape, 1, 3),
+      dtype=found.dtype,
+      device=found.device,
+    )
+
+  return torch.zeros((env.num_envs, 1, 1, 3), device=env.device)
+
+
+def _contact_mask_from_sensor(
+  env: ManagerBasedRlEnv,
+  sensor_name: str = _DEFAULT_FOOT_SENSOR,
+  force_threshold: float = 1.0,
+) -> torch.Tensor:
+  force_history = _contact_force_history(env, sensor_name)
+  force_mag = torch.linalg.vector_norm(force_history, dim=-1)
+  contact_mask = torch.amax(force_mag, dim=-1) > force_threshold
+
+  sensor = env.scene[sensor_name]
+  found = getattr(sensor.data, "found", None)
+  if isinstance(found, torch.Tensor) and tuple(found.shape) == tuple(contact_mask.shape):
+    contact_mask = contact_mask | (found > 0)
+
+  return contact_mask
+
+
+def pace_fly(
+  env: ManagerBasedRlEnv,
+  sensor_name: str = _DEFAULT_FOOT_SENSOR,
+  force_threshold: float = 1.0,
+  **params,
+) -> torch.Tensor:
+  del params
+  contact_mask = _contact_mask_from_sensor(env, sensor_name, force_threshold)
+  return (~torch.any(contact_mask, dim=-1)).float()
+
+
+def pace_hit_unstable_support(
+  env: ManagerBasedRlEnv,
+  sensor_name: str = _DEFAULT_FOOT_SENSOR,
+  force_threshold: float = 0.1,
+  **params,
+) -> torch.Tensor:
+  rally = _get_rally_state(env, params)
+  rally.update()
+  contact_mask = _contact_mask_from_sensor(env, sensor_name, force_threshold)
+  required_contacts = min(2, contact_mask.shape[-1])
+  contact_count = torch.sum(contact_mask.float(), dim=-1)
+  unstable = contact_count < float(required_contacts)
+  return (rally.paddle_hit_edge & unstable).float()
+
+
+def pace_feet_slide_contact(
+  env: ManagerBasedRlEnv,
+  feet_cfg: SceneEntityCfg,
+  sensor_name: str = _DEFAULT_FOOT_SENSOR,
+  force_threshold: float = 1.0,
+  **params,
+) -> torch.Tensor:
+  del params
+  robot: Entity = env.scene[feet_cfg.name]
+  body_ids = _body_id_list(feet_cfg, min_count=1)
+  feet_vel = robot.data.body_link_lin_vel_w[:, body_ids, :2]
+  contact_mask = _contact_mask_from_sensor(env, sensor_name, force_threshold).float()
+  contact_count = min(feet_vel.shape[1], contact_mask.shape[1])
+  slide = torch.sum(torch.square(feet_vel[:, :contact_count]), dim=-1)
+  return torch.sum(slide * contact_mask[:, :contact_count], dim=-1)
+
+
+def pace_feet_force(
+  env: ManagerBasedRlEnv,
+  sensor_name: str = _DEFAULT_FOOT_SENSOR,
+  threshold: float = 500.0,
+  max_reward: float = 400.0,
+  **params,
+) -> torch.Tensor:
+  del params
+  force_history = _contact_force_history(env, sensor_name)
+  force_z = torch.abs(force_history[..., 2])
+  total_z_force = torch.linalg.vector_norm(force_z, dim=1)
+  peak_force = torch.amax(total_z_force, dim=-1)
+  return torch.clamp(peak_force - threshold, min=0.0, max=max_reward)
+
+
+def pace_feet_stumble(
+  env: ManagerBasedRlEnv,
+  sensor_name: str = _DEFAULT_FOOT_SENSOR,
+  force_threshold: float = 1.0,
+  **params,
+) -> torch.Tensor:
+  del params
+  force_history = _contact_force_history(env, sensor_name)
+  horizontal_force = torch.linalg.vector_norm(force_history[..., :2], dim=-1)
+  vertical_force = torch.abs(force_history[..., 2])
+  stumble = (horizontal_force > 5.0 * vertical_force) & (
+    horizontal_force > force_threshold
+  )
+  return torch.any(stumble, dim=(1, 2)).float()
+
+
 def pace_feet_slide(
   env: ManagerBasedRlEnv,
   feet_cfg: SceneEntityCfg,
@@ -507,6 +636,76 @@ def pace_feet_slide(
   in_contact_band = feet_pos[..., 2] <= contact_height
   slide = torch.sum(torch.square(feet_vel[..., :2]), dim=-1)
   return torch.sum(slide * in_contact_band.float(), dim=-1)
+
+
+def _feet_height(env: ManagerBasedRlEnv, feet_cfg: SceneEntityCfg) -> torch.Tensor:
+  robot: Entity = env.scene[feet_cfg.name]
+  feet_pos = (
+    robot.data.body_link_pos_w[:, feet_cfg.body_ids] - env.scene.env_origins[:, None, :]
+  )
+  return feet_pos[..., 2]
+
+
+def _body_id_list(body_cfg: SceneEntityCfg, *, min_count: int) -> list[int]:
+  body_ids = body_cfg.body_ids
+  if isinstance(body_ids, slice) or len(body_ids) < min_count:
+    raise ValueError(
+      f"{body_cfg.name!r} body_cfg must resolve to at least {min_count} bodies."
+    )
+  return body_ids
+
+
+def pace_fly_height(
+  env: ManagerBasedRlEnv,
+  feet_cfg: SceneEntityCfg,
+  contact_height: float = 0.08,
+  **params,
+) -> torch.Tensor:
+  del params
+  feet_z = _feet_height(env, feet_cfg)
+  return torch.all(feet_z > contact_height, dim=-1).float()
+
+
+def pace_hit_unstable_support_height(
+  env: ManagerBasedRlEnv,
+  feet_cfg: SceneEntityCfg,
+  contact_height: float = 0.08,
+  **params,
+) -> torch.Tensor:
+  rally = _get_rally_state(env, params)
+  rally.update()
+  feet_z = _feet_height(env, feet_cfg)
+  both_supported = torch.all(feet_z <= contact_height, dim=-1)
+  return (rally.paddle_hit_edge & ~both_supported).float()
+
+
+def pace_body_orientation_l2(
+  env: ManagerBasedRlEnv,
+  body_cfg: SceneEntityCfg,
+  **params,
+) -> torch.Tensor:
+  del params
+  robot: Entity = env.scene[body_cfg.name]
+  body_ids = _body_id_list(body_cfg, min_count=1)
+  body_quat = robot.data.body_link_quat_w[:, body_ids[0], :]
+  gravity_w = torch.zeros_like(body_quat[:, :3])
+  gravity_w[:, 2] = -1.0
+  projected_gravity_b = quat_apply_inverse(body_quat, gravity_w)
+  return torch.sum(torch.square(projected_gravity_b[:, :2]), dim=-1)
+
+
+def pace_feet_too_near(
+  env: ManagerBasedRlEnv,
+  feet_cfg: SceneEntityCfg,
+  threshold: float = 0.2,
+  **params,
+) -> torch.Tensor:
+  del params
+  robot: Entity = env.scene[feet_cfg.name]
+  body_ids = _body_id_list(feet_cfg, min_count=2)
+  feet_pos = robot.data.body_link_pos_w[:, body_ids]
+  distance = torch.linalg.vector_norm(feet_pos[:, 0] - feet_pos[:, 1], dim=-1)
+  return torch.clamp(threshold - distance, min=0.0)
 
 
 def pace_contact(env: ManagerBasedRlEnv, **params) -> torch.Tensor:
@@ -607,8 +806,15 @@ __all__ = [
   "pace_ang_vel_z_l2",
   "pace_ball_position_table",
   "pace_ball_prediction_table",
+  "pace_body_orientation_l2",
   "pace_contact",
+  "pace_feet_force",
+  "pace_feet_slide_contact",
+  "pace_feet_stumble",
+  "pace_feet_too_near",
   "pace_feet_slide",
+  "pace_fly",
+  "pace_fly_height",
   "pace_future_ball_pose_table",
   "pace_future_base_vel_target",
   "pace_future_body_target",
@@ -617,6 +823,8 @@ __all__ = [
   "pace_future_pass_net",
   "pace_future_time",
   "pace_heading",
+  "pace_hit_unstable_support",
+  "pace_hit_unstable_support_height",
   "pace_joint_deviation_l1",
   "pace_lin_vel_z_l2",
   "pace_paddle_touch_point_table",

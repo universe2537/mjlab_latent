@@ -1141,3 +1141,568 @@ v2 `model_1750.pt`，但本次应以 v1 `model_30000.pt` 视频为准。
 - `UV_CACHE_DIR=/tmp/uv-cache uv run ty check play-distill.py`
 - `imageio` metadata confirms codec `h264`, pixel format `yuv420p`,
   `50.0` FPS, duration `12.0s`, size `960x540`, and non-empty first frame.
+
+## 2026-07-07 09:31 - Table-tennis v2 distill comparison video
+
+### 目标
+
+对比 v2 `model_30000.pt` 在 `test_001` 上的 tracking teacher、posterior
+decoder 和 prior decoder 表现。
+
+### 录制对象
+
+- Decoder checkpoint:
+  `logs/rsl_rl/g1_distillation_table_tennis/table_tennis_distill_v2_46080env_kl_aligned_from_tracking18000_gpu1_2026-07-05_23-43-32/model_30000.pt`
+- Teacher reference:
+  `outputs/table_tennis_teacher_tracking_model18000_test001.mp4`
+- Motion:
+  `artifacts/table_tennis/test_001/motion.npz`
+- Render:
+  `MUJOCO_GL=egl`，`CUDA_VISIBLE_DEVICES=1`，`960x540`，`600` frames
+
+### 产物
+
+- V2 posterior:
+  `outputs/table_tennis_distill_v2_model30000_test001_posterior.mp4`
+- V2 prior:
+  `outputs/table_tennis_distill_v2_model30000_test001_prior.mp4`
+- Three-panel comparison:
+  `outputs/table_tennis_v2_model30000_test001_teacher_posterior_prior_compare.mp4`
+
+### 验证
+
+- `imageio` metadata confirms the three-panel comparison is `h264`,
+  `yuv420p`, `50.0` FPS, duration `12.0s`, size `2880x592`, and has a
+  non-empty first frame.
+
+## 2026-07-07 09:44 - Pingpong Hit with table-tennis v2 decoder
+
+### 目标
+
+虽然 table-tennis v2 decoder 的 tracking 视频仍不完美，但将其接入
+`Mjlab-Pingpong-Hit-Unitree-G1` 做高层 Hit RL 试验，观察是否能学到主动拍面命中。
+
+### 启动配置
+
+- Tmux:
+  `pingpong_hit_tt_decoder_v2_gpu1_20260707`
+- GPU:
+  `CUDA_VISIBLE_DEVICES=1`
+- Task:
+  `Mjlab-Pingpong-Hit-Unitree-G1`
+- Num envs:
+  `15360`
+- Experiment:
+  `g1_pingpong_latent_hit_table_tennis_decoder`
+- Run:
+  `pingpong_hit_tt_decoder_v2_model30000_15360env_gpu1_20260707_2026-07-07_09-44-02`
+- Decoder:
+  `logs/rsl_rl/g1_distillation_table_tennis/table_tennis_distill_v2_46080env_kl_aligned_from_tracking18000_gpu1_2026-07-05_23-43-32/model_30000.pt`
+
+### 验证
+
+- 启动前 1-env CPU smoke 成功加载 v2 decoder 并 step 一次，未出现
+  decoder state/action mismatch。
+- Resolved config 确认：
+  `env.scene.num_envs=15360`，`agent.max_iterations=30000`，
+  `agent.upload_model=false`，且
+  `env.actions.latent_joint_pos.decoder_checkpoint` 指向 v2 `model_30000.pt`。
+- run 目录写入：
+  `logs/rsl_rl/g1_pingpong_latent_hit_table_tennis_decoder/pingpong_hit_tt_decoder_v2_model30000_15360env_gpu1_20260707_2026-07-07_09-44-02/COMMAND.md`
+
+### 早期观察
+
+- 约前几轮：`paddle_hit_count` 非零并升到约 `0.16`，说明有命中信号。
+- `robot_ball_contact_count≈0.69`、`fault_reason/body_ball≈0.53` 仍然高，
+  需要继续观察是否能从身体挡球/蹭球局部行为转向干净拍面击球。
+- `fall_penalty=0`、bad orientation/root height 早期为 0，站立稳定性暂时可接受。
+
+## 2026-07-06 20:50 - Pingpong PACE 12x1024 GPU3 restart
+
+### 目标
+
+将 PACE baseline 从疑似挤爆的 `16*1024` / `14*1024` env run 降到
+`12*1024` env，继续在 host GPU3 上训练，并清理失败 run 目录。
+
+### 处理
+
+- 失败 session `pingpong_pace_16384_gpu3_20260706` 已不在 `tmux ls` 中。
+- 已清理失败 run 目录：
+  `logs/rsl_rl/g1_pingpong_pace/pingpong_pace_scratch_16384env_gpu3_2026-07-06_20-39-11`。
+- 失败 session `pingpong_pace_14336_gpu3_20260706` 也已不在 `tmux ls` 中。
+- 已清理失败 run 目录：
+  `logs/rsl_rl/g1_pingpong_pace/pingpong_pace_scratch_14336env_gpu3_2026-07-06_20-44-37`。
+- 新 session：
+  `pingpong_pace_12288_gpu3_20260706`
+- 新 run：
+  `logs/rsl_rl/g1_pingpong_pace/pingpong_pace_scratch_12288env_gpu3_2026-07-06_20-49-36`
+- W&B run id:
+  `ysevx7op`
+
+### 启动命令
+
+```sh
+CUDA_VISIBLE_DEVICES=3 UV_CACHE_DIR=/tmp/uv-cache MPLCONFIGDIR=/tmp/mplconfig \
+WANDB_CACHE_DIR=/tmp/wandb-cache WANDB_CONFIG_DIR=/tmp/wandb-config \
+XDG_CACHE_HOME=/tmp/xdg-cache MJLAB_WARP_QUIET=1 \
+uv run train Mjlab-Pingpong-PACE-Unitree-G1 \
+  --env.scene.num-envs 12288 \
+  --gpu-ids "[0]" \
+  --agent.experiment-name g1_pingpong_pace \
+  --agent.run-name pingpong_pace_scratch_12288env_gpu3 \
+  --agent.upload-model False
+```
+
+### 初始观察
+
+- `12*1024` env 第 0 个 iteration 已完成，说明不只是初始化成功。
+- GPU3 显存约 `20465 / 24564 MiB`，utilization `97%`。
+- Iteration 0: `Steps per second=41294`，`predictor_mse=0.1185`，
+  `Mean reward=-21.22`。
+- Scratch 初期 `paddle_hit_count=0`、`legal_return_count=0` 属预期现象；
+  后续主要看 contact、crossed net、opponent bounce 和 legal return 是否抬头。
+
+## 2026-07-06 22:53 - PACE reference audit in /tmp
+
+### 目标
+
+按用户要求把 PACE 官方参考实现放到 `/tmp`，并记录它对当前
+`Mjlab-Pingpong-PACE-Unitree-G1` 不稳定问题的解释价值。
+
+### 参考代码
+
+- Clone path: `/tmp/PACE-ICRA2026`
+- Source: `git@github.com:purdue-tracelab/PACE-ICRA2026.git`
+- Clone command:
+
+```sh
+git clone --depth 1 https://github.com/purdue-tracelab/PACE-ICRA2026.git /tmp/PACE-ICRA2026
+```
+
+### 参考实现要点
+
+- PACE 的 table-tennis 训练入口是 `t1_tt`，README 推荐
+  `--num_envs=4096 --predictor`。它不是 latent low-level，而是直接
+  joint-position policy。
+- 动作处理在 `legged_lab/envs/base/tt_env.py`：
+  `processed_actions = clip(actions, -100, 100) * action_scale + default_joint_pos`。
+  其中 T1 配置使用全局 `action_scale=0.25`，`clip_actions=100.0`。
+- T1 table-tennis 环境控制 21 个关节，`sim.dt=0.002`、
+  `decimation=10`，即 50 Hz。
+- PPO 配置使用 `num_steps_per_env=24`、`init_noise_std=1.0`、
+  scalar std、`entropy_coef=0.006`、`gamma=0.95`、
+  `empirical_normalization=False`。
+- Actor observation 用 learned ball prediction；critic observation 用
+  physics future ball pose、paddle touch point、future robot target delta、
+  future hit time 和 contact/phase flags。
+- Predictor runner 每步记录 ball position，前 `20` 个 PPO iteration 用
+  physics future pose 做监督训练，训练后每步调用 env
+  `update_prediction(preds)`，checkpoint 中保存 `pred_state_dict`、
+  `pred_optimizer_state_dict` 和 `pred_cfg`。
+- 核心击球 reward 权重和我们迁移的一致：contact `150`、future EE `2`、
+  future body `5`、future base velocity `5`、future landing `60`、
+  future pass net `100`、table success `100`。
+- PACE 原版还有一组 v1 迁移时没有完整带过来的稳定项：`fly`、
+  `hit_unstable_support`、左右脚姿态、脚底受力、脚滑、脚绊、
+  两脚过近、paddle head 过近身体等。
+
+### 对当前问题的判断
+
+- 失败的 `pingpong_pace_scratch_12288env_gpu3` 不是显存 OOM，而是在
+  iteration 515 左右出现 actor observation NaN。
+- 该 run 的 `model_500.pt` policy/predictor 权重 finite，但 policy std 已从
+  `1.0` 长到约 `3.65`，同时 `action_rate_l2`、`joint_pos_limits`、
+  `root_height` 和 `bad_orientation` 明显恶化。
+- 因此风险点更像是 PACE 控制 envelope 没有完全迁移：原版 T1 是 21 关节、
+  全局 `0.25` action scale 和完整稳定 reward；我们当前 G1 direct-PACE 是
+  29 关节、按 G1 乒乓球拍模型 action scale，部分关节 scale 约 `0.55`，
+  再配合 `clip_actions=100` 时实际几乎没有动作裁剪。
+
+### 下一步建议
+
+在重新跑 direct-PACE 前，优先对齐控制 envelope，而不是先动球路或
+Cross-StrikeQuality：
+
+- 降低 G1 direct-PACE 的动作尺度，或给 direct-PACE 增加实际有效的动作裁剪。
+- 降低探索增长风险，例如收紧 initial/std cap 或 entropy。
+- 若目标是更完整复刻 PACE，再补齐上面列出的稳定项，并单独测试不影响普通
+  Cross / StrikeQuality / latent decoder。
+
+## 2026-07-06 23:06 - G1 PACE baseline stabilization
+
+### 目标
+
+按计划先稳定 `Mjlab-Pingpong-PACE-Unitree-G1` direct joint-position baseline，
+避免 policy std 放大后把 G1 推到异常物理状态。普通 latent Cross /
+StrikeQuality、decoder checkpoint、球路分布和持拍模型保持不变。
+
+### 代码改动
+
+- 新增 PACE-only G1 action scale：
+  `G1_PACE_ACTION_SCALE = min(G1_W_RACKET_ACTION_SCALE, 0.25)`，只用于
+  `unitree_g1_pingpong_pace_env_cfg()`。
+- PACE PPO 改为保守探索：
+  `clip_actions=2.5`、`init_std=0.6`、`entropy_coef=0.002`、
+  `gamma=0.95`，actor/critic hidden dims 改为 `(512, 512, 128)`。
+- Predictor 配置保持不变。
+- 增加不依赖新 foot contact sensor 的 PACE 稳定 reward：
+  `pace_fly_height=-2.5`、`pace_hit_unstable_support_height=-10.0`、
+  `pace_feet_orientation_left/right=-4.0`、`pace_feet_too_near=-1.5`、
+  `pace_feet_really_too_near=-10.0`。
+- 暂不加入 PACE 原版 feet-force / stumble 接触力项；这需要专用足部
+  contact sensor，留到 v2。
+
+### 验证计划
+
+- 先跑相关 pytest 和 ty check。
+- 再跑 CPU smoke train：
+  `FORCE_CPU=1 UV_CACHE_DIR=/tmp/uv-cache uv run train Mjlab-Pingpong-PACE-Unitree-G1 --agent.max-iterations 1 --env.scene.num-envs 2 --agent.upload-model False`
+- CPU 验证通过后，在 GPU3 启动 4096-env canary，确认无 NaN、`Policy/mean_std`
+  不再快速涨到 `3+`，并观察 action-rate / joint-limit / root-height /
+  bad-orientation 是否不再同步恶化。
+
+### 验证结果
+
+- `FORCE_CPU=1 UV_CACHE_DIR=/tmp/uv-cache uv run pytest tests/test_pingpong_task.py tests/test_pingpong_state.py -q`
+  通过：`24 passed`。
+- `UV_CACHE_DIR=/tmp/uv-cache uv run ty check src/mjlab/tasks/pingpong tests/test_pingpong_task.py tests/test_pingpong_state.py`
+  通过。
+- `UV_CACHE_DIR=/tmp/uv-cache uv run ruff check src/mjlab/tasks/pingpong tests/test_pingpong_task.py tests/test_pingpong_state.py`
+  通过。
+- CPU smoke 首次只设置 `FORCE_CPU=1` 时失败在默认 `gpu_ids=[0]` 对空 GPU 列表
+  取下标；重跑时显式加 `--gpu-ids "[]"` 通过。
+- CPU smoke passing command:
+
+```sh
+FORCE_CPU=1 WANDB_MODE=offline UV_CACHE_DIR=/tmp/uv-cache MPLCONFIGDIR=/tmp/mplconfig \
+uv run train Mjlab-Pingpong-PACE-Unitree-G1 \
+  --gpu-ids "[]" \
+  --agent.max-iterations 1 \
+  --env.scene.num-envs 2 \
+  --agent.upload-model False
+```
+
+### GPU canary
+
+- Session:
+  `pingpong_pace_stable_canary_4096_gpu3_20260706`
+- Run:
+  `logs/rsl_rl/g1_pingpong_pace/pingpong_pace_stable_canary_4096env_gpu3_2026-07-06_23-10-26`
+- W&B run id:
+  `h9859s2u`
+- Launch record:
+  `logs/rsl_rl/_codex_launch_records/pingpong_pace_stable_canary_4096_gpu3_20260706/COMMAND.md`
+- Initial GPU3 memory after startup:
+  about `6133 / 24564 MiB`.
+- Iteration 15 early check:
+  `Mean action std=0.61`, `Episode_Termination/nan_detection=0.0`,
+  `bad_orientation=0.0`, `root_height=0.0417`, and no early actor-observation NaN.
+- Final canary result:
+  this run was scratch, not resumed from a failed checkpoint. It later failed at
+  iteration 592 with actor observation NaN. Near failure, `Mean action std` was
+  about `0.77`, `action_rate_l2` about `-0.2941`, `joint_pos_limits` about
+  `-0.0232`, `bad_orientation` about `0.8750`, and `root_height` about
+  `3.2083`. This shows the remaining failure is still the direct-control task /
+  environment stability, not checkpoint inheritance.
+
+## 2026-07-06 23:50 - G1 PACE formal scratch run
+
+### 目标
+
+按用户要求正式用 tmux 直接 scratch 训练，不从任何失败 PACE checkpoint 继续。
+
+### 启动配置
+
+- Session:
+  `pingpong_pace_stable_scratch_12288_gpu3_20260706`
+- Run:
+  `logs/rsl_rl/g1_pingpong_pace/pingpong_pace_stable_scratch_12288env_gpu3_2026-07-06_23-50-08`
+- W&B run id:
+  `apqf2mva`
+- Launch record:
+  `logs/rsl_rl/_codex_launch_records/pingpong_pace_stable_scratch_12288_gpu3_20260706/COMMAND.md`
+- GPU:
+  host GPU3, `12288` envs, peak observed memory about `15029 / 24564 MiB`
+- Checkpoint policy:
+  `--agent.resume False`, no `load_checkpoint_file`, no `load_run`,
+  no `load_checkpoint`
+
+### 结果
+
+- Iteration 5:
+  `Mean action std=0.60`, `nan_detection=0.0`, `bad_orientation=0.0`,
+  `root_height=0.0417`。
+- Iteration 6:
+  still `Mean action std=0.60`, `nan_detection=0.0`, `bad_orientation=0.0`,
+  `root_height=0.0833` in logged episode stats.
+- Immediately after iteration 6, the run exited with:
+  `ValueError: The observation group 'actor' returned by the environment contains NaN values.`
+
+### 判断
+
+这次正式 run 已经证明不是在失败 ckpt 上续训导致的问题。相同代码从 scratch
+在 `12288` env 下会很快触发 rare actor-observation NaN；`4096` env 下能跑到
+约 `592` iteration 后才触发。下一步不应重复启动同样配置的正式训练，而应先给
+PACE runner/env 增加 NaN source dump，定位是 `joint_pos`、`joint_vel`、
+`ball_pos`、`robot_pos`、`ball_prediction`、`rel_target_base_xy` 还是
+`heading` 产生 NaN，并记录对应 env id / reset state / qpos / qvel。
+- Canary failed at iteration 592 with actor observation NaN. This is an
+  improvement over the old run's std explosion (`Mean action std` stayed around
+  `0.77` instead of `3+`), but not acceptable for formal training. Near failure,
+  `Episode_Termination/bad_orientation` was around `0.875` and
+  `Episode_Termination/root_height` around `3.2083`, so the remaining issue is
+  direct-control instability/fall states rather than predictor NaNs or GPU OOM.
+
+### Follow-up stabilization before formal 12288-env training
+
+- Tighten PACE-only direct-control envelope further:
+  `G1_PACE_ACTION_SCALE` cap `0.25 -> 0.18`,
+  `clip_actions 2.5 -> 2.0`,
+  actor `init_std 0.6 -> 0.45`,
+  `entropy_coef 0.002 -> 0.001`.
+- Make PACE terminate unstable body states earlier:
+  `bad_orientation.limit_angle=45deg`,
+  `root_height.minimum_height=0.65`.
+
+## 2026-07-07 09:35 - G1 PACE actor NaN root-cause diagnosis
+
+### 目标
+
+定位 PACE scratch run 的 actor observation NaN 原因，并保留原始报错证据。
+
+### 原始报错
+
+两条 scratch run 的原始异常一致：
+
+```text
+ValueError: The observation group 'actor' returned by the environment contains NaN values. This usually indicates a bug in the environment's step() or reset() function.
+```
+
+失败位置：
+
+- `src/mjlab/tasks/pingpong/rl/runner.py` 调用
+  `check_nan(obs, rewards, dones)`。
+- `rsl_rl/utils/utils.py:279` 抛出上述 `ValueError`。
+
+### 诊断改动
+
+- 在 `PingpongPaceOnPolicyRunner` 中增加 PACE-only NaN diagnostic dump：
+  触发 NaN 时在 run 目录下写
+  `diagnostics/pace_nan_iter*_step*.json`，记录 group/term 级别
+  NaN/Inf 计数、bad env id、robot/ball root state、last action 和 PACE
+  predictor state。
+- 保持原始 `check_nan` 异常行为不变，只是在抛错前写诊断文件。
+
+### 复现与证据
+
+- 诊断 run：
+  `logs/rsl_rl/g1_pingpong_pace/pingpong_pace_nan_diag_12288env_gpu3_2026-07-07_09-25-33`
+- 诊断文件：
+  `diagnostics/pace_nan_iter000001_step013.json`
+- bad env:
+  `9563`
+- actor group:
+  only `rel_target_base_xy` has NaN, `nan_count=2`。
+- critic group:
+  `future_ball_pose` has `nan_count=3` and
+  `robot_future_delta` has `nan_count=2`。
+- `actions`、`joint_pos`、`joint_vel`、`base_ang_vel`、`ball_pos`、
+  `robot_pos`、`ball_prediction` all remained finite.
+- bad env snapshot showed `episode_length_buf=0` and `last_action=0`,
+  i.e. the environment had just been auto-reset; post-reset robot/ball state
+  was finite.
+
+### 根因
+
+`PingpongPacePredictionState.update()` cached by global
+`common_step_counter`. During `ManagerBasedRlEnv.step()`:
+
+1. reward computation can call `state.update()` before auto-reset;
+2. terminated envs are reset without increasing `common_step_counter`;
+3. observation computation calls `state.update()` again in the same step;
+4. because `_last_step == common_step_counter`, PACE state returned early and
+   reused stale pre-reset `ball_future_pose`, which could contain NaN;
+5. actor `rel_target_base_xy = state.target_base_xy - robot_pos` therefore
+   exposed NaN to PPO even though the post-reset physics state was already
+   finite.
+
+This is why the run did not look like policy std explosion:
+`Mean action std` stayed around `0.60` before failure.
+
+### 修复
+
+- `PingpongPacePredictionState.update()` now recomputes when any
+  `episode_length_buf == 0`, even if `common_step_counter` has not changed.
+- `_predict_incoming_future_pose()` now applies finite fallback to future pose
+  and future time before writing observation-visible PACE target state.
+- Added regression test
+  `test_pingpong_pace_prediction_refreshes_after_auto_reset_same_step()`.
+
+### 验证
+
+- `UV_CACHE_DIR=/tmp/uv-cache uv run ruff check src/mjlab/tasks/pingpong/rl/runner.py src/mjlab/tasks/pingpong/mdp/pace.py tests/test_pingpong_state.py tests/test_pingpong_task.py`
+  passed.
+- `UV_CACHE_DIR=/tmp/uv-cache uv run ty check src/mjlab/tasks/pingpong tests/test_pingpong_task.py tests/test_pingpong_state.py`
+  passed.
+- `FORCE_CPU=1 UV_CACHE_DIR=/tmp/uv-cache uv run pytest tests/test_pingpong_task.py tests/test_pingpong_state.py -q`
+  passed: `25 passed`.
+- Fixed diagnostic run:
+  `logs/rsl_rl/g1_pingpong_pace/pingpong_pace_nan_diag_fixed_12288env_gpu3_2026-07-07_09-29-44`
+  ran `12288` envs for `20` iterations on GPU3 without actor-observation
+  NaN and without writing any diagnostics JSON.
+
+### 剩余问题
+
+- PACE direct-control policy quality is still poor at this early stage:
+  `fault_reason/body_ball` remains high and `robot_ball_contact_count` is high.
+  That is a reward/control-quality issue, separate from this actor-observation
+  NaN crash.
+
+## 2026-07-07 09:43 - Restart fixed G1 PACE scratch training
+
+### 目标
+
+After fixing the actor-observation NaN, restart the PACE baseline from scratch
+instead of resuming any failed checkpoint.
+
+### 启动配置
+
+- tmux session:
+  `pingpong_pace_fixed_scratch_12288_gpu3_20260707`
+- task:
+  `Mjlab-Pingpong-PACE-Unitree-G1`
+- GPU:
+  host GPU3 via `CUDA_VISIBLE_DEVICES=3` and `--gpu-ids "[0]"`
+- environments:
+  `12288` (`12*1024`)
+- run name:
+  `pingpong_pace_fixed_scratch_12288env_gpu3`
+- run dir:
+  `logs/rsl_rl/g1_pingpong_pace/pingpong_pace_fixed_scratch_12288env_gpu3_2026-07-07_09-43-26`
+- resume:
+  `False`
+
+Command:
+
+```sh
+CUDA_VISIBLE_DEVICES=3 UV_CACHE_DIR=/tmp/uv-cache MPLCONFIGDIR=/tmp/mplconfig \
+WANDB_CACHE_DIR=/tmp/wandb-cache WANDB_CONFIG_DIR=/tmp/wandb-config \
+XDG_CACHE_HOME=/tmp/xdg-cache MJLAB_WARP_QUIET=1 \
+uv run train Mjlab-Pingpong-PACE-Unitree-G1 \
+  --env.scene.num-envs 12288 \
+  --gpu-ids "[0]" \
+  --agent.resume False \
+  --agent.experiment-name g1_pingpong_pace \
+  --agent.run-name pingpong_pace_fixed_scratch_12288env_gpu3 \
+  --agent.upload-model False
+```
+
+### 启动检查
+
+- Iteration 10 reached without actor-observation NaN.
+- No `diagnostics/pace_nan_*` JSON was written in the new run dir.
+- GPU3 memory was about `13.8 GiB` for the PACE process.
+- `Policy/mean_std` stayed around `0.60` to `0.61`.
+- Early behavior is still weak, as expected for scratch direct control:
+  body-ball faults remain high and legal returns are still zero.
+
+### 同机 GPU 注意
+
+At launch time, GPU1 was also running an unrelated
+`Mjlab-Pingpong-Hit-Unitree-G1` job:
+`pingpong_hit_tt_decoder_v2_model30000_15360env_gpu1_20260707`.
+Do not confuse it with this PACE baseline run.
+
+## 2026-07-07 13:40 - PACE foot contact sensor and force rewards
+
+### 目标
+
+补齐 `Mjlab-Pingpong-PACE-Unitree-G1` 相比 PACE 参考实现缺失的 foot contact
+sensor 相关内容，先只影响 PACE direct-control baseline，不修改 latent Cross /
+StrikeQuality、decoder checkpoint、球路分布或当前持拍模型。
+
+### 代码改动
+
+- 新增 PACE-only sensor：`pace_foot_contact`。
+  - primary：`left_ankle_roll_link`、`right_ankle_roll_link`
+  - secondary：`None`，即脚部任意接触都会被记录
+  - `reduce="netforce"`、`history_length=4`、`track_air_time=True`
+- PACE reward 从 height-only 支撑近似切到 force-based contact：
+  - `pace_fly=-2.5`
+  - `pace_hit_unstable_support=-10.0`
+  - `feet_slide=-1.5`
+  - `feet_force=-3.0e-3`
+  - `feet_stumble=-2.0`
+- 保留旧的 `pace_fly_height` / `pace_hit_unstable_support_height` helper，
+  但 PACE env config 不再使用它们，方便旧脚本兼容。
+- 普通 `Mjlab-Pingpong-Cross-Unitree-G1` 和
+  `Mjlab-Pingpong-Cross-StrikeQuality-Unitree-G1` 不挂
+  `pace_foot_contact`，也不包含上述 PACE foot reward。
+
+### 验证结果
+
+```sh
+FORCE_CPU=1 UV_CACHE_DIR=/tmp/uv-cache \
+uv run pytest tests/test_pingpong_task.py tests/test_pingpong_state.py -q
+# 26 passed
+
+UV_CACHE_DIR=/tmp/uv-cache \
+uv run ty check src/mjlab/tasks/pingpong \
+  tests/test_pingpong_task.py tests/test_pingpong_state.py
+# All checks passed
+```
+
+### 注意
+
+已经在 tmux 中运行的旧 PACE 训练不会自动使用新 sensor/reward；需要重启
+PACE task 后，新的 env cfg 才会生效。
+
+## 2026-07-07 13:44 - Restart PACE with foot contact rewards
+
+### 目标
+
+停止旧的 `pingpong_pace_fixed_scratch_12288_gpu3_20260707`，重新从 scratch
+启动 PACE direct-control baseline，让新 `pace_foot_contact` sensor 和 force-based
+foot reward 生效。
+
+### 启动配置
+
+- tmux session:
+  `pingpong_pace_foot_contact_12288_gpu3_20260707`
+- task:
+  `Mjlab-Pingpong-PACE-Unitree-G1`
+- GPU:
+  host GPU3 via `CUDA_VISIBLE_DEVICES=3` and `--gpu-ids "[0]"`
+- environments:
+  `12288` (`12*1024`)
+- run name:
+  `pingpong_pace_foot_contact_12288env_gpu3`
+- run dir:
+  `logs/rsl_rl/g1_pingpong_pace/pingpong_pace_foot_contact_12288env_gpu3_2026-07-07_13-44-03`
+- resume:
+  `False`
+
+Command:
+
+```sh
+CUDA_VISIBLE_DEVICES=3 UV_CACHE_DIR=/tmp/uv-cache MPLCONFIGDIR=/tmp/mplconfig \
+WANDB_CACHE_DIR=/tmp/wandb-cache WANDB_CONFIG_DIR=/tmp/wandb-config \
+XDG_CACHE_HOME=/tmp/xdg-cache MJLAB_WARP_QUIET=1 \
+uv run train Mjlab-Pingpong-PACE-Unitree-G1 \
+  --env.scene.num-envs 12288 \
+  --gpu-ids "[0]" \
+  --agent.resume False \
+  --agent.experiment-name g1_pingpong_pace \
+  --agent.run-name pingpong_pace_foot_contact_12288env_gpu3 \
+  --agent.upload-model False
+```
+
+### 启动检查
+
+- 新 run 已到 iteration 2。
+- stdout 已出现新的 `Episode_Reward/pace_fly`、
+  `Episode_Reward/pace_hit_unstable_support`、`Episode_Reward/feet_slide`、
+  `Episode_Reward/feet_force`、`Episode_Reward/feet_stumble`，说明新 reward
+  生效。
+- `Episode_Termination/nan_detection=0.0000`。
+- `Policy/mean_std` 仍在 `0.60` 左右。
