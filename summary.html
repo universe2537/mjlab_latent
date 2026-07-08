@@ -93,6 +93,33 @@
       <code>action_rate_l2=-0.01</code>, <code>feet_slide=-0.3</code>, and
       <code>pace_hit_unstable_support=-5.0</code>.
     </li>
+    <li>
+      A 10-second headless play video was recorded from
+      <code>model_500.pt</code> with
+      <code>MUJOCO_GL=egl MUJOCO_EGL_DEVICE_ID=0</code>,
+      <code>--video-length 500</code>, and <code>--device cuda:0</code>.
+      Output:
+      <code>logs/rsl_rl/g1_pingpong_pace/pingpong_pace_g1_paddle_relaxed_scratch_15360env_gpu1_2026-07-08_11-42-05/videos/play/pace_current_relaxed_model500_10s.mp4</code>
+      (<code>1280x720</code>, <code>50 fps</code>, <code>10.0 s</code>).
+    </li>
+  </ul>
+
+  <h2>2026-07-08 PACE Reference-Arm Natural-Hit Video</h2>
+  <ul>
+    <li>
+      For the active GPU3 scratch run
+      <code>pingpong_pace_reference_arm_scratch_natural_hit_15360_gpu3_20260708</code>,
+      a 10-second headless play video was recorded from
+      <code>model_750.pt</code> with
+      <code>MUJOCO_GL=egl MUJOCO_EGL_DEVICE_ID=2</code>,
+      <code>--video-length 500</code>, and <code>--device cuda:2</code>.
+      Output:
+      <code>logs/rsl_rl/g1_pingpong_pace/pingpong_pace_reference_arm_scratch_natural_hit_15360env_gpu3_2026-07-08_17-32-08/videos/play/pace_gpu3_scratch_natural_hit_model750_10s.mp4</code>
+      (<code>1280x720</code>, <code>50 fps</code>, <code>10.0 s</code>).
+      A corrected 10-second recording with Pingpong debug reference points used
+      <code>--debug-overlays pingpong</code>; output:
+      <code>logs/rsl_rl/g1_pingpong_pace/pingpong_pace_reference_arm_scratch_natural_hit_15360env_gpu3_2026-07-08_17-32-08/videos/play/pace_gpu3_scratch_natural_hit_model750_debug_overlays_10s.mp4</code>.
+    </li>
   </ul>
 
   <h2>2026-07-08 Pingpong PACE Scratch Video Diagnosis</h2>
@@ -107,6 +134,17 @@
       Diagnostic sheets:
       <code>diagnostic_contact_sheet_model_9750.png</code> and
       <code>diagnostic_dense_first_120_frames_model_9750.png</code>.
+    </li>
+    <li>
+      A matching 10-second video was recorded for the later same-run checkpoint
+      <code>model_9999.pt</code> with
+      <code>MUJOCO_GL=egl MUJOCO_EGL_DEVICE_ID=0</code>,
+      <code>--video-length 500</code>, and <code>--device cuda:0</code>.
+      Output:
+      <code>logs/rsl_rl/g1_pingpong_pace/pingpong_pace_fk_reset_scratch_8192env_gpu0_2026-07-07_19-56-04/videos/play/pace_previous_fk_scratch_model9999_10s.mp4</code>
+      (<code>1280x720</code>, <code>50 fps</code>, <code>10.0 s</code>).
+      The previous 16-second default video was preserved as
+      <code>rl-video-step-0_16s_backup_20260708_0928.mp4</code>.
     </li>
     <li>
       Visual diagnosis: the policy keeps the feet almost planted, reaches by
@@ -1602,14 +1640,14 @@
     <li>
       PACE G1 geometry defaults now live in
       <code>src/mjlab/tasks/pingpong/pace_geometry.py</code>. After the T1
-      reference-image correction, the current native defaults target a
-      table-height lateral forehand reach:
-      <code>target_base_offset_xy=(-0.3112, 0.4510)</code>,
+      reference-image correction and the user-selected right-arm reference
+      pose, the current native defaults target a higher lateral forehand reach:
+      <code>target_base_offset_xy=(0.2541, -0.6239)</code>,
       <code>target_root_height=0.760</code>, and
-      <code>forehand_paddle_offset=(0.3112, -0.4510, 0.0290)</code>.
-      This is the T1-like table-height lateral reference backed off
-      <code>5cm</code> along pelvis local <code>-x</code>, so the policy has
-      room to strike through the ball instead of starting fully extended.
+      <code>forehand_paddle_offset=(0.2541, -0.6239, 0.0442)</code>.
+      This came from <code>reference_right_arm_high_knees_bent</code>, with
+      right shoulder roll about <code>-1.08</code>, elbow about
+      <code>0.963</code>, and wrist roll about <code>-0.296</code>.
       The default strike line is
       <code>strike_direction_pelvis=(cos15deg, 0, sin15deg)</code>.
       Prediction state, PACE observations, forehand rewards, foot geoms, and
@@ -1650,6 +1688,48 @@
       desired reach, purple line = pelvis-to-target vector, blue line =
       paddle-to-target error, and orange arrow = desired 15-degree-upward strike
       direction.
+    </li>
+    <li>
+      The old PACE run
+      <code>pingpong_pace_g1_paddle_relaxed_scratch_15360_gpu1_20260708</code>
+      was stopped after <code>model_1000.pt</code>. New resume run:
+      <code>pingpong_pace_reference_arm_resume1000_15360_gpu1_20260708</code>,
+      run dir
+      <code>logs/rsl_rl/g1_pingpong_pace/pingpong_pace_reference_arm_resume1000_15360env_gpu1_2026-07-08_14-35-12</code>,
+      using host GPU1, <code>15360</code> envs, and
+      <code>--agent.load-checkpoint-file .../model_1000.pt</code>. Resolved
+      config confirms the new geometry. Startup had
+      <code>nan_detection=0</code> and <code>Policy/mean_std≈1.04</code>, but
+      root-height/bad-orientation can spike because the policy is warm-started
+      from the old reach target.
+    </li>
+    <li>
+      Pingpong play now supports <code>--debug-overlays pingpong</code> for
+      Viser/native viewer and MuJoCo headless video recording. It draws the
+      ball, ballistic trajectory, <code>pingpong_paddle_center</code>, paddle
+      normal, G1 forehand target, PACE future ball pose, target base/root pose,
+      learned ball prediction, and predicted landing/net-height markers.
+      A follow-up coordinate fix makes current ball/paddle markers use MuJoCo
+      world coordinates directly, while table-local PACE/rally diagnostics are
+      converted back to world coordinates before drawing. The incorrect
+      pre-fix video is preserved at
+      <code>outputs/pace_reference_arm_model1500_play_overlay_before_coord_fix.mp4</code>;
+      the corrected video is
+      <code>outputs/pace_reference_arm_model1500_play_overlay_coord_fixed.mp4</code>.
+      Latest model1500 diagnostic artifacts:
+      <code>outputs/pace_reference_arm_model1500_play_overlay.mp4</code> and
+      <code>outputs/pace_reference_arm_model1500_overlay_frames/</code>.
+    </li>
+    <li>
+      Pingpong PACE target generation now uses a G1 natural hit plane instead of
+      the self-table edge. <code>target_base_offset_xy</code> is derived by
+      rotating the calibrated pelvis-local paddle offset by the reset yaw
+      (<code>pi</code>) before negating it, so the current default is
+      approximately <code>(0.2541, -0.6239)</code>. The new
+      <code>natural_hit_x</code> is approximately <code>1.5859</code>, about
+      <code>0.216m</code> behind the self table edge and closer to a natural G1
+      forehand reach point. Existing PACE runs must be restarted or resumed in a
+      new run to pick up this target.
     </li>
   </ul>
 

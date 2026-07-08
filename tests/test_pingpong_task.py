@@ -47,6 +47,7 @@ from mjlab.tasks.pingpong.pingpong_env_cfg import (
   PACE_FOREHAND_ELBOW_TARGET_RATIO,
   PACE_FOREHAND_PADDLE_OFFSET,
   PACE_FOREHAND_PADDLE_OFFSET_STD,
+  PACE_NATURAL_HIT_X,
   PACE_ROOT_HEIGHT_MINIMUM,
   PACE_TARGET_BASE_OFFSET_XY,
   PACE_TARGET_BASE_VEL_GAIN,
@@ -313,6 +314,7 @@ def test_pingpong_pace_env_uses_direct_joint_action() -> None:
     for name in G1_PACE_ACTION_SCALE
   )
   assert PACE_TARGET_BASE_OFFSET_XY == G1_PACE_GEOMETRY.target_base_offset_xy
+  assert PACE_NATURAL_HIT_X == G1_PACE_GEOMETRY.natural_hit_x
   assert PACE_TARGET_ROOT_HEIGHT == G1_PACE_GEOMETRY.target_root_height
   assert PACE_TARGET_BASE_VEL_GAIN == G1_PACE_GEOMETRY.target_base_vel_gain
   assert PACE_TARGET_BASE_VEL_MAX == G1_PACE_GEOMETRY.target_base_vel_max
@@ -343,6 +345,7 @@ def test_pingpong_pace_env_uses_direct_joint_action() -> None:
   assert actor_terms["ball_prediction"].params["target_base_offset_xy"] == (
     PACE_TARGET_BASE_OFFSET_XY
   )
+  assert actor_terms["ball_prediction"].params["natural_hit_x"] == PACE_NATURAL_HIT_X
   assert actor_terms["ball_prediction"].params["target_root_height"] == (
     PACE_TARGET_ROOT_HEIGHT
   )

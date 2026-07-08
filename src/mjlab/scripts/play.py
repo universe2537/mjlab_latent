@@ -48,6 +48,8 @@ class PlayConfig:
   video_width: int | None = None
   camera: int | str | None = None
   viewer: Literal["auto", "native", "viser", "none"] = "auto"
+  debug_overlays: Literal["none", "pingpong"] = "none"
+  """Optional task-specific debug overlays for Viser/native/video rendering."""
   no_terminations: bool = False
   """Disable all termination conditions (useful for viewing motions with dummy agents)."""
   log_root: str = "logs/rsl_rl"
@@ -77,6 +79,18 @@ def _apply_decoder_checkpoint_override(
       "decoder action."
     )
   action_cfg.decoder_checkpoint = decoder_checkpoint
+
+
+def _install_debug_overlays(env: ManagerBasedRlEnv, overlay: str) -> None:
+  if overlay == "none":
+    return
+  if overlay == "pingpong":
+    from mjlab.tasks.pingpong.mdp.debug_vis import install_pingpong_debug_overlay
+
+    install_pingpong_debug_overlay(env)
+    print("[INFO] Enabled Pingpong debug overlays")
+    return
+  raise ValueError(f"Unsupported debug overlay: {overlay}")
 
 
 def run_play(task_id: str, cfg: PlayConfig):
@@ -190,6 +204,7 @@ def run_play(task_id: str, cfg: PlayConfig):
       "[WARN] Video recording with dummy agents is disabled (no checkpoint/log_dir)."
     )
   env = ManagerBasedRlEnv(cfg=env_cfg, device=device, render_mode=render_mode)
+  _install_debug_overlays(env, cfg.debug_overlays)
 
   if TRAINED_MODE and cfg.video:
     print("[INFO] Recording videos during play")

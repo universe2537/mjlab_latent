@@ -2208,3 +2208,103 @@ uv run train Mjlab-Pingpong-PACE-Unitree-G1 \
   `pace_hit_unstable_support=-5.0`.
 - Early failures remain dominated by ball/body/root-height style exploration;
   this is expected for scratch and should be rechecked after `100~250` iters.
+
+### 2026-07-08 16:18 Pingpong play debug overlays
+
+为 `uv run play` 增加 `--debug-overlays pingpong`，通过同一个
+`env.update_visualizers()` hook 同时支持 Viser/native viewer 和 MuJoCo
+headless video recording。该 overlay 绘制：
+
+- 当前 ball、ball velocity、ball ballistic trajectory。
+- `pingpong_paddle_center`、paddle normal、当前拍心到 G1 forehand target 的连线。
+- PACE future ball pose、target base/root pose、learned ball prediction、
+  predicted landing / net height。
+
+验证：
+
+- `FORCE_CPU=1 UV_CACHE_DIR=/tmp/uv-cache MPLCONFIGDIR=/tmp/mplconfig uv run pytest tests/test_pingpong_state.py -q`
+  -> `14 passed`。
+- `UV_CACHE_DIR=/tmp/uv-cache MPLCONFIGDIR=/tmp/mplconfig uv run ruff check src/mjlab/scripts/play.py src/mjlab/tasks/pingpong/mdp/debug_vis.py tests/test_pingpong_state.py`
+  -> passed。
+- `UV_CACHE_DIR=/tmp/uv-cache MPLCONFIGDIR=/tmp/mplconfig uv run ty check src/mjlab/scripts/play.py src/mjlab/tasks/pingpong tests/test_pingpong_state.py`
+  -> passed。
+
+录制命令示例：
+
+```sh
+CUDA_VISIBLE_DEVICES=2 MUJOCO_GL=egl UV_CACHE_DIR=/tmp/uv-cache \
+MPLCONFIGDIR=/tmp/mplconfig uv run play Mjlab-Pingpong-PACE-Unitree-G1 \
+  --checkpoint-file logs/rsl_rl/g1_pingpong_pace/pingpong_pace_reference_arm_resume1000_15360env_gpu1_2026-07-08_14-35-12/model_1500.pt \
+  --num-envs 1 --device cuda:0 --video True --video-length 600 \
+  --video-width 1280 --video-height 720 --viewer none \
+  --debug-overlays pingpong
+```
+
+产物：
+
+- Plain backup:
+  `outputs/pace_reference_arm_model1500_play_plain.mp4`
+- Overlay video:
+  `outputs/pace_reference_arm_model1500_play_overlay.mp4`
+- Overlay sampled frames:
+  `outputs/pace_reference_arm_model1500_overlay_frames/`
+
+后续诊断：
+
+- 用户检查后指出 overlay 明显不对。确认根因是可视化坐标系 bug：
+  当前 ball / paddle 使用的是 MuJoCo world 坐标，但 overlay 曾把
+  `*_pos_w` 减去 `env_origins`；而 PACE/rally state 的 future target /
+  impact diagnostics 是 table-local，画到 native/Viser visualizer 前需要加回
+  `env_origins`。
+- 已修复 `debug_vis.py`：当前实体直接用 world 坐标，PACE/rally 诊断量加回
+  origin 后绘制。
+- 新增非零 `env_origins` 单测，防止再次把 table-local 坐标直接画到
+  renderer world frame。
+- 错误版备份：
+  `outputs/pace_reference_arm_model1500_play_overlay_before_coord_fix.mp4`
+- 修复版：
+  `outputs/pace_reference_arm_model1500_play_overlay_coord_fixed.mp4`
+- 修复版抽帧：
+  `outputs/pace_reference_arm_model1500_overlay_coord_fixed_frames/`
+
+修复后结论：
+
+- 当前 ball、ball trajectory、paddle center / normal 已回到真实球路和球拍附近，
+  原先“球在桌上但 marker 在机器人右后方”的现象属于 overlay bug。
+- PACE future ball / target base / learned prediction 若仍然看起来不符合预期，
+  那是 PACE prediction/target 语义或当前策略动作的问题，不是 renderer 坐标错画。
+
+### 2026-07-08 17:05 G1 PACE natural hit target
+
+根据 PACE 上游 `TTEnv.compute_paddle_touch()` 的做法，修正 G1 PACE target：
+PACE 不应把 future ball target 固定到己方台边，而应使用机器人自然可触达的
+未来击球窗口；body/base target 再从该 future ball target 和机器人持拍几何反推。
+
+本次代码修正：
+
+- `G1_PACE_GEOMETRY.forehand_paddle_offset` 保持用户确认的
+  `(0.2541, -0.6239, 0.0442)`，仍表示 pelvis/root-local 理想拍心位置。
+- `target_base_offset_xy` 改为按 `ROBOT_RESET_YAW=pi` 将该 offset 旋转到
+  table frame 后再取反，当前为 `(0.2541, -0.6239)`；旧值
+  `(-0.2541, 0.6239)` 是未旋转取负，方向镜像错误。
+- 新增 `natural_hit_x≈1.5859`，由 reset x center `1.84` 加上 table-frame
+  paddle x offset `-0.2541` 推导；比己方台边 `1.37` 更靠机器人约 `0.216m`。
+- `_predict_incoming_future_pose()` 改为预测来球轨迹与 `natural_hit_x` 平面的
+  交点；第一次落台仍要求在真实己方台面内，避免把自然击球平面误当合法落点。
+- PACE actor/critic/reward 共用的 state params 增加 `natural_hit_x`，因此
+  `future_ball_pose`、`relative_target_base_xy`、`future_body/base_vel` reward 和
+  debug 黄色/紫色点都会同步改变。
+
+验证：
+
+- `FORCE_CPU=1 UV_CACHE_DIR=/tmp/uv-cache MPLCONFIGDIR=/tmp/mplconfig uv run pytest tests/test_pingpong_state.py tests/test_pingpong_task.py -q`
+  -> passed。
+- `UV_CACHE_DIR=/tmp/uv-cache MPLCONFIGDIR=/tmp/mplconfig uv run ruff check src/mjlab/scripts/play.py src/mjlab/tasks/pingpong/mdp/debug_vis.py src/mjlab/tasks/pingpong/pace_geometry.py src/mjlab/tasks/pingpong/mdp/pace.py src/mjlab/tasks/pingpong/pingpong_env_cfg.py tests/test_pingpong_state.py tests/test_pingpong_task.py`
+  -> passed。
+- `UV_CACHE_DIR=/tmp/uv-cache MPLCONFIGDIR=/tmp/mplconfig uv run ty check src/mjlab/scripts/play.py src/mjlab/tasks/pingpong tests/test_pingpong_task.py tests/test_pingpong_state.py`
+  -> passed。
+
+注意：
+
+- 正在运行或已经保存的 PACE run 仍使用启动时的旧 resolved config；需要重新
+  启动/续训 run 才会生效。

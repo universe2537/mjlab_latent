@@ -4,6 +4,7 @@ from typing import Any
 import torch
 
 from mjlab.managers.scene_entity_config import SceneEntityCfg
+from mjlab.tasks.pingpong.mdp.debug_vis import install_pingpong_debug_overlay
 from mjlab.tasks.pingpong.mdp.pace import (
   get_pingpong_pace_prediction_state,
   pace_ball_prediction_table,
@@ -33,7 +34,12 @@ from mjlab.tasks.pingpong.mdp.state import (
   PHASE_RETURN_FLIGHT,
   PingpongRallyState,
 )
-from mjlab.tasks.pingpong.scene import BALL_CENTER_TABLE_Z, NET_TOP_Z
+from mjlab.tasks.pingpong.pace_geometry import G1_PACE_GEOMETRY
+from mjlab.tasks.pingpong.scene import (
+  BALL_CENTER_TABLE_Z,
+  NET_TOP_Z,
+  TABLE_HALF_LENGTH,
+)
 
 _FOOT_GEOM_NAMES = tuple(
   f"{side}_foot{i}_collision" for side in ("left", "right") for i in range(1, 8)
@@ -44,6 +50,47 @@ class _Scene(dict):
   def __init__(self, env_origins, items):
     super().__init__(items)
     self.env_origins = env_origins
+
+
+class _CollectingVisualizer:
+  env_idx = 0
+  show_all_envs = False
+
+  def __init__(self) -> None:
+    self.spheres: list[tuple[Any, float, Any, str | None]] = []
+    self.arrows: list[tuple[Any, Any, Any, float, str | None]] = []
+    self.cylinders: list[tuple[Any, Any, float, Any, str | None]] = []
+
+  @property
+  def meansize(self) -> float:
+    return 1.0
+
+  def get_env_indices(self, num_envs: int):
+    del num_envs
+    return [0]
+
+  def add_sphere(self, center, radius, color, label=None) -> None:
+    self.spheres.append((center, radius, color, label))
+
+  def add_arrow(self, start, end, color, width=0.015, label=None) -> None:
+    self.arrows.append((start, end, color, width, label))
+
+  def add_cylinder(self, start, end, radius, color, label=None) -> None:
+    self.cylinders.append((start, end, radius, color, label))
+
+  def add_ghost_mesh(self, *args, **kwargs) -> None:
+    del args, kwargs
+
+  def add_frame(self, *args, **kwargs) -> None:
+    del args, kwargs
+
+  def add_ellipsoid(self, *args, **kwargs) -> None:
+    del args, kwargs
+
+  def clear(self) -> None:
+    self.spheres.clear()
+    self.arrows.clear()
+    self.cylinders.clear()
 
 
 def _make_env() -> tuple[Any, Any, Any, Any, Any]:
@@ -138,7 +185,8 @@ def _make_pace_params() -> dict[str, Any]:
     "y_limits": (-1.25, 1.25),
     "z_limits": (0.05, 2.5),
     "bounce_z_tolerance": 0.055,
-    "target_base_offset_xy": (-0.3112, 0.4510),
+    "target_base_offset_xy": (0.2541, -0.6239),
+    "natural_hit_x": G1_PACE_GEOMETRY.natural_hit_x,
     "target_root_height": 0.760,
     "target_base_vel_gain": 4.0,
     "target_base_vel_max": 7.0,
@@ -146,7 +194,21 @@ def _make_pace_params() -> dict[str, Any]:
 
 
 def _add_pace_robot(env: Any) -> Any:
+  def find_sites(names: list[str], preserve_order: bool = False):
+    del preserve_order
+    return [0 for _ in names], names
+
+  def find_geoms(names: list[str], preserve_order: bool = False):
+    del preserve_order
+    return [0 for _ in names], names
+
   robot = SimpleNamespace(
+    site_names=("pingpong_paddle_center",),
+    geom_names=("pingpong_paddle_collision",),
+    num_sites=1,
+    num_geoms=1,
+    find_sites=find_sites,
+    find_geoms=find_geoms,
     data=SimpleNamespace(
       root_link_pos_w=torch.tensor([[1.55, 0.0, 0.76]], dtype=torch.float32),
       root_link_quat_w=torch.tensor([[1.0, 0.0, 0.0, 0.0]], dtype=torch.float32),
@@ -178,12 +240,31 @@ def _add_pace_robot(env: Any) -> Any:
         ],
         dtype=torch.float32,
       ),
-      site_pos_w=torch.tensor([[[1.8612, -0.4510, 0.7890]]], dtype=torch.float32),
+      site_pos_w=torch.tensor([[[1.8041, -0.6239, 0.8042]]], dtype=torch.float32),
+      geom_pos_w=torch.tensor([[[1.8041, -0.6239, 0.8042]]], dtype=torch.float32),
+      geom_lin_vel_w=torch.zeros(1, 1, 3, dtype=torch.float32),
+      geom_quat_w=torch.tensor([[[1.0, 0.0, 0.0, 0.0]]], dtype=torch.float32),
     )
   )
   env.scene["robot"] = robot
   env.episode_length_buf = torch.ones(1, dtype=torch.long)
   return robot
+
+
+def _shift_world_positions(env: Any, robot: Any, origin: torch.Tensor) -> None:
+  env.scene.env_origins[:] = origin
+  env.scene["ball"].data.root_link_pos_w += origin
+  robot.data.root_link_pos_w += origin
+  robot.data.body_link_pos_w += origin[:, None, :]
+  robot.data.site_pos_w += origin[:, None, :]
+  robot.data.geom_pos_w += origin[:, None, :]
+
+
+def _sphere_center(visualizer: _CollectingVisualizer, label: str) -> torch.Tensor:
+  for center, _, _, sphere_label in visualizer.spheres:
+    if sphere_label == label:
+      return torch.as_tensor(center, dtype=torch.float32)
+  raise AssertionError(f"Missing sphere label: {label}")
 
 
 def _set_paddle_robot(
@@ -218,8 +299,16 @@ def test_pingpong_pace_prediction_state_shapes_and_hook() -> None:
   assert torch.isfinite(state.target_base_xy).all()
   assert torch.isfinite(state.robot_future_vel).all()
   torch.testing.assert_close(
+    state.ball_future_pose[:, 0],
+    torch.tensor([G1_PACE_GEOMETRY.natural_hit_x], dtype=torch.float32),
+  )
+  assert not torch.allclose(
+    state.ball_future_pose[:, 0],
+    torch.tensor([TABLE_HALF_LENGTH], dtype=torch.float32),
+  )
+  torch.testing.assert_close(
     state.target_base_xy - state.ball_future_pose[:, :2],
-    torch.tensor([[-0.3112, 0.4510]], dtype=torch.float32),
+    torch.tensor([[0.2541, -0.6239]], dtype=torch.float32),
   )
   torch.testing.assert_close(
     state.robot_future_pos[:, 2],
@@ -239,6 +328,83 @@ def test_pingpong_pace_prediction_state_shapes_and_hook() -> None:
   )
 
 
+def test_pingpong_pace_future_pose_uses_natural_hit_plane_after_bounce() -> None:
+  env, ball, _, _, _ = _make_env()
+  _add_pace_robot(env)
+  ball.data.root_link_pos_w[:] = torch.tensor([[1.05, 0.02, 0.98]])
+  ball.data.root_link_lin_vel_w[:] = torch.tensor([[2.0, 0.10, 0.80]])
+  params = _make_pace_params()
+
+  state = get_pingpong_pace_prediction_state(env, **params)
+  state.update()
+
+  torch.testing.assert_close(
+    state.ball_future_pose[:, 0],
+    torch.tensor([G1_PACE_GEOMETRY.natural_hit_x], dtype=torch.float32),
+  )
+  torch.testing.assert_close(
+    state.target_base_xy - state.ball_future_pose[:, :2],
+    torch.tensor([[0.2541, -0.6239]], dtype=torch.float32),
+  )
+  assert state.ball_future_valid.item()
+
+
+def test_pingpong_pace_future_pose_invalid_case_is_finite_and_inactive() -> None:
+  env, ball, _, _, _ = _make_env()
+  _add_pace_robot(env)
+  ball.data.root_link_pos_w[:] = torch.tensor([[-0.15, 0.0, 0.60]])
+  ball.data.root_link_lin_vel_w[:] = torch.tensor([[-1.0, 0.0, -0.20]])
+  params = _make_pace_params()
+
+  state = get_pingpong_pace_prediction_state(env, **params)
+  state.update()
+
+  assert torch.isfinite(state.ball_future_pose).all()
+  assert torch.isfinite(state.target_base_xy).all()
+  assert not state.ball_future_valid.item()
+  assert not state.reward_active.item()
+
+
+def test_pingpong_debug_overlay_installs_without_replacing_existing_visualizers() -> None:
+  env, _, _, _, _ = _make_env()
+  robot = _add_pace_robot(env)
+  origin = torch.tensor([[10.0, -2.0, 0.0]], dtype=torch.float32)
+  _shift_world_positions(env, robot, origin)
+  calls: list[str] = []
+
+  def original_update(_visualizer) -> None:
+    calls.append("original")
+
+  env.update_visualizers = original_update
+  install_pingpong_debug_overlay(env)
+  install_pingpong_debug_overlay(env)
+
+  visualizer = _CollectingVisualizer()
+  env.update_visualizers(visualizer)
+
+  assert calls == ["original"]
+  sphere_labels = {label for _, _, _, label in visualizer.spheres}
+  arrow_labels = {label for _, _, _, _, label in visualizer.arrows}
+  cylinder_labels = {label for _, _, _, _, label in visualizer.cylinders}
+  assert "ball" in sphere_labels
+  assert "paddle_center" in sphere_labels
+  assert "forehand_paddle_target" in sphere_labels
+  assert "pace_future_ball_pose" in sphere_labels
+  assert "paddle_normal" in arrow_labels
+  assert "ball_velocity" in arrow_labels
+  assert "ball_trajectory" in cylinder_labels
+  assert "paddle_to_future_ball_pose" in cylinder_labels
+  torch.testing.assert_close(
+    _sphere_center(visualizer, "ball"),
+    env.scene["ball"].data.root_link_pos_w[0],
+  )
+  torch.testing.assert_close(
+    _sphere_center(visualizer, "paddle_center"),
+    robot.data.site_pos_w[0, 0],
+  )
+  assert _sphere_center(visualizer, "pace_future_ball_pose")[0] > origin[0, 0]
+
+
 def test_pingpong_pace_forehand_rewards_prefer_g1_paddle_geometry() -> None:
   env, _, _, _, _ = _make_env()
   robot = _add_pace_robot(env)
@@ -255,7 +421,7 @@ def test_pingpong_pace_forehand_rewards_prefer_g1_paddle_geometry() -> None:
   good_offset = pace_forehand_paddle_offset(
     env,
     paddle_cfg=paddle_cfg,
-    target_offset=(0.3112, -0.4510, 0.0290),
+    target_offset=(0.2541, -0.6239, 0.0442),
     offset_std=(0.15, 0.14, 0.08),
     **params,
   )
@@ -271,7 +437,7 @@ def test_pingpong_pace_forehand_rewards_prefer_g1_paddle_geometry() -> None:
   bad_offset = pace_forehand_paddle_offset(
     env,
     paddle_cfg=paddle_cfg,
-    target_offset=(0.3112, -0.4510, 0.0290),
+    target_offset=(0.2541, -0.6239, 0.0442),
     offset_std=(0.15, 0.14, 0.08),
     **params,
   )

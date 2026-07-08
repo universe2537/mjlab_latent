@@ -136,6 +136,7 @@ PACE_TASK_REWARD_WEIGHTS: dict[str, float] = {
   "pace_forehand_elbow_extension": 2.0,
 }
 PACE_TARGET_BASE_OFFSET_XY = G1_PACE_GEOMETRY.target_base_offset_xy
+PACE_NATURAL_HIT_X = G1_PACE_GEOMETRY.natural_hit_x
 PACE_TARGET_ROOT_HEIGHT = G1_PACE_GEOMETRY.target_root_height
 PACE_TARGET_BASE_VEL_GAIN = G1_PACE_GEOMETRY.target_base_vel_gain
 PACE_TARGET_BASE_VEL_MAX = G1_PACE_GEOMETRY.target_base_vel_max
@@ -218,6 +219,7 @@ def _pace_state_params() -> dict[str, object]:
   return {
     **_state_params(),
     "target_base_offset_xy": PACE_TARGET_BASE_OFFSET_XY,
+    "natural_hit_x": PACE_NATURAL_HIT_X,
     "target_root_height": PACE_TARGET_ROOT_HEIGHT,
     "target_base_vel_gain": PACE_TARGET_BASE_VEL_GAIN,
     "target_base_vel_max": PACE_TARGET_BASE_VEL_MAX,
@@ -1381,6 +1383,7 @@ __all__ = [
   "PACE_FOREHAND_ELBOW_TARGET_RATIO",
   "PACE_FOREHAND_PADDLE_OFFSET",
   "PACE_FOREHAND_PADDLE_OFFSET_STD",
+  "PACE_NATURAL_HIT_X",
   "PACE_ROOT_HEIGHT_MINIMUM",
   "PACE_TARGET_BASE_OFFSET_XY",
   "PACE_TARGET_BASE_VEL_GAIN",

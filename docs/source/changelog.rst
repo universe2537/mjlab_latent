@@ -39,6 +39,10 @@ Added
   pose calibration. The tool measures FK for zero, home, knees-bent, and
   candidate forehand-open poses, saves JSON/CSV geometry summaries, and writes
   multi-view pose images plus keypoint overlays under ``contact_test/results``.
+- Added ``uv run play --debug-overlays pingpong`` for Pingpong/PACE diagnosis
+  in Viser, native viewer, and MuJoCo headless video recording. The overlay
+  draws ball trajectory, paddle center/normal, forehand target, PACE future
+  ball/base targets, learned ball prediction, and predicted landing/net markers.
 - Added ``Mjlab-Pingpong-Cross-Unitree-G1`` as the named table-tennis
   over-net return task. It succeeds when a legal paddle hit crosses the net
   and first lands on the opponent table; the older Return task remains as a
@@ -134,6 +138,11 @@ Changed
 - Relaxed the direct-joint PACE motion regularization weights after the G1
   paddle and reach retargeting: ``action_rate_l2=-0.01``,
   ``feet_slide=-0.3``, and ``pace_hit_unstable_support=-5.0``.
+- Changed the G1 Pingpong PACE future target from the self-table edge to a
+  calibrated natural forehand hit plane. The base target offset is now
+  yaw-corrected from the pelvis-local paddle offset before being applied in the
+  table frame, so PACE body/base rewards and debug target markers no longer use
+  the mirrored T1-style target direction.
 - Enabled conservative PACE-style post-hit prediction rewards on
   ``Mjlab-Pingpong-Cross-StrikeQuality-Unitree-G1`` while leaving the baseline
   Pingpong Cross task unchanged.
@@ -274,6 +283,11 @@ Changed
 Fixed
 ^^^^^
 
+- Fixed the Pingpong debug overlay coordinate frame for Viser/native/headless
+  recording. Current ball and paddle markers now use MuJoCo world coordinates,
+  while table-local PACE/rally diagnostics are converted back to world before
+  drawing, so overlay markers no longer drift away from the rendered ball/table
+  when environment origins are non-zero.
 - Fixed ``ManagerBasedRlEnv`` initializing Warp on all visible CUDA devices
   even when constructed with ``device="cpu"``. ``seed_rng`` now accepts a
   ``device`` argument and skips ``wp.rand_init`` on CPU devices, so a

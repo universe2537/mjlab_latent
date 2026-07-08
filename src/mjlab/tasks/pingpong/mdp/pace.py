@@ -39,6 +39,7 @@ _POST_BOUNCE_HORIZONTAL_SCALE = 0.94
 _POST_BOUNCE_VERTICAL_SCALE = 0.90
 _EDGE_CLEARANCE = 0.02
 _DEFAULT_TARGET_BASE_OFFSET_XY = G1_PACE_GEOMETRY.target_base_offset_xy
+_DEFAULT_NATURAL_HIT_X = G1_PACE_GEOMETRY.natural_hit_x
 _DEFAULT_TARGET_ROOT_HEIGHT = G1_PACE_GEOMETRY.target_root_height
 _DEFAULT_TARGET_BASE_VEL_GAIN = G1_PACE_GEOMETRY.target_base_vel_gain
 _DEFAULT_TARGET_BASE_VEL_MAX = G1_PACE_GEOMETRY.target_base_vel_max
@@ -141,19 +142,21 @@ def _predict_incoming_future_pose(
   pos: torch.Tensor,
   vel: torch.Tensor,
   *,
+  natural_hit_x: float,
   table_z: float,
   net_x: float,
   gravity: float,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
   """Predict the robot-side future hitting pose in table-local coordinates."""
-  edge_x = torch.full_like(pos[:, 0], TABLE_HALF_LENGTH)
+  hit_x = torch.full_like(pos[:, 0], natural_hit_x)
   net_x_t = torch.full_like(pos[:, 0], net_x)
   table_z_t = torch.full_like(pos[:, 0], table_z)
+  self_table_edge_x = torch.full_like(pos[:, 0], TABLE_HALF_LENGTH)
   y_min = -TABLE_HALF_WIDTH
   y_max = TABLE_HALF_WIDTH
 
   vx_safe = torch.clamp(vel[:, 0], min=1.0e-6)
-  direct_t = (edge_x - pos[:, 0]) / vx_safe
+  direct_t = (hit_x - pos[:, 0]) / vx_safe
   direct_y = pos[:, 1] + vel[:, 1] * direct_t
   direct_z = pos[:, 2] + vel[:, 2] * direct_t - 0.5 * gravity * direct_t**2
   direct_valid = (
@@ -176,7 +179,7 @@ def _predict_incoming_future_pose(
   post_vx = vel[:, 0] * _POST_BOUNCE_HORIZONTAL_SCALE
   post_vy = vel[:, 1] * _POST_BOUNCE_HORIZONTAL_SCALE
   post_vz = -impact_vz * _POST_BOUNCE_VERTICAL_SCALE
-  edge_t_after_bounce = (edge_x - bounce_pos[:, 0]) / post_vx.clamp_min(1.0e-6)
+  edge_t_after_bounce = (hit_x - bounce_pos[:, 0]) / post_vx.clamp_min(1.0e-6)
   edge_y = bounce_pos[:, 1] + post_vy * edge_t_after_bounce
   edge_z = (
     table_z_t + post_vz * edge_t_after_bounce - 0.5 * gravity * edge_t_after_bounce**2
@@ -186,7 +189,7 @@ def _predict_incoming_future_pose(
     bounce_valid_t
     & (bounce_t <= _MAX_FUTURE_TIME)
     & (bounce_pos[:, 0] >= net_x_t)
-    & (bounce_pos[:, 0] <= edge_x)
+    & (bounce_pos[:, 0] <= self_table_edge_x)
     & (bounce_pos[:, 1] >= y_min)
     & (bounce_pos[:, 1] <= y_max)
     & (impact_vz < 0.0)
@@ -199,7 +202,7 @@ def _predict_incoming_future_pose(
   )
 
   future = torch.empty_like(pos)
-  future[:, 0] = edge_x
+  future[:, 0] = hit_x
   future[:, 1] = torch.where(direct_valid, direct_y, edge_y)
   future[:, 2] = torch.where(direct_valid, direct_z, edge_z)
   future_t = torch.where(direct_valid, direct_t, total_bounce_t)
@@ -298,6 +301,7 @@ class PingpongPacePredictionState:
     table_z = float(params.get("table_z", BALL_CENTER_TABLE_Z))
     net_x = float(params.get("net_x", NET_X))
     gravity = float(params.get("gravity", 9.81))
+    natural_hit_x = float(params.get("natural_hit_x", _DEFAULT_NATURAL_HIT_X))
 
     ball: Entity = self._env.scene[ball_cfg.name]
     ball_pos = _ball_table_pos(self._env, ball_cfg)
@@ -305,7 +309,12 @@ class PingpongPacePredictionState:
     robot_pos = _robot_table_pos(self._env, robot_cfg)
 
     future, future_t, future_valid = _predict_incoming_future_pose(
-      ball_pos, ball_vel, table_z=table_z, net_x=net_x, gravity=gravity
+      ball_pos,
+      ball_vel,
+      natural_hit_x=natural_hit_x,
+      table_z=table_z,
+      net_x=net_x,
+      gravity=gravity,
     )
     if isinstance(episode_length_buf, torch.Tensor):
       learned_episode_reset = episode_length_buf == 0
