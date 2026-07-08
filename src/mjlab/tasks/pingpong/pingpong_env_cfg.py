@@ -24,6 +24,7 @@ from mjlab.tasks.pingpong.mdp.ball_providers import (
   TableTennisFeederCfg,
   TrajectoryCheckCfg,
 )
+from mjlab.tasks.pingpong.pace_geometry import G1_PACE_GEOMETRY
 from mjlab.tasks.pingpong.scene import (
   BALL_CENTER_TABLE_Z,
   NET_TOP_Z,
@@ -131,7 +132,19 @@ PACE_TASK_REWARD_WEIGHTS: dict[str, float] = {
   "pace_future_landing_distance": 60.0,
   "pace_future_pass_net": 100.0,
   "pace_table_success": 100.0,
+  "pace_forehand_paddle_offset": 6.0,
+  "pace_forehand_elbow_extension": 2.0,
 }
+PACE_TARGET_BASE_OFFSET_XY = G1_PACE_GEOMETRY.target_base_offset_xy
+PACE_TARGET_ROOT_HEIGHT = G1_PACE_GEOMETRY.target_root_height
+PACE_TARGET_BASE_VEL_GAIN = G1_PACE_GEOMETRY.target_base_vel_gain
+PACE_TARGET_BASE_VEL_MAX = G1_PACE_GEOMETRY.target_base_vel_max
+PACE_FOREHAND_PADDLE_OFFSET = G1_PACE_GEOMETRY.forehand_paddle_offset
+PACE_FOREHAND_PADDLE_OFFSET_STD = G1_PACE_GEOMETRY.forehand_paddle_offset_std
+PACE_FOREHAND_ELBOW_TARGET_RATIO = G1_PACE_GEOMETRY.forehand_elbow_target_ratio
+PACE_FOOT_GEOM_NAMES = G1_PACE_GEOMETRY.foot_geom_names
+PACE_BAD_ORIENTATION_LIMIT = G1_PACE_GEOMETRY.bad_orientation_limit
+PACE_ROOT_HEIGHT_MINIMUM = G1_PACE_GEOMETRY.root_height_minimum
 
 OUT_X_LIMITS = (-TABLE_HALF_LENGTH - 0.75, TABLE_HALF_LENGTH + 1.10)
 OUT_Y_LIMITS = (-TABLE_HALF_WIDTH - 0.50, TABLE_HALF_WIDTH + 0.50)
@@ -201,6 +214,16 @@ def _state_params() -> dict[str, object]:
   }
 
 
+def _pace_state_params() -> dict[str, object]:
+  return {
+    **_state_params(),
+    "target_base_offset_xy": PACE_TARGET_BASE_OFFSET_XY,
+    "target_root_height": PACE_TARGET_ROOT_HEIGHT,
+    "target_base_vel_gain": PACE_TARGET_BASE_VEL_GAIN,
+    "target_base_vel_max": PACE_TARGET_BASE_VEL_MAX,
+  }
+
+
 def _ball_provider_cfg() -> TableTennisFeederCfg:
   return TableTennisFeederCfg(
     ball_cfg=_BALL_CFG,
@@ -230,7 +253,7 @@ def _ball_provider_cfg() -> TableTennisFeederCfg:
 
 
 def _pace_observation_terms() -> dict[str, ObservationGroupCfg]:
-  state_params = _state_params()
+  state_params = _pace_state_params()
   proprio_actor = {
     "base_ang_vel": ObservationTermCfg(
       func=mdp.builtin_sensor,
@@ -1070,10 +1093,13 @@ def make_pingpong_latent_cross_strike_quality_energy_relax_env_cfg() -> (
 def make_pingpong_pace_env_cfg() -> ManagerBasedRlEnvCfg:
   """Create the PACE-style direct joint-control table-tennis return task."""
   cfg = make_pingpong_latent_cross_env_cfg()
-  state_params = _state_params()
+  state_params = _pace_state_params()
   feet_cfg = SceneEntityCfg("robot", body_names=(".*ankle_roll_link",))
   left_foot_cfg = SceneEntityCfg("robot", body_names=("left_ankle_roll_link",))
   right_foot_cfg = SceneEntityCfg("robot", body_names=("right_ankle_roll_link",))
+  right_shoulder_cfg = SceneEntityCfg("robot", body_names=("right_shoulder_pitch_link",))
+  right_elbow_cfg = SceneEntityCfg("robot", body_names=("right_elbow_link",))
+  right_wrist_cfg = SceneEntityCfg("robot", body_names=("right_wrist_yaw_link",))
   ankle_cfg = SceneEntityCfg(
     "robot",
     joint_names=(".*_ankle_pitch_joint", ".*_ankle_roll_joint"),
@@ -1097,18 +1123,18 @@ def make_pingpong_pace_env_cfg() -> ManagerBasedRlEnvCfg:
     "joint_pos": JointPositionActionCfg(
       entity_name="robot",
       actuator_names=(".*",),
-      scale=0.25,
+      scale=0.18,
       use_default_offset=True,
     )
   }
   foot_contact_sensor = ContactSensorCfg(
     name=PACE_FOOT_CONTACT_SENSOR,
     primary=ContactMatch(
-      mode="body",
-      pattern=("left_ankle_roll_link", "right_ankle_roll_link"),
+      mode="geom",
+      pattern=PACE_FOOT_GEOM_NAMES,
       entity="robot",
     ),
-    secondary=None,
+    secondary=ContactMatch(mode="body", pattern="terrain"),
     fields=("found", "force"),
     reduce="netforce",
     num_slots=1,
@@ -1147,7 +1173,7 @@ def make_pingpong_pace_env_cfg() -> ManagerBasedRlEnvCfg:
       weight=-1.25e-7,
       params={"asset_cfg": _ROBOT_CFG},
     ),
-    "action_rate_l2": RewardTermCfg(func=mdp.action_rate_l2, weight=-0.025),
+    "action_rate_l2": RewardTermCfg(func=mdp.action_rate_l2, weight=-0.01),
     "robot_table_contact": RewardTermCfg(
       func=mdp.robot_table_contact_penalty,
       weight=-80.0,
@@ -1184,7 +1210,7 @@ def make_pingpong_pace_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
     "pace_hit_unstable_support": RewardTermCfg(
       func=mdp.pace_hit_unstable_support,
-      weight=-10.0,
+      weight=-5.0,
       params={
         **dict(state_params),
         "sensor_name": PACE_FOOT_CONTACT_SENSOR,
@@ -1203,7 +1229,7 @@ def make_pingpong_pace_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
     "feet_slide": RewardTermCfg(
       func=mdp.pace_feet_slide_contact,
-      weight=-1.5,
+      weight=-0.3,
       params={
         "feet_cfg": feet_cfg,
         "sensor_name": PACE_FOOT_CONTACT_SENSOR,
@@ -1294,7 +1320,36 @@ def make_pingpong_pace_env_cfg() -> ManagerBasedRlEnvCfg:
       weight=PACE_TASK_REWARD_WEIGHTS["pace_table_success"],
       params=dict(state_params),
     ),
+    "pace_forehand_paddle_offset": RewardTermCfg(
+      func=mdp.pace_forehand_paddle_offset,
+      weight=PACE_TASK_REWARD_WEIGHTS["pace_forehand_paddle_offset"],
+      params={
+        **dict(state_params),
+        "paddle_cfg": _PADDLE_CFG,
+        "robot_cfg": _ROBOT_CFG,
+        "target_offset": PACE_FOREHAND_PADDLE_OFFSET,
+        "offset_std": PACE_FOREHAND_PADDLE_OFFSET_STD,
+      },
+    ),
+    "pace_forehand_elbow_extension": RewardTermCfg(
+      func=mdp.pace_forehand_elbow_extension,
+      weight=PACE_TASK_REWARD_WEIGHTS["pace_forehand_elbow_extension"],
+      params={
+        **dict(state_params),
+        "shoulder_cfg": right_shoulder_cfg,
+        "elbow_cfg": right_elbow_cfg,
+        "wrist_cfg": right_wrist_cfg,
+        "target_ratio": PACE_FOREHAND_ELBOW_TARGET_RATIO,
+        "std": 0.08,
+      },
+    ),
   }
+  cfg.terminations["bad_orientation"].params["limit_angle"] = (
+    PACE_BAD_ORIENTATION_LIMIT
+  )
+  cfg.terminations["root_height"].params["minimum_height"] = (
+    PACE_ROOT_HEIGHT_MINIMUM
+  )
   cfg.curriculum.pop("action_regularization", None)
   cfg.curriculum["ball_target_region"].params["success_term_name"] = (
     "legal_return_success"
@@ -1320,7 +1375,17 @@ __all__ = [
   "CROSS_STRIKE_QUALITY_REWARD_WEIGHTS",
   "DECODER_STATE_TERMS",
   "PACE_TASK_REWARD_WEIGHTS",
+  "PACE_BAD_ORIENTATION_LIMIT",
   "PACE_FOOT_CONTACT_SENSOR",
+  "PACE_FOOT_GEOM_NAMES",
+  "PACE_FOREHAND_ELBOW_TARGET_RATIO",
+  "PACE_FOREHAND_PADDLE_OFFSET",
+  "PACE_FOREHAND_PADDLE_OFFSET_STD",
+  "PACE_ROOT_HEIGHT_MINIMUM",
+  "PACE_TARGET_BASE_OFFSET_XY",
+  "PACE_TARGET_BASE_VEL_GAIN",
+  "PACE_TARGET_BASE_VEL_MAX",
+  "PACE_TARGET_ROOT_HEIGHT",
   "ACTION_REGULARIZATION_CURRICULUM_STAGE_WEIGHTS",
   "make_pingpong_latent_cross_diag_env_cfg",
   "make_pingpong_latent_cross_env_cfg",

@@ -517,6 +517,22 @@ class PingpongPaceOnPolicyRunner(MjlabOnPolicyRunner):
       self._pred_trained = False
     return infos
 
+  def get_inference_policy(self, device: str | None = None):
+    base_policy = super().get_inference_policy(device=device)
+    policy_device = torch.device(device) if device is not None else self.device
+    runner = self
+
+    class _PaceInferencePolicy:
+      def __call__(self, obs):
+        del obs
+        with torch.no_grad():
+          runner._record_ball_positions()
+          runner._maybe_predict_and_update_env()
+          fresh_obs = runner.env.get_observations().to(policy_device)
+          return base_policy(fresh_obs)
+
+    return _PaceInferencePolicy()
+
   def _record_ball_positions(self) -> None:
     env = self.env.unwrapped
     with torch.no_grad():

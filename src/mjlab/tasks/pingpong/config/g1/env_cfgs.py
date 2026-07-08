@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from mjlab.asset_zoo.robots import G1_W_RACKET_ACTION_SCALE
 from mjlab.asset_zoo.robots.unitree_g1_w_pingpong_paddle import (
-  PINGPONG_PADDLE_HANDLE_HALF_LENGTH,
-  PINGPONG_PADDLE_HANDLE_RADIUS,
+  PINGPONG_PADDLE_CENTER_POS,
+  PINGPONG_PADDLE_HAND_CLEARANCE,
   PINGPONG_PADDLE_RADIUS,
   PINGPONG_PADDLE_SCALE,
   get_g1_w_pingpong_paddle_robot_cfg,
@@ -28,7 +28,7 @@ from mjlab.tasks.tennis.mdp import FrozenDecoderLatentJointPositionActionCfg
 
 DEFAULT_DECODER_CHECKPOINT = "logs/rsl_rl/g1_distillation/distill_cloud_unitree_racket_tennis_2026-05-12_09-35-14/model_30000.pt"
 G1_PACE_ACTION_SCALE = {
-  name: min(scale, 0.25) for name, scale in G1_W_RACKET_ACTION_SCALE.items()
+  name: min(scale, 0.18) for name, scale in G1_W_RACKET_ACTION_SCALE.items()
 }
 
 
@@ -124,8 +124,8 @@ def unitree_g1_pingpong_pace_env_cfg(play: bool = False):
 __all__ = [
   "DEFAULT_DECODER_CHECKPOINT",
   "G1_PACE_ACTION_SCALE",
-  "PINGPONG_PADDLE_HANDLE_HALF_LENGTH",
-  "PINGPONG_PADDLE_HANDLE_RADIUS",
+  "PINGPONG_PADDLE_CENTER_POS",
+  "PINGPONG_PADDLE_HAND_CLEARANCE",
   "PINGPONG_PADDLE_RADIUS",
   "PINGPONG_PADDLE_SCALE",
   "get_g1_w_pingpong_paddle_robot_cfg",

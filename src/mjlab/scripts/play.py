@@ -37,6 +37,8 @@ class PlayConfig:
   wandb_checkpoint_name: str | None = None
   """Optional checkpoint name within the W&B run to load (e.g. 'model_4000.pt')."""
   checkpoint_file: str | None = None
+  decoder_checkpoint: str | None = None
+  """Optional frozen latent decoder checkpoint override for latent-control tasks."""
   motion_files: str | tuple[str, ...] | None = None
   num_envs: int | None = None
   device: str | None = None
@@ -63,6 +65,20 @@ def _motion_file_refs(motion_files: str | tuple[str, ...] | None) -> tuple[str, 
   return tuple(motion_files)
 
 
+def _apply_decoder_checkpoint_override(
+  env_cfg, decoder_checkpoint: str | None
+) -> None:
+  if decoder_checkpoint is None:
+    return
+  action_cfg = env_cfg.actions.get("latent_joint_pos")
+  if action_cfg is None or not hasattr(action_cfg, "decoder_checkpoint"):
+    raise ValueError(
+      "`--decoder-checkpoint` requires a task with a latent_joint_pos frozen "
+      "decoder action."
+    )
+  action_cfg.decoder_checkpoint = decoder_checkpoint
+
+
 def run_play(task_id: str, cfg: PlayConfig):
   configure_torch_backends()
 
@@ -70,6 +86,7 @@ def run_play(task_id: str, cfg: PlayConfig):
 
   env_cfg = load_env_cfg(task_id, play=True)
   agent_cfg = load_rl_cfg(task_id)
+  _apply_decoder_checkpoint_override(env_cfg, cfg.decoder_checkpoint)
 
   DUMMY_MODE = cfg.agent in {"zero", "random"}
   TRAINED_MODE = not DUMMY_MODE

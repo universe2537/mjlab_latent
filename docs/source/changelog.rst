@@ -25,9 +25,20 @@ Added
   prediction runner, and direct joint-position rewards instead of the frozen
   latent decoder.
 - Added a PACE-only G1 foot contact sensor for Pingpong, with force history and
-  air/contact-time tracking on the left and right ankle-roll bodies, so
-  direct-joint PACE rewards can use actual foot support forces without changing
-  the latent Pingpong Cross tasks.
+  air/contact-time tracking on the seven left/right foot collision geoms, so
+  direct-joint PACE rewards can use aggregated foot support forces without
+  changing the latent Pingpong Cross tasks.
+- Added G1-specific stabilization for the Pingpong PACE baseline: future base
+  targets now use measured G1 table-height lateral forehand geometry,
+  foot-support rewards aggregate the seven collision geoms per foot, direct
+  joint-action exploration is narrower, and pre-hit forehand shaping rewards
+  encourage a right-arm lateral reach instead of torso side-leaning. The
+  default reach target is backed off 5 cm from the fully reached pose, and the
+  calibration overlay visualizes a 15-degree upward strike direction.
+- Added ``contact_test/run_g1_pace_pose_calibration.py`` for native G1 PACE
+  pose calibration. The tool measures FK for zero, home, knees-bent, and
+  candidate forehand-open poses, saves JSON/CSV geometry summaries, and writes
+  multi-view pose images plus keypoint overlays under ``contact_test/results``.
 - Added ``Mjlab-Pingpong-Cross-Unitree-G1`` as the named table-tennis
   over-net return task. It succeeds when a legal paddle hit crosses the net
   and first lands on the opponent table; the older Return task remains as a
@@ -41,10 +52,6 @@ Added
   ``Mjlab-Pingpong-Cross-StrikeQualityEnergyRelax-Unitree-G1`` ablation tasks,
   plus ``tools/watch_pingpong_cross_training.py`` for 84-minute evidence
   checks during long Cross training runs.
-- Added a separate Pingpong paddle-handle collision cylinder for the
-  racket-equipped G1. The handle participates in robot-table and robot-ball
-  physics but renders invisible, while paddle-hit scoring remains restricted
-  to the paddle-face collision proxy.
 - Added ``Mjlab-Velocity-Stairs-Unitree-Go1``, a Go1 velocity task with a
   mixed ascending/descending pyramid-stair curriculum whose peak height grows
   to the robot's nominal body height, along with stair-specific reward shaping
@@ -108,8 +115,14 @@ Added
 Changed
 ^^^^^^^
 
+- Changed the G1 Pingpong paddle asset to use the initial hand-inserted
+  placement while rolling the whole paddle 90 degrees around the end-effector
+  forward axis and translating it forward until the paddle-face collision has a
+  1 mm clearance from the right-hand collision capsule.
+  The extra paddle-handle collision geom is no longer generated, so only the
+  paddle-face collision proxy participates in hit scoring and paddle physics.
 - Stabilized the direct-joint ``Mjlab-Pingpong-PACE-Unitree-G1`` baseline by
-  capping its G1 action scale at ``0.25``, lowering raw action clipping and
+  capping its G1 action scale at ``0.18``, lowering raw action clipping and
   exploration, aligning its PPO horizon discount with the PACE reference, and
   adding PACE-style foot-support penalties. The support, slide, force, and
   stumble terms now read the PACE-only foot contact sensor instead of only
@@ -118,6 +131,9 @@ Changed
   before re-raising the original environment-output error, and the PACE future
   target state refreshes after auto-reset within the same step to avoid stale
   pre-reset future targets leaking into actor observations.
+- Relaxed the direct-joint PACE motion regularization weights after the G1
+  paddle and reach retargeting: ``action_rate_l2=-0.01``,
+  ``feet_slide=-0.3``, and ``pace_hit_unstable_support=-5.0``.
 - Enabled conservative PACE-style post-hit prediction rewards on
   ``Mjlab-Pingpong-Cross-StrikeQuality-Unitree-G1`` while leaving the baseline
   Pingpong Cross task unchanged.

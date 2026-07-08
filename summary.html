@@ -47,6 +47,80 @@
     commands, failures, or next steps change.
   </p>
 
+  <h2>2026-07-08 G1 Pingpong Paddle Roll</h2>
+  <ul>
+    <li>
+      The G1 pingpong paddle asset uses the initial hand-inserted placement
+      again, but the whole paddle is rolled 90 degrees around the end-effector
+      forward axis. This keeps the connection pose stable while exposing the
+      paddle face in the front calibration render.
+    </li>
+    <li>
+      Final local asset constants:
+      <code>PINGPONG_PADDLE_CENTER_POS=(0.2459310139695155, -0.004, 0.0)</code>
+      and <code>PINGPONG_PADDLE_HAND_CLEARANCE=0.001</code>.
+      <code>pingpong_paddle_handle_collision</code> is no longer generated;
+      only <code>pingpong_paddle_collision</code> scores paddle hits.
+    </li>
+    <li>
+      Render output:
+      <code>contact_test/results/2026-07-08_11-18-11_g1_pace_pose_calibration</code>.
+      Existing training runs will not hot-reload this asset; start a new run to
+      use the updated paddle pose.
+    </li>
+  </ul>
+
+  <h2>2026-07-08 PACE Relaxed GPU1 Run</h2>
+  <ul>
+    <li>
+      Stopped the remaining user Cross training on GPU1:
+      <code>pingpong_cross_sq_tt_decoder_v2_from_hit2000_gpu1_20260707</code>,
+      around iteration <code>7496/40000</code>.
+    </li>
+    <li>
+      Started new scratch PACE training on the same GPU with
+      <code>15360</code> envs (<code>30*512</code>):
+      tmux <code>pingpong_pace_g1_paddle_relaxed_scratch_15360_gpu1_20260708</code>,
+      run dir
+      <code>logs/rsl_rl/g1_pingpong_pace/pingpong_pace_g1_paddle_relaxed_scratch_15360env_gpu1_2026-07-08_11-42-05</code>.
+    </li>
+    <li>
+      Startup check: GPU1 used about <code>17722 MiB / 24564 MiB</code>, the
+      mjlab process used about <code>17148 MiB</code>, the run reached
+      iteration <code>1/10000</code>, <code>nan_detection=0</code>, and
+      <code>Policy/mean_std=0.40</code>. The printed reward table confirms
+      relaxed PACE weights:
+      <code>action_rate_l2=-0.01</code>, <code>feet_slide=-0.3</code>, and
+      <code>pace_hit_unstable_support=-5.0</code>.
+    </li>
+  </ul>
+
+  <h2>2026-07-08 Pingpong PACE Scratch Video Diagnosis</h2>
+  <ul>
+    <li>
+      Recorded the completed from-scratch PACE checkpoint
+      <code>logs/rsl_rl/g1_pingpong_pace/pingpong_pace_fk_reset_scratch_8192env_gpu0_2026-07-07_19-56-04/model_9750.pt</code>
+      with
+      <code>MUJOCO_GL=egl MUJOCO_EGL_DEVICE_ID=3 uv run play Mjlab-Pingpong-PACE-Unitree-G1 --video True --video-length 800 --video-height 720 --video-width 1280 --viewer none --num-envs 1 --device cuda:3</code>.
+      Video:
+      <code>logs/rsl_rl/g1_pingpong_pace/pingpong_pace_fk_reset_scratch_8192env_gpu0_2026-07-07_19-56-04/videos/play/rl-video-step-0.mp4</code>.
+      Diagnostic sheets:
+      <code>diagnostic_contact_sheet_model_9750.png</code> and
+      <code>diagnostic_dense_first_120_frames_model_9750.png</code>.
+    </li>
+    <li>
+      Visual diagnosis: the policy keeps the feet almost planted, reaches by
+      bending knees/hips and leaning the trunk, then gets ball contact without
+      a stable forehand paddle-face swing. The episode-level final metrics
+      match the video: <code>paddle_hit_count=0.931</code> but
+      <code>legal_return_count=0.047</code>,
+      <code>hit/paddle_normal_alignment=0.132</code>, and
+      <code>hit/paddle_velocity_along_normal=-0.154</code>. This indicates a
+      contact/side-blocking local optimum rather than active paddle-normal
+      striking.
+    </li>
+  </ul>
+
   <h2>2026-07-06 Pingpong PACE Baseline Task</h2>
   <ul>
     <li>
@@ -1336,6 +1410,47 @@
       <code>Policy/mean_std</code> stayed near <code>0.60</code>.
     </li>
     <li>
+      A separate warm-start PACE foot-contact run was launched on GPU2 from the
+      stable old PACE checkpoint
+      <code>logs/rsl_rl/g1_pingpong_pace/pingpong_pace_fixed_scratch_12288env_gpu3_2026-07-07_09-43-26/model_2250.pt</code>:
+      tmux <code>pingpong_pace_foot_contact_from2250_12288_gpu2_20260707</code>,
+      run dir
+      <code>logs/rsl_rl/g1_pingpong_pace/pingpong_pace_foot_contact_from2250_12288env_gpu2_2026-07-07_14-18-21</code>,
+      W&amp;B id <code>daq1r161</code>. It resumed at
+      <code>Learning iteration 2250/12250</code> with the new foot reward lines
+      active and <code>nan_detection=0</code>. GPU2 memory is very tight at
+      about <code>23603 MiB / 24564 MiB</code>; if it OOMs, retry
+      <code>10*1024</code> envs.
+    </li>
+    <li>
+      The GPU2 warm-start was then resized from <code>12*1024</code> to
+      <code>8*1024</code> envs per user request. The stopped session was
+      <code>pingpong_pace_foot_contact_from2250_12288_gpu2_20260707</code>.
+      The active replacement is tmux
+      <code>pingpong_pace_foot_contact_from2250_8192_gpu2_20260707</code>, run
+      dir
+      <code>logs/rsl_rl/g1_pingpong_pace/pingpong_pace_foot_contact_from2250_8192env_gpu2_2026-07-07_14-21-05</code>,
+      W&amp;B id <code>5ibxmhoa</code>. It resumed from the same
+      <code>model_2250.pt</code> at iteration <code>2250/12250</code>, had
+      <code>nan_detection=0</code>, and used about
+      <code>19061 MiB / 24564 MiB</code> on GPU2 after startup.
+    </li>
+    <li>
+      The table-tennis v2 decoder Hit run was stopped and promoted to a
+      Cross-StrikeQuality run on GPU1. Stopped tmux:
+      <code>pingpong_hit_tt_decoder_v2_gpu1_20260707</code>. New tmux:
+      <code>pingpong_cross_sq_tt_decoder_v2_from_hit2000_gpu1_20260707</code>,
+      run dir
+      <code>logs/rsl_rl/g1_pingpong_latent_cross_strike_quality_table_tennis_decoder/pingpong_cross_sq_tt_decoder_v2_from_hit2000_15360env_gpu1_2026-07-07_15-30-02</code>,
+      W&amp;B id <code>epcwl9un</code>. It warm-starts from Hit
+      <code>model_2000.pt</code> and explicitly uses the pingpang/table-tennis v2
+      decoder
+      <code>logs/rsl_rl/g1_distillation_table_tennis/table_tennis_distill_v2_46080env_kl_aligned_from_tracking18000_gpu1_2026-07-05_23-43-32/model_30000.pt</code>.
+      At iteration 2 it had <code>nan_detection=0</code>,
+      <code>paddle_hit_count=0.8088</code>, <code>crossed_net_count=0.1013</code>,
+      and <code>legal_return_count=0.0339</code>.
+    </li>
+    <li>
       Validation passed for
       <code>tests/test_pingpong_task.py tests/test_pingpong_state.py</code>,
       <code>ty check src/mjlab/tasks/pingpong ...</code>, and CPU smoke train
@@ -1391,6 +1506,150 @@
       ran 12288 envs for 20 iterations on GPU3 with no actor-observation NaN and
       no diagnostic JSON written. Remaining PACE issue is behavior quality:
       high body-ball faults, not the previous NaN crash.
+    </li>
+    <li>
+      On 2026-07-07, PACE <code>play</code> looked much worse than training
+      metrics for
+      <code>logs/rsl_rl/g1_pingpong_pace/pingpong_pace_foot_contact_from2250_8192env_gpu2_2026-07-07_14-21-05/model_4750.pt</code>.
+      Root cause in the playback path: PACE checkpoints save
+      <code>pred_state_dict</code>, but the generic play viewer called the raw
+      actor without invoking the PACE runner's learned ball-predictor update
+      loop. The actor therefore saw stale or zero <code>ball_prediction</code>
+      observations. Fix: <code>PingpongPaceOnPolicyRunner.get_inference_policy()</code>
+      now returns a wrapper that records current ball positions, runs the
+      predictor, refreshes observations, and only then calls the actor. Validation:
+      targeted pingpong tests passed and ruff passed. Even after this fix,
+      interpret PACE metrics carefully: around <code>model_4750.pt</code>,
+      <code>paddle_hit_count</code> was about <code>0.91</code> but
+      <code>legal_return_count</code> only about <code>0.165</code>, with
+      remaining <code>root_height</code>, <code>bad_orientation</code>, and
+      <code>failed_bounce</code> issues.
+    </li>
+  </ul>
+
+  <h2>2026-07-07 G1 PACE Stabilization</h2>
+  <ul>
+    <li>
+      <code>Mjlab-Pingpong-PACE-Unitree-G1</code> was updated from T1-style
+      target geometry to G1 KNEES_BENT reset/default geometry. Future base
+      targets now use <code>target_base_offset_xy=(-0.3045, 0.2015)</code> and
+      <code>target_root_height=0.760</code>, derived from the measured G1
+      paddle center relative to pelvis in the active pingpong reset pose.
+    </li>
+    <li>
+      PACE foot support now senses the seven collision geoms per foot and
+      aggregates them into left/right support before computing fly, unstable
+      support, slide, force, and stumble rewards. PACE-only terminations were
+      tightened to <code>bad_orientation=40deg</code> and
+      <code>root_height=0.68</code>.
+    </li>
+    <li>
+      Direct joint exploration was narrowed to
+      <code>G1_PACE_ACTION_SCALE&lt;=0.18</code>,
+      <code>clip_actions=1.5</code>, <code>init_std=0.4</code>, and
+      <code>entropy_coef=0.001</code>. New pre-hit forehand shaping rewards are
+      <code>pace_forehand_paddle_offset</code> and
+      <code>pace_forehand_elbow_extension</code>. After the paddle/reach
+      retargeting, PACE motion penalties were relaxed to
+      <code>action_rate_l2=-0.01</code>, <code>feet_slide=-0.3</code>, and
+      <code>pace_hit_unstable_support=-5.0</code>.
+    </li>
+    <li>
+      Existing PACE training runs will not reflect these changes. Launch a new
+      canary and monitor <code>Policy/mean_std</code>,
+      <code>root_height</code>, <code>bad_orientation</code>, and the two
+      forehand reward terms before treating the baseline as improved.
+    </li>
+    <li>
+      FK recheck: <code>(+0.274, -0.152, +0.312)</code> was the XML zero-joint
+      paddle offset, not the current G1 pingpong reset pose. PACE now targets
+      the KNEES_BENT reset/default posture:
+      <code>target_base_offset_xy=(-0.3045, 0.2015)</code>,
+      <code>target_root_height=0.760</code>, and
+      <code>pace_forehand_paddle_offset=(0.3045, -0.2015, 0.0726)</code>.
+    </li>
+    <li>
+      New FK-corrected PACE runs started on 2026-07-07 after stopping GPU0 tmux
+      <code>pingpong_cross_sq_pace_15360_gpu0_20260706</code>. Scratch:
+      tmux <code>pingpong_pace_fk_reset_scratch_8192_gpu0_20260707</code>, run
+      dir
+      <code>logs/rsl_rl/g1_pingpong_pace/pingpong_pace_fk_reset_scratch_8192env_gpu0_2026-07-07_19-56-04</code>,
+      W&amp;B id <code>3kunxckw</code>. Resume: tmux
+      <code>pingpong_pace_fk_reset_resume5750_8192_gpu3_20260707</code>, run dir
+      <code>logs/rsl_rl/g1_pingpong_pace/pingpong_pace_fk_reset_resume5750_8192env_gpu3_2026-07-07_19-56-04</code>,
+      W&amp;B id <code>wfdk1com</code>, loaded
+      <code>logs/rsl_rl/g1_pingpong_pace/pingpong_pace_foot_contact_from2250_8192env_gpu2_2026-07-07_14-21-05/model_5750.pt</code>.
+      Both use <code>8192</code> envs and resolved configs contain the corrected
+      KNEES_BENT target values. First logged iterations had
+      <code>nan_detection=0</code>; scratch started with
+      <code>Mean action std=0.40</code>, resume inherited old high exploration
+      with <code>Mean action std=5.23</code>.
+      After about one minute both were still running with stable GPU memory and
+      <code>nan_detection=0</code>, but early <code>root_height</code>
+      terminations were already high, especially resume. Recheck around
+      <code>100~250</code> iterations before trusting the direction.
+    </li>
+    <li>
+      Validation passed with <code>29 passed</code> for pingpong tests,
+      <code>ty check</code>, touched-file <code>ruff check</code>, and CPU
+      smoke train at
+      <code>logs/rsl_rl/g1_pingpong_pace/pingpong_pace_scratch_2026-07-07_19-44-56</code>.
+    </li>
+  </ul>
+
+  <h2>2026-07-08 G1 PACE Native Calibration</h2>
+  <ul>
+    <li>
+      PACE G1 geometry defaults now live in
+      <code>src/mjlab/tasks/pingpong/pace_geometry.py</code>. After the T1
+      reference-image correction, the current native defaults target a
+      table-height lateral forehand reach:
+      <code>target_base_offset_xy=(-0.3112, 0.4510)</code>,
+      <code>target_root_height=0.760</code>, and
+      <code>forehand_paddle_offset=(0.3112, -0.4510, 0.0290)</code>.
+      This is the T1-like table-height lateral reference backed off
+      <code>5cm</code> along pelvis local <code>-x</code>, so the policy has
+      room to strike through the ball instead of starting fully extended.
+      The default strike line is
+      <code>strike_direction_pelvis=(cos15deg, 0, sin15deg)</code>.
+      Prediction state, PACE observations, forehand rewards, foot geoms, and
+      PACE-only termination thresholds read through this config instead of
+      scattered T1 constants.
+    </li>
+    <li>
+      New calibration entry:
+      <code>contact_test/run_g1_pace_pose_calibration.py</code>. It builds the
+      current G1 pingpong paddle MuJoCo spec, evaluates
+      <code>zero_pose</code>, <code>home</code>, <code>knees_bent</code>,
+      <code>forehand_open_light</code>, and
+      <code>forehand_open_medium</code>, then writes
+      <code>calibration.json</code>, <code>calibration.csv</code>,
+      <code>README.md</code>, and five camera views plus keypoint overlays per
+      pose under <code>contact_test/results/&lt;timestamp&gt;_g1_pace_pose_calibration</code>.
+    </li>
+    <li>
+      Run command:
+      <code>MUJOCO_GL=egl UV_CACHE_DIR=/tmp/uv-cache uv run python contact_test/run_g1_pace_pose_calibration.py --output-dir contact_test/results --pose-set default</code>.
+      CPU tests use <code>--skip-render</code> internally and verify FK metrics
+      are finite, output fields exist, and <code>zero_pose</code> differs from
+      <code>KNEES_BENT_KEYFRAME</code>.
+    </li>
+    <li>
+      The ignored custom calibration config
+      <code>contact_test/configs/g1_pace_table_height_lateral.json</code>
+      contains three T1-like table-height candidates. The fully reached
+      reference is <code>t1_table_lateral_center</code> with FK
+      <code>paddle_offset_pelvis=(0.3612, -0.4510, 0.0290)</code> and
+      <code>elbow_extension_ratio≈0.974</code>; the training default backs this
+      off to <code>(0.3112, -0.4510, 0.0290)</code>. New PACE runs are required
+      for this target to take effect.
+    </li>
+    <li>
+      Calibration overlays now include desired reach and strike-line
+      visualization: green sphere = current paddle center, purple sphere =
+      desired reach, purple line = pelvis-to-target vector, blue line =
+      paddle-to-target error, and orange arrow = desired 15-degree-upward strike
+      direction.
     </li>
   </ul>
 

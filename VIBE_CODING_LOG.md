@@ -1706,3 +1706,505 @@ uv run train Mjlab-Pingpong-PACE-Unitree-G1 \
   生效。
 - `Episode_Termination/nan_detection=0.0000`。
 - `Policy/mean_std` 仍在 `0.60` 左右。
+
+## 2026-07-07 14:18 - PACE foot-contact warm-start from model_2250 on GPU2
+
+### 目标
+
+按用户要求新增一条从旧稳定 PACE ckpt 续训的主线，而不是只从 scratch 观察
+foot-contact reward。GPU3 scratch 对照 run 保持运行。
+
+### 启动配置
+
+- tmux session:
+  `pingpong_pace_foot_contact_from2250_12288_gpu2_20260707`
+- task:
+  `Mjlab-Pingpong-PACE-Unitree-G1`
+- checkpoint:
+  `logs/rsl_rl/g1_pingpong_pace/pingpong_pace_fixed_scratch_12288env_gpu3_2026-07-07_09-43-26/model_2250.pt`
+- GPU:
+  host GPU2 via `CUDA_VISIBLE_DEVICES=2` and `--gpu-ids "[0]"`
+- environments:
+  `12288` (`12*1024`)
+- run name:
+  `pingpong_pace_foot_contact_from2250_12288env_gpu2`
+- run dir:
+  `logs/rsl_rl/g1_pingpong_pace/pingpong_pace_foot_contact_from2250_12288env_gpu2_2026-07-07_14-18-21`
+- W&B run id:
+  `daq1r161`
+
+Command:
+
+```sh
+CUDA_VISIBLE_DEVICES=2 UV_CACHE_DIR=/tmp/uv-cache MPLCONFIGDIR=/tmp/mplconfig \
+WANDB_CACHE_DIR=/tmp/wandb-cache WANDB_CONFIG_DIR=/tmp/wandb-config \
+XDG_CACHE_HOME=/tmp/xdg-cache MJLAB_WARP_QUIET=1 \
+uv run train Mjlab-Pingpong-PACE-Unitree-G1 \
+  --env.scene.num-envs 12288 \
+  --gpu-ids "[0]" \
+  --agent.resume True \
+  --agent.load-checkpoint-file logs/rsl_rl/g1_pingpong_pace/pingpong_pace_fixed_scratch_12288env_gpu3_2026-07-07_09-43-26/model_2250.pt \
+  --agent.experiment-name g1_pingpong_pace \
+  --agent.run-name pingpong_pace_foot_contact_from2250_12288env_gpu2 \
+  --agent.upload-model False
+```
+
+### 启动检查
+
+- Checkpoint loaded successfully:
+  `Loading model checkpoint from .../model_2250.pt`。
+- Training resumed at `Learning iteration 2250/12250`。
+- New foot-contact reward lines are active:
+  `pace_fly`、`pace_hit_unstable_support`、`feet_slide`、`feet_force`、
+  `feet_stumble`。
+- `Episode_Termination/nan_detection=0.0000` at first logged iteration.
+- GPU2 memory is very tight: about `23603 MiB / 24564 MiB` after startup.
+  If this run OOMs, retry at `10*1024` envs rather than changing reward/config.
+
+### 后续调整
+
+用户要求把 env 数从 `12*1024` 降到 `8*1024`，因此停止
+`pingpong_pace_foot_contact_from2250_12288_gpu2_20260707`，保留 GPU3 scratch
+对照 run 不动，并重新启动：
+
+- tmux session:
+  `pingpong_pace_foot_contact_from2250_8192_gpu2_20260707`
+- run name:
+  `pingpong_pace_foot_contact_from2250_8192env_gpu2`
+- run dir:
+  `logs/rsl_rl/g1_pingpong_pace/pingpong_pace_foot_contact_from2250_8192env_gpu2_2026-07-07_14-21-05`
+- W&B run id:
+  `5ibxmhoa`
+- environments:
+  `8192` (`8*1024`)
+
+启动检查：
+
+- Checkpoint loaded successfully from the same `model_2250.pt`。
+- Training resumed at `Learning iteration 2250/12250`。
+- New foot-contact reward lines are active.
+- `Episode_Termination/nan_detection=0.0000` at first logged iteration.
+- GPU2 memory dropped to about `19061 MiB / 24564 MiB` after startup.
+
+## 2026-07-07 15:30 - Promote table-tennis decoder Hit to Cross
+
+### 目标
+
+按用户要求关闭 table-tennis v2 decoder 的 Pingpong Hit 训练，并把该 Hit 策略推进
+到 Cross 训练；底层 low-level decoder 继续显式使用 pingpang/table-tennis v2
+distillation checkpoint，而不是默认 tennis decoder。
+
+### 操作
+
+- Stopped tmux session:
+  `pingpong_hit_tt_decoder_v2_gpu1_20260707`
+- Hit warm-start checkpoint:
+  `logs/rsl_rl/g1_pingpong_latent_hit_table_tennis_decoder/pingpong_hit_tt_decoder_v2_model30000_15360env_gpu1_20260707_2026-07-07_09-44-02/model_2000.pt`
+- Decoder override:
+  `logs/rsl_rl/g1_distillation_table_tennis/table_tennis_distill_v2_46080env_kl_aligned_from_tracking18000_gpu1_2026-07-05_23-43-32/model_30000.pt`
+- New tmux session:
+  `pingpong_cross_sq_tt_decoder_v2_from_hit2000_gpu1_20260707`
+- New run dir:
+  `logs/rsl_rl/g1_pingpong_latent_cross_strike_quality_table_tennis_decoder/pingpong_cross_sq_tt_decoder_v2_from_hit2000_15360env_gpu1_2026-07-07_15-30-02`
+- W&B run id:
+  `epcwl9un`
+
+Command:
+
+```sh
+CUDA_VISIBLE_DEVICES=1 UV_CACHE_DIR=/tmp/uv-cache MPLCONFIGDIR=/tmp/mplconfig \
+WANDB_CACHE_DIR=/tmp/wandb-cache WANDB_CONFIG_DIR=/tmp/wandb-config \
+XDG_CACHE_HOME=/tmp/xdg-cache MJLAB_WARP_QUIET=1 \
+uv run train Mjlab-Pingpong-Cross-StrikeQuality-Unitree-G1 \
+  --env.scene.num-envs 15360 \
+  --gpu-ids "[0]" \
+  --env.actions.latent-joint-pos.decoder-checkpoint logs/rsl_rl/g1_distillation_table_tennis/table_tennis_distill_v2_46080env_kl_aligned_from_tracking18000_gpu1_2026-07-05_23-43-32/model_30000.pt \
+  --agent.resume True \
+  --agent.load-checkpoint-file logs/rsl_rl/g1_pingpong_latent_hit_table_tennis_decoder/pingpong_hit_tt_decoder_v2_model30000_15360env_gpu1_20260707_2026-07-07_09-44-02/model_2000.pt \
+  --agent.reset-resume-progress True \
+  --agent.experiment-name g1_pingpong_latent_cross_strike_quality_table_tennis_decoder \
+  --agent.run-name pingpong_cross_sq_tt_decoder_v2_from_hit2000_15360env_gpu1 \
+  --agent.upload-model False
+```
+
+### 启动检查
+
+- Resolved config confirms decoder override:
+  `params/env.yaml` has
+  `decoder_checkpoint: logs/rsl_rl/g1_distillation_table_tennis/table_tennis_distill_v2_46080env_kl_aligned_from_tracking18000_gpu1_2026-07-05_23-43-32/model_30000.pt`。
+- Resolved agent config confirms:
+  `load_checkpoint_file=.../model_2000.pt` and `reset_resume_progress=true`。
+- Runner printed:
+  `Warm-starting tennis checkpoint weights; iteration, optimizer, RND, and env progress will reset.`
+- At iteration 2:
+  `nan_detection=0.0000`, `bad_orientation=0.0000`, `root_height=0.0000`,
+  `paddle_hit_count=0.8088`, `crossed_net_count=0.1013`,
+  `legal_return_count=0.0339`。
+- ONNX export emitted a non-fatal warning (`'joint_pos'`), but training continued.
+
+## 2026-07-07 18:45 - Fix PACE play predictor path
+
+### 目标
+
+解释并修复 PACE 训练指标看起来不错、但 `uv run play` 单环境可视化很差的问题。
+
+### 发现
+
+- `model_4750.pt` 确实保存了 `pred_state_dict` 和 `pred_cfg`。
+- PACE training runner 在 rollout 中每步调用 `_record_ball_positions()` 和
+  `_maybe_predict_and_update_env()`，从而持续刷新 actor obs 里的
+  `ball_prediction`。
+- 原始 `play` 只拿 `runner.get_inference_policy()` 的裸 actor；viewer loop 是
+  `obs = env.get_observations(); actions = policy(obs); env.step(actions)`，
+  不会调用 PACE runner 的 predictor 更新路径。
+- 因此可视化时 actor 看到的 `pace_ball_prediction_table` 长期是零或陈旧值，
+  和训练后期观测分布不一致。
+
+### 改动
+
+- `PingpongPaceOnPolicyRunner.get_inference_policy()` 现在返回 PACE 专用 wrapper：
+  每次 actor 前先记录当前球状态、运行 predictor、刷新一份 fresh obs，再调用
+  base policy。
+- 保留先前给 `play` 添加的 `--decoder-checkpoint` 参数，用于 latent-control
+  任务播放时覆盖 frozen decoder。
+
+### 验证
+
+```sh
+UV_CACHE_DIR=/tmp/uv-cache MPLCONFIGDIR=/tmp/mplconfig \
+uv run pytest tests/test_pingpong_task.py -q \
+  -k 'pace_inference_policy_refreshes_prediction_before_actor or play_decoder_checkpoint_override'
+
+UV_CACHE_DIR=/tmp/uv-cache MPLCONFIGDIR=/tmp/mplconfig \
+uv run ruff check src/mjlab/tasks/pingpong/rl/runner.py \
+  src/mjlab/scripts/play.py tests/test_pingpong_task.py
+```
+
+结果：`2 passed, 14 deselected`，ruff passed。
+
+### 后续判断
+
+即使修复 play predictor，`model_4750.pt` 仍不应被解读为稳定策略：当前训练日志
+`paddle_hit_count≈0.91`、`legal_return_count≈0.165`，但还有明显
+`root_height` / `bad_orientation` 终止和 `failed_bounce≈0.45`。下一步应重新 play
+同一 checkpoint 验证视觉是否改善；若仍差，优先压低直接关节动作的探索/动作速率
+和摔倒终止，而不是只追 `pace_*` dense reward。
+
+## 2026-07-07 19:42 - G1 PACE reward and control stabilization
+
+### 目标
+
+把 `Mjlab-Pingpong-PACE-Unitree-G1` 从 T1-style 几何假设迁到 G1-style 几何假设，
+减少 direct joint PACE 训练中的侧倾够球、塌身和动作饱和。
+
+### 改动
+
+- PACE future base target 改为使用 G1 KNEES_BENT reset/default 持拍几何：
+  `target_base_offset_xy=(-0.3045, 0.2015)`、`target_root_height=0.760`。
+- PACE foot contact sensor 从 ankle-roll body primary 改为
+  `left/right_foot1_collision ... foot7_collision` geom primary；reward helper
+  内部按 left/right 聚合 14 个 geom contact。
+- PACE-only 终止收紧：`bad_orientation=40deg`、`root_height=0.68`。
+- Direct joint action envelope 收紧：`G1_PACE_ACTION_SCALE<=0.18`、
+  `clip_actions=1.5`、`init_std=0.4`、`entropy_coef=0.001`。
+- 新增 pre-hit 正手 shaping：
+  `pace_forehand_paddle_offset=6.0` 和
+  `pace_forehand_elbow_extension=2.0`。
+
+### 验证结果
+
+```sh
+FORCE_CPU=1 UV_CACHE_DIR=/tmp/uv-cache \
+uv run pytest tests/test_pingpong_task.py tests/test_pingpong_state.py -q
+
+UV_CACHE_DIR=/tmp/uv-cache \
+uv run ty check src/mjlab/tasks/pingpong tests/test_pingpong_task.py tests/test_pingpong_state.py
+
+FORCE_CPU=1 UV_CACHE_DIR=/tmp/uv-cache \
+uv run train Mjlab-Pingpong-PACE-Unitree-G1 \
+  --agent.max-iterations 1 --env.scene.num-envs 2 --agent.upload-model False
+```
+
+- `pytest`: `29 passed`。
+- `ty check`: `All checks passed!`。
+- `ruff check` on touched PACE modules/tests: passed.
+- CPU smoke train required `CUDA_VISIBLE_DEVICES=` in this sandbox because NVML
+  was unavailable; rerun succeeded at
+  `logs/rsl_rl/g1_pingpong_pace/pingpong_pace_scratch_2026-07-07_19-44-56`。
+  Resolved env shows action dim `29`, actor obs `105`, critic obs `120`, and
+  active rewards include `pace_forehand_paddle_offset` and
+  `pace_forehand_elbow_extension`。
+
+### 后续判断
+
+实现后不要继续把旧 PACE run 直接解读成新 reward 结果。需要新开 canary，重点看
+`Policy/mean_std`、`root_height`、`bad_orientation`、`termination_penalty`、
+`pace_forehand_paddle_offset` 和 `pace_forehand_elbow_extension`。
+
+### 2026-07-07 20:16 FK correction
+
+复查 MuJoCo FK 后发现 `(+0.274, -0.152, +0.312)` 对应的是 XML zero-joint
+pose，而不是当前 G1 pingpong reset/default 的 `KNEES_BENT_KEYFRAME`。PACE
+target 已改成 KNEES_BENT 持拍姿态：
+`target_base_offset_xy=(-0.3045, 0.2015)`、`target_root_height=0.760`、
+`pace_forehand_paddle_offset=(0.3045, -0.2015, 0.0726)`。
+
+## 2026-07-07 19:56 - PACE FK-reset scratch/resume runs
+
+### 目标
+
+按用户要求停止 GPU0 上旧的 Cross-StrikeQuality PACE-like 训练，并启动两条新的
+G1 PACE baseline 对照：一条从头训练，一条从旧 PACE checkpoint 续训。两条都使用
+KNEES_BENT FK 修正后的 target。
+
+### 操作
+
+- Stopped tmux session:
+  `pingpong_cross_sq_pace_15360_gpu0_20260706`
+- Scratch tmux:
+  `pingpong_pace_fk_reset_scratch_8192_gpu0_20260707`
+- Scratch run dir:
+  `logs/rsl_rl/g1_pingpong_pace/pingpong_pace_fk_reset_scratch_8192env_gpu0_2026-07-07_19-56-04`
+- Scratch W&B id:
+  `3kunxckw`
+- Resume tmux:
+  `pingpong_pace_fk_reset_resume5750_8192_gpu3_20260707`
+- Resume run dir:
+  `logs/rsl_rl/g1_pingpong_pace/pingpong_pace_fk_reset_resume5750_8192env_gpu3_2026-07-07_19-56-04`
+- Resume checkpoint:
+  `logs/rsl_rl/g1_pingpong_pace/pingpong_pace_foot_contact_from2250_8192env_gpu2_2026-07-07_14-21-05/model_5750.pt`
+- Resume W&B id:
+  `wfdk1com`
+- environments:
+  `8192` each.
+
+### 启动检查
+
+- Resolved `params/env.yaml` in both runs contains
+  `target_base_offset_xy=(-0.3045, 0.2015)`,
+  `target_root_height=0.76`, and
+  `pace_forehand_paddle_offset=(0.3045, -0.2015, 0.0726)`.
+- Both runs show action dim `29`, actor obs `105`, critic obs `120`, and active
+  rewards include `pace_forehand_paddle_offset` and
+  `pace_forehand_elbow_extension`.
+- Scratch first iteration:
+  `nan_detection=0.0000`, `root_height=0.0000`, `bad_orientation=0.0000`,
+  `Mean action std=0.40`.
+- Resume first iteration:
+  loaded `model_5750.pt`, resumed at `Learning iteration 5750/15750`,
+  `nan_detection=0.0000`, `root_height=0.2917`, `bad_orientation=0.0000`,
+  `Mean action std=5.23`.
+
+### 注意
+
+Resume run 继承了旧 checkpoint 的高 policy std，因此它是“旧策略能否在新 FK
+target 下恢复”的对照，不应和 scratch 的早期探索强度直接等价比较。后续重点看
+resume 的 `Policy/mean_std` 是否下降、`root_height` 是否继续低于旧 run、以及
+`pace_forehand_paddle_offset` 是否持续变好。
+
+### 早期健康检查
+
+启动约 1 分钟后两条 run 仍在运行，GPU0/GPU3 显存稳定，`nan_detection=0`。但
+`root_height` termination 早期偏高：scratch 约 `14.6`，resume 约 `157.1`，
+说明新 FK target 仍可能触发塌身/高度失败，尤其 resume 受旧高 std 影响更大。
+需要在 `100~250` iter 再判断是否继续，或是否改成 reset-std warm-start。
+
+## 2026-07-08 09:54 - G1 PACE native pose calibration workflow
+
+### 目标
+
+按用户要求把 PACE 的 T1 几何假设迁成 mjlab 原生 G1 标定流程：PACE 上游仓库只
+作为只读参考，实际 FK 测量、图片、JSON/CSV 和训练参数入口都留在
+`mjlab_latent`。
+
+### 改动
+
+- 新增 `src/mjlab/tasks/pingpong/pace_geometry.py`，集中存放 PACE-only G1
+  geometry contract：
+  `target_base_offset_xy=(-0.3045, 0.2015)`、
+  `target_root_height=0.760`、
+  `forehand_paddle_offset=(0.3045, -0.2015, 0.0726)`、
+  `forehand_paddle_offset_std=(0.15, 0.12, 0.12)`、
+  `forehand_elbow_target_ratio=0.92`、14 个 G1 foot collision geom、以及
+  PACE-only `bad_orientation=40deg`、`root_height_minimum=0.68`。
+- `PingpongPacePredictionState`、PACE observation/reward/termination config 和
+  正手 shaping reward 都改为读取这组 G1 参数，避免再次散落 T1-style
+  `body_height=0.69`、`paddle_y_offset=-0.60` 或隐式脚 link 假设。
+- 新增 `contact_test/run_g1_pace_pose_calibration.py`：
+  - 默认候选姿态：
+    `zero_pose`、`home`、`knees_bent`、`forehand_open_light`、
+    `forehand_open_medium`。
+  - 支持 `--custom-pose-file` 追加自定义右臂姿态。
+  - 输出 `calibration.json`、`calibration.csv`、`README.md`。
+  - 每个姿态输出 `front/side/top/iso/hand_closeup` 五个视角及 overlay 图。
+  - README 明确 `home -> HOME_KEYFRAME`、
+    `knees_bent -> KNEES_BENT_KEYFRAME`，防止再次把 XML zero pose 当 reset pose。
+
+### 运行方式
+
+```sh
+MUJOCO_GL=egl UV_CACHE_DIR=/tmp/uv-cache \
+uv run python contact_test/run_g1_pace_pose_calibration.py \
+  --output-dir contact_test/results \
+  --pose-set default
+```
+
+CPU/CI smoke 可跳过渲染：
+
+```sh
+FORCE_CPU=1 UV_CACHE_DIR=/tmp/uv-cache MPLCONFIGDIR=/tmp/mplconfig \
+uv run pytest tests/test_g1_pace_pose_calibration.py -q
+```
+
+### 当前验证
+
+- 新增单测会构建 G1 pingpong paddle MuJoCo spec、跑 FK、写 JSON/CSV/占位图，
+  并检查 `zero_pose` 与 `knees_bent` 的 paddle offset 不相同。
+- 后续如果人工选择新的 forehand-open 姿态，应把选中的 calibration JSON 路径、
+  姿态名和关键 FK 数值追加到本文件与 `summary.html`，再新开带 calibration tag
+  的 PACE run。
+
+### 2026-07-08 10:05 table-height lateral target update
+
+用户提供 T1 reference image 后明确目标应是“横向伸出，乒乓球台高度”，不是肩高
+reach。基于 KNEES_BENT base 的 FK 搜索，先找到
+`t1_table_lateral_center` 作为 fully reached reference：
+
+- joint override:
+  `right_shoulder_pitch=-0.6`、`right_shoulder_roll=-0.7`、
+  `right_shoulder_yaw=0.0`、`right_elbow=1.8`、
+  `right_wrist_pitch=0.3`、`right_wrist_yaw=0.0`。
+- FK:
+  `paddle_offset_pelvis=(0.3612, -0.4510, 0.0290)`，
+  `target_base_offset_xy=(-0.3612, 0.4510)`，
+  `paddle_world_z≈0.789`，`elbow_extension_ratio≈0.974`。
+- 该点是可视化/标定 reference，不直接作为最终 reward target。
+
+随后用户确认击球目标应沿机器人面朝方向的负方向稍微后移，并希望击球线朝
+机器人正前方与正上方的夹角。因此最终 `G1_PACE_GEOMETRY` default 改成：
+
+- `forehand_paddle_offset=(0.3112, -0.4510, 0.0290)`，即沿 pelvis local
+  `-x` 回收 `0.05m`。
+- `target_base_offset_xy=(-0.3112, 0.4510)`。
+- `strike_direction_pelvis=(cos15deg, 0, sin15deg)`，
+  `strike_upward_angle=15deg`。
+- Updated shaping spread:
+  `forehand_paddle_offset_std=(0.15, 0.14, 0.08)`，
+  `forehand_elbow_target_ratio=0.97`。
+
+说明：这会影响新启动的 `Mjlab-Pingpong-PACE-Unitree-G1` run；已经运行中的 PACE
+训练不会自动更新。T1-like custom pose 配置保留在 ignored
+`contact_test/configs/g1_pace_table_height_lateral.json`，用于后续渲染确认。
+
+### 2026-07-08 10:12 desired reach / strike-line overlay
+
+标定脚本 overlay 现在额外绘制：
+
+- green sphere: current `pingpong_paddle_center`
+- purple sphere: desired reach center
+- purple line: pelvis-to-target reach vector
+- blue line: current paddle-to-target error
+- orange arrow: desired strike direction
+
+`calibration.json` / `calibration.csv` / `README.md` 也会记录
+`visualized_reach_offset_pelvis`、`visualized_strike_direction_pelvis`、
+每个 pose 的 `desired_reach_error_norm` 和 strike direction world vector。
+
+### 2026-07-08 11:18 G1 pingpong paddle end-effector-axis roll
+
+用户确认当前 G1 pingpong 资产仍像“网球拍竖着插在手腕上”，而 PACE/T1 的球拍
+应保留初版那种“拍柄插入手中、拍面在手外”的连接方式；最终几何定义为：
+以末端执行器前方轴为轴，把整支球拍整体滚转 90 度。由于拍柄已经插入机器人
+手中，本次移除了拍柄碰撞几何。
+随后用户要求检查拍面碰撞几何和手部碰撞几何是否重叠，并沿末端执行器前方把
+拍面推到刚好不重叠；最终采用 `1mm` clearance。
+本次只修改 G1 pingpong paddle 资产，不改 reward、训练任务或 decoder：
+
+- `src/mjlab/asset_zoo/robots/unitree_g1_w_pingpong_paddle.py` 现在把原始
+  tennis-racket pose 移到
+  `PINGPONG_PADDLE_CENTER_POS=(0.2459310139695155, -0.004, 0.0)`。
+- 该中心由 `right_hand_collision` 前端、手部 capsule 半径 `0.05`、拍面半径
+  `0.065` 和 `PINGPONG_PADDLE_HAND_CLEARANCE=0.001` 计算得到；编译后
+  `hand_paddle_clearance≈0.001m`。
+- `pingpong_paddle_collision` 的 local `+y` 连接/柄轴仍沿
+  `right_wrist_yaw_link` 的 `-x`，保持连接方式；local `+z` face normal
+  被滚转到 `right_wrist_yaw_link` 的 `-z`。
+- 不再创建 `pingpong_paddle_handle_collision`；拍柄只保留在 visual mesh 中，
+  不参与机器人-球/机器人-桌/自碰撞物理。
+- `pingpong_paddle_collision` 和 `pingpong_paddle_center` site 保持同一中心，
+  contact scoring 仍然只看 paddle face collision。
+
+验证：
+
+- `FORCE_CPU=1 UV_CACHE_DIR=/tmp/uv-cache MPLCONFIGDIR=/tmp/mplconfig uv run pytest tests/test_pingpong_task.py tests/test_pingpong_state.py tests/test_g1_pace_pose_calibration.py -q`
+  -> `30 passed`。
+- `UV_CACHE_DIR=/tmp/uv-cache MPLCONFIGDIR=/tmp/mplconfig uv run ty check src/mjlab/asset_zoo/robots/unitree_g1_w_pingpong_paddle.py src/mjlab/tasks/pingpong/config/g1/env_cfgs.py tests/test_pingpong_task.py`
+  -> passed。
+- `UV_CACHE_DIR=/tmp/uv-cache MPLCONFIGDIR=/tmp/mplconfig uv run ruff check src/mjlab/asset_zoo/robots/unitree_g1_w_pingpong_paddle.py src/mjlab/tasks/pingpong/config/g1/env_cfgs.py tests/test_pingpong_task.py`
+  -> passed。
+- 默认姿态渲染输出：
+  `contact_test/results/2026-07-08_11-18-11_g1_pace_pose_calibration`。
+
+说明：已经运行中的 PACE/Cross 训练不会自动换成新资产；需要新启动 run 才会
+使用新的 MuJoCo spec。
+
+### 2026-07-08 11:34 PACE regularization relaxation
+
+按用户要求，当前 PACE direct-joint 任务在 G1 paddle/reach retargeting 后放松三
+个运动稳定惩罚，避免过强 regularization 把横向正手 reach 压回保守站姿：
+
+- `action_rate_l2=-0.01`（保持负权重，避免正向奖励动作抖动）。
+- `feet_slide=-0.3`。
+- `pace_hit_unstable_support=-5.0`。
+
+这些值只影响新启动的 `Mjlab-Pingpong-PACE-Unitree-G1` run；已运行中的 PACE
+训练不会热更新。
+
+### 2026-07-08 11:42 PACE relaxed scratch on GPU1
+
+按用户要求结束本用户剩余的 Cross 训练，并在同一块 GPU 上启动新的 PACE 训练。
+
+- stopped tmux:
+  `pingpong_cross_sq_tt_decoder_v2_from_hit2000_gpu1_20260707`
+- stopped run:
+  `logs/rsl_rl/g1_pingpong_latent_cross_strike_quality_table_tennis_decoder/pingpong_cross_sq_tt_decoder_v2_from_hit2000_15360env_gpu1_2026-07-07_15-30-02`
+- stopped around:
+  `Learning iteration 7496/40000`
+- new tmux:
+  `pingpong_pace_g1_paddle_relaxed_scratch_15360_gpu1_20260708`
+- task:
+  `Mjlab-Pingpong-PACE-Unitree-G1`
+- GPU:
+  host GPU1 via `CUDA_VISIBLE_DEVICES=1` and `--gpu-ids "[0]"`
+- envs:
+  `15360` (`30*512`)
+- run dir:
+  `logs/rsl_rl/g1_pingpong_pace/pingpong_pace_g1_paddle_relaxed_scratch_15360env_gpu1_2026-07-08_11-42-05`
+
+Command:
+
+```sh
+CUDA_VISIBLE_DEVICES=1 UV_CACHE_DIR=/tmp/uv-cache MPLCONFIGDIR=/tmp/mplconfig \
+WANDB_CACHE_DIR=/tmp/wandb-cache WANDB_CONFIG_DIR=/tmp/wandb-config \
+XDG_CACHE_HOME=/tmp/xdg-cache MJLAB_WARP_QUIET=1 \
+uv run train Mjlab-Pingpong-PACE-Unitree-G1 \
+  --env.scene.num-envs 15360 \
+  --gpu-ids "[0]" \
+  --agent.resume False \
+  --agent.experiment-name g1_pingpong_pace \
+  --agent.run-name pingpong_pace_g1_paddle_relaxed_scratch_15360env_gpu1 \
+  --agent.upload-model False
+```
+
+启动检查：
+
+- GPU1 after startup: about `17722 MiB / 24564 MiB` used, with the mjlab process
+  at about `17148 MiB`.
+- First logged iterations reached `1/10000`.
+- `Policy/mean_std=0.40`.
+- `Episode_Termination/nan_detection=0.0000`.
+- New relaxed weights are active in the printed reward table:
+  `action_rate_l2=-0.01`, `feet_slide=-0.3`,
+  `pace_hit_unstable_support=-5.0`.
+- Early failures remain dominated by ball/body/root-height style exploration;
+  this is expected for scratch and should be rechecked after `100~250` iters.

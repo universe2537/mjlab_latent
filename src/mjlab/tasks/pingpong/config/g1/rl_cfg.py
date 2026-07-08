@@ -138,7 +138,7 @@ def unitree_g1_pingpong_pace_ppo_runner_cfg() -> PingpongPaceOnPolicyRunnerCfg:
       obs_normalization=True,
       distribution_cfg={
         "class_name": "GaussianDistribution",
-        "init_std": 0.6,
+        "init_std": 0.4,
         "std_type": "scalar",
       },
     ),
@@ -151,7 +151,7 @@ def unitree_g1_pingpong_pace_ppo_runner_cfg() -> PingpongPaceOnPolicyRunnerCfg:
       value_loss_coef=1.0,
       use_clipped_value_loss=True,
       clip_param=0.2,
-      entropy_coef=0.002,
+      entropy_coef=0.001,
       num_learning_epochs=5,
       num_mini_batches=4,
       learning_rate=1.0e-3,
@@ -166,7 +166,7 @@ def unitree_g1_pingpong_pace_ppo_runner_cfg() -> PingpongPaceOnPolicyRunnerCfg:
     save_interval=250,
     num_steps_per_env=24,
     max_iterations=10000,
-    clip_actions=2.5,
+    clip_actions=1.5,
   )
 
 

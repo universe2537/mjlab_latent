@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from typing import Any
 
 import mujoco
@@ -17,11 +18,24 @@ from mjlab.asset_zoo.robots.unitree_g1_w_racket.g1_constants import (
 from mjlab.entity import EntityCfg
 
 PINGPONG_PADDLE_RADIUS = 0.065
-PINGPONG_PADDLE_HANDLE_RADIUS = 0.018
-PINGPONG_PADDLE_HANDLE_HALF_LENGTH = 0.09
-PINGPONG_PADDLE_HANDLE_GAP = 0.002
 PINGPONG_PADDLE_SCALE = PINGPONG_PADDLE_RADIUS / 0.12
+PINGPONG_PADDLE_HAND_CLEARANCE = 0.001
 _TENNIS_RACKET_COLLISION_POS = (0.1025, -0.004, 0.4)
+_RIGHT_HAND_COLLISION_FORWARD_END_X = 0.13
+_RIGHT_HAND_COLLISION_RADIUS = 0.05
+_PADDLE_CENTER_Y = -0.004
+_PADDLE_HAND_CLEARANCE_RADIUS = (
+  _RIGHT_HAND_COLLISION_RADIUS
+  + PINGPONG_PADDLE_RADIUS
+  + PINGPONG_PADDLE_HAND_CLEARANCE
+)
+PINGPONG_PADDLE_CENTER_POS = (
+  _RIGHT_HAND_COLLISION_FORWARD_END_X
+  + math.sqrt(_PADDLE_HAND_CLEARANCE_RADIUS**2 - _PADDLE_CENTER_Y**2),
+  _PADDLE_CENTER_Y,
+  0.0,
+)
+_PADDLE_END_EFFECTOR_FORWARD_ROLL_QUAT = (0.5, 0.5, 0.5, 0.5)
 
 
 def _iter_body_tree(body: mujoco.MjsBody):
@@ -99,16 +113,53 @@ def _quat_to_matrix(q: Any) -> tuple[tuple[float, float, float], ...]:
   )
 
 
+def _quat_mul(lhs: Any, rhs: Any) -> tuple[float, float, float, float]:
+  lw, lx, ly, lz = (float(v) for v in lhs)
+  rw, rx, ry, rz = (float(v) for v in rhs)
+  return (
+    lw * rw - lx * rx - ly * ry - lz * rz,
+    lw * rx + lx * rw + ly * rz - lz * ry,
+    lw * ry - lx * rz + ly * rw + lz * rx,
+    lw * rz + lx * ry - ly * rx + lz * rw,
+  )
+
+
 def _vec_add(
   lhs: tuple[float, float, float], rhs: tuple[float, float, float]
 ) -> tuple[float, float, float]:
   return (lhs[0] + rhs[0], lhs[1] + rhs[1], lhs[2] + rhs[2])
 
 
-def _vec_scale(
-  vec: tuple[float, float, float], scale: float
+def _mat_vec_mul(
+  mat: tuple[tuple[float, float, float], ...],
+  vec: tuple[float, float, float],
 ) -> tuple[float, float, float]:
-  return (vec[0] * scale, vec[1] * scale, vec[2] * scale)
+  return (
+    mat[0][0] * vec[0] + mat[0][1] * vec[1] + mat[0][2] * vec[2],
+    mat[1][0] * vec[0] + mat[1][1] * vec[1] + mat[1][2] * vec[2],
+    mat[2][0] * vec[0] + mat[2][1] * vec[1] + mat[2][2] * vec[2],
+  )
+
+
+def _vec_sub(
+  lhs: tuple[float, float, float], rhs: tuple[float, float, float]
+) -> tuple[float, float, float]:
+  return (lhs[0] - rhs[0], lhs[1] - rhs[1], lhs[2] - rhs[2])
+
+
+def _rotate_pose_about_center(
+  pos: Any,
+  quat: Any,
+  *,
+  old_center: tuple[float, float, float],
+  new_center: tuple[float, float, float],
+  rot_quat: tuple[float, float, float, float],
+) -> tuple[tuple[float, float, float], tuple[float, float, float, float]]:
+  rot = _quat_to_matrix(rot_quat)
+  old_pos = (float(pos[0]), float(pos[1]), float(pos[2]))
+  rel = _vec_sub(old_pos, old_center)
+  new_pos = _vec_add(new_center, _mat_vec_mul(rot, rel))
+  return new_pos, _quat_mul(rot_quat, quat)
 
 
 def get_g1_w_pingpong_paddle_spec() -> mujoco.MjSpec:
@@ -125,52 +176,40 @@ def get_g1_w_pingpong_paddle_spec() -> mujoco.MjSpec:
     float(visual_geoms[0].pos[1]),
     float(visual_geoms[0].pos[2]),
   )
+  old_paddle_center = _scale_from_anchor(
+    _TENNIS_RACKET_COLLISION_POS,
+    visual_anchor,
+    PINGPONG_PADDLE_SCALE,
+  )
   for idx, geom in enumerate(visual_geoms):
+    new_pos, new_quat = _rotate_pose_about_center(
+      geom.pos,
+      geom.quat,
+      old_center=old_paddle_center,
+      new_center=PINGPONG_PADDLE_CENTER_POS,
+      rot_quat=_PADDLE_END_EFFECTOR_FORWARD_ROLL_QUAT,
+    )
     geom.meshname = "pingpong_paddle_visual"
     geom.name = (
       "pingpong_paddle_visual"
       if idx == 0
       else f"pingpong_paddle_visual_{idx}"
     )
+    geom.pos[:] = new_pos
+    geom.quat[:] = new_quat
 
-  paddle_center = _scale_from_anchor(
-    _TENNIS_RACKET_COLLISION_POS,
-    visual_anchor,
-    PINGPONG_PADDLE_SCALE,
-  )
-  paddle_body, paddle = _find_geom_with_body(spec, "tennis_racket_collision")
+  _, paddle = _find_geom_with_body(spec, "tennis_racket_collision")
   paddle.name = "pingpong_paddle_collision"
   paddle.size[0] = PINGPONG_PADDLE_RADIUS
   paddle.size[1] = 0.004
-  paddle.pos[:] = paddle_center
+  paddle.pos[:] = PINGPONG_PADDLE_CENTER_POS
+  paddle.quat[:] = _quat_mul(_PADDLE_END_EFFECTOR_FORWARD_ROLL_QUAT, paddle.quat)
   paddle.rgba[:] = (0.85, 0.12, 0.06, 0.35)
-
-  paddle_rot = _quat_to_matrix(paddle.quat)
-  handle_dir = (
-    paddle_rot[0][1],
-    paddle_rot[1][1],
-    paddle_rot[2][1],
-  )
-  handle_start = _vec_add(
-    paddle_center,
-    _vec_scale(handle_dir, PINGPONG_PADDLE_RADIUS + PINGPONG_PADDLE_HANDLE_GAP),
-  )
-  handle_end = _vec_add(
-    handle_start,
-    _vec_scale(handle_dir, PINGPONG_PADDLE_HANDLE_HALF_LENGTH * 2.0),
-  )
-  handle = paddle_body.add_geom(
-    name="pingpong_paddle_handle_collision",
-    type=mujoco.mjtGeom.mjGEOM_CYLINDER,
-  )
-  handle.size[0] = PINGPONG_PADDLE_HANDLE_RADIUS
-  handle.fromto[:] = (*handle_start, *handle_end)
-  handle.group = 3
-  handle.rgba[:] = (1.0, 0.55, 0.02, 0.0)
 
   center = _find_site(spec, "tennis_racket_center")
   center.name = "pingpong_paddle_center"
-  center.pos[:] = paddle_center
+  center.pos[:] = PINGPONG_PADDLE_CENTER_POS
+  center.quat[:] = _quat_mul(_PADDLE_END_EFFECTOR_FORWARD_ROLL_QUAT, center.quat)
   center.size[0] = 0.01
   return spec
 
@@ -186,11 +225,10 @@ def get_g1_w_pingpong_paddle_robot_cfg() -> EntityCfg:
 
 
 __all__ = [
-  "PINGPONG_PADDLE_HANDLE_GAP",
-  "PINGPONG_PADDLE_HANDLE_HALF_LENGTH",
-  "PINGPONG_PADDLE_HANDLE_RADIUS",
+  "PINGPONG_PADDLE_HAND_CLEARANCE",
   "PINGPONG_PADDLE_RADIUS",
   "PINGPONG_PADDLE_SCALE",
+  "PINGPONG_PADDLE_CENTER_POS",
   "get_g1_w_pingpong_paddle_robot_cfg",
   "get_g1_w_pingpong_paddle_spec",
 ]

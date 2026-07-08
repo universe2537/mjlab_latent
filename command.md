@@ -71,6 +71,9 @@ logs/rsl_rl/g1_pingpong_latent_hit/v3_collision_2026-06-24_15-53-52
 Clean V3 stopped checkpoint source:
 logs/rsl_rl/g1_pingpong_latent_hit/pingpong_hit_v3_clean_contact_scratch_10240env_gpu1_2_2026-06-24_11-35-28
 
+
+uv run play Mjlab-Pingpong-PACE-Unitree-G1   --checkpoint-file logs/rsl_rl/g1_pingpong_pace/pingpong_pace_fk_reset_scratch_8192env_gpu0_2026-07-07_19-56-04/model_9750.pt   --viewer viser   --num-envs 1   --device cuda:4
+
 Legacy V2-family scratch/checkpoint-comparison runs:
 logs/rsl_rl/g1_pingpong_latent_hit/pingpong_hit_v4_contact_scratch_10240env_gpu1_2_2026-06-24_00-35-24
 

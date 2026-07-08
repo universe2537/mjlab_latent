@@ -1,20 +1,23 @@
 import inspect
+import math
 from typing import cast
 
 import mujoco
+import pytest
 import torch
 
 import mjlab.tasks  # noqa: F401
 from mjlab.asset_zoo.robots import G1_W_RACKET_ACTION_SCALE
 from mjlab.envs.mdp.actions import JointPositionActionCfg
 from mjlab.scene import Scene
+from mjlab.scripts.play import _apply_decoder_checkpoint_override
 from mjlab.sensor import ContactSensorCfg
 from mjlab.tasks.distillation.rl.config import DistillationRunnerCfg
 from mjlab.tasks.pingpong.config.g1.env_cfgs import (
   DEFAULT_DECODER_CHECKPOINT,
   G1_PACE_ACTION_SCALE,
-  PINGPONG_PADDLE_HANDLE_HALF_LENGTH,
-  PINGPONG_PADDLE_HANDLE_RADIUS,
+  PINGPONG_PADDLE_CENTER_POS,
+  PINGPONG_PADDLE_HAND_CLEARANCE,
   PINGPONG_PADDLE_RADIUS,
   PINGPONG_PADDLE_SCALE,
   get_g1_w_pingpong_paddle_spec,
@@ -24,6 +27,7 @@ from mjlab.tasks.pingpong.config.g1.rl_cfg import (
   DEFAULT_RETURN_RESUME_CHECKPOINT,
 )
 from mjlab.tasks.pingpong.mdp.ball_providers import TableTennisFeederCfg
+from mjlab.tasks.pingpong.pace_geometry import G1_PACE_GEOMETRY
 from mjlab.tasks.pingpong.pingpong_env_cfg import (
   ACTION_REGULARIZATION_CURRICULUM_STAGE_WEIGHTS,
   BALL_TARGET_X_RANGE,
@@ -37,7 +41,17 @@ from mjlab.tasks.pingpong.pingpong_env_cfg import (
   CROSS_ROBOT_BALL_CONTACT_WEIGHT,
   CROSS_STRIKE_QUALITY_REWARD_WEIGHTS,
   DECODER_STATE_TERMS,
+  PACE_BAD_ORIENTATION_LIMIT,
   PACE_FOOT_CONTACT_SENSOR,
+  PACE_FOOT_GEOM_NAMES,
+  PACE_FOREHAND_ELBOW_TARGET_RATIO,
+  PACE_FOREHAND_PADDLE_OFFSET,
+  PACE_FOREHAND_PADDLE_OFFSET_STD,
+  PACE_ROOT_HEIGHT_MINIMUM,
+  PACE_TARGET_BASE_OFFSET_XY,
+  PACE_TARGET_BASE_VEL_GAIN,
+  PACE_TARGET_BASE_VEL_MAX,
+  PACE_TARGET_ROOT_HEIGHT,
   PACE_TASK_REWARD_WEIGHTS,
   PADDLE_BALL_PAIR_CONDIM,
   PADDLE_BALL_PAIR_FRICTION,
@@ -78,6 +92,28 @@ def _find_paddle_ball_pair_id(model: mujoco.MjModel) -> int:
   return matches[0]
 
 
+def _quat_axis(quat, axis_idx: int) -> tuple[float, float, float]:
+  w, x, y, z = (float(v) for v in quat)
+  rot = (
+    (
+      1.0 - 2.0 * (y * y + z * z),
+      2.0 * (x * y - z * w),
+      2.0 * (x * z + y * w),
+    ),
+    (
+      2.0 * (x * y + z * w),
+      1.0 - 2.0 * (x * x + z * z),
+      2.0 * (y * z - x * w),
+    ),
+    (
+      2.0 * (x * z - y * w),
+      2.0 * (y * z + x * w),
+      1.0 - 2.0 * (x * x + y * y),
+    ),
+  )
+  return (rot[0][axis_idx], rot[1][axis_idx], rot[2][axis_idx])
+
+
 def test_pingpong_tasks_registered() -> None:
   assert "Mjlab-Pingpong-Hit-Unitree-G1" in list_tasks()
   assert "Mjlab-Pingpong-Cross-Unitree-G1" in list_tasks()
@@ -105,12 +141,7 @@ def test_pingpong_task_scene_compiles() -> None:
 
     assert "robot/pingpong_paddle_collision" in geom_names
     assert "robot/pingpong_paddle_visual" in geom_names
-    assert "robot/pingpong_paddle_handle_collision" in geom_names
-    handle_id = geom_by_name["robot/pingpong_paddle_handle_collision"]
-    assert int(model.geom_contype[handle_id]) == 1
-    assert int(model.geom_conaffinity[handle_id]) == 1
-    assert int(model.geom_group[handle_id]) == 3
-    assert float(model.geom_rgba[handle_id, 3]) == 0.0
+    assert "robot/pingpong_paddle_handle_collision" not in geom_names
     assert "ball/pingpong_ball" in geom_names
     assert "table/pingpong_table_top_collision" in geom_names
     assert "table/pingpong_net_collision" in geom_names
@@ -160,11 +191,14 @@ def test_pingpong_paddle_scales_visual_and_collision() -> None:
   assert all(abs(float(v) - PINGPONG_PADDLE_SCALE) < 1.0e-6 for v in visual_mesh.scale)
 
   geom_by_name = {}
+  site_by_name = {}
   bodies = list(spec.worldbody.bodies)
   while bodies:
     body = bodies.pop()
     for geom in body.geoms:
       geom_by_name[geom.name] = geom
+    for site in body.sites:
+      site_by_name[site.name] = site
     bodies.extend(body.bodies)
   assert "pingpong_paddle_visual" in geom_by_name
   assert geom_by_name["pingpong_paddle_visual"].meshname == "pingpong_paddle_visual"
@@ -172,22 +206,59 @@ def test_pingpong_paddle_scales_visual_and_collision() -> None:
   assert "pingpong_paddle_collision" in geom_by_name
   collision = geom_by_name["pingpong_paddle_collision"]
   assert abs(float(collision.size[0]) - PINGPONG_PADDLE_RADIUS) < 1.0e-6
-  assert float(collision.pos[2]) < 0.4
-
-  assert "pingpong_paddle_handle_collision" in geom_by_name
-  assert "pingpong_paddle_handle_visual" not in geom_by_name
-  handle = geom_by_name["pingpong_paddle_handle_collision"]
-  assert abs(float(handle.size[0]) - PINGPONG_PADDLE_HANDLE_RADIUS) < 1.0e-6
-  assert int(handle.group) == 3
-  assert float(handle.rgba[3]) == 0.0
-  handle_fromto = [float(v) for v in handle.fromto]
-  handle_length = (
-    sum((handle_fromto[i + 3] - handle_fromto[i]) ** 2 for i in range(3)) ** 0.5
+  assert tuple(float(v) for v in collision.pos) == pytest.approx(
+    PINGPONG_PADDLE_CENTER_POS
   )
-  assert abs(handle_length * 0.5 - PINGPONG_PADDLE_HANDLE_HALF_LENGTH) < 1.0e-6
+  assert "right_palm" in site_by_name
+  right_palm = site_by_name["right_palm"]
+  assert float(collision.pos[0]) > float(right_palm.pos[0])
+  assert abs(float(collision.pos[1]) - float(right_palm.pos[1])) < 0.02
+  assert abs(float(collision.pos[2]) - float(right_palm.pos[2])) < 1.0e-6
+  assert _quat_axis(collision.quat, 1) == pytest.approx(
+    (-1.0, 0.0, 0.0), abs=1e-6
+  )
+  assert _quat_axis(collision.quat, 2) == pytest.approx(
+    (0.0, 0.0, -1.0), abs=1e-6
+  )
+  model = spec.compile()
+  model_geom_by_name = {model.geom(i).name: i for i in range(model.ngeom)}
+  assert "right_hand_collision" in model_geom_by_name
+  assert "pingpong_paddle_collision" in model_geom_by_name
+  hand_id = model_geom_by_name["right_hand_collision"]
+  collision_id = model_geom_by_name["pingpong_paddle_collision"]
+  hand_axis = _quat_axis(model.geom_quat[hand_id], 2)
+  hand_endpoint_a = tuple(
+    float(model.geom_pos[hand_id, i])
+    + hand_axis[i] * float(model.geom_size[hand_id, 1])
+    for i in range(3)
+  )
+  hand_endpoint_b = tuple(
+    float(model.geom_pos[hand_id, i])
+    - hand_axis[i] * float(model.geom_size[hand_id, 1])
+    for i in range(3)
+  )
+  hand_forward_x = max(hand_endpoint_a[0], hand_endpoint_b[0])
+  hand_to_paddle_radius = math.hypot(
+    float(model.geom_pos[collision_id, 0]) - hand_forward_x,
+    float(model.geom_pos[collision_id, 1]) - float(model.geom_pos[hand_id, 1]),
+  )
+  hand_paddle_clearance = (
+    hand_to_paddle_radius
+    - float(model.geom_size[hand_id, 0])
+    - float(model.geom_size[collision_id, 0])
+  )
+  assert hand_paddle_clearance == pytest.approx(PINGPONG_PADDLE_HAND_CLEARANCE)
+  assert "pingpong_paddle_center" in site_by_name
+  paddle_center = site_by_name["pingpong_paddle_center"]
+  assert tuple(float(v) for v in paddle_center.pos) == pytest.approx(
+    PINGPONG_PADDLE_CENTER_POS
+  )
+
+  assert "pingpong_paddle_handle_collision" not in geom_by_name
+  assert "pingpong_paddle_handle_visual" not in geom_by_name
 
 
-def test_pingpong_paddle_handle_collision_does_not_score() -> None:
+def test_pingpong_removed_handle_collision_does_not_score() -> None:
   cfg = load_env_cfg("Mjlab-Pingpong-Hit-Unitree-G1")
   sensors = {sensor.name: sensor for sensor in cfg.scene.sensors}
 
@@ -236,11 +307,23 @@ def test_pingpong_pace_env_uses_direct_joint_action() -> None:
   assert action.use_default_offset is True
   assert action.scale == G1_PACE_ACTION_SCALE
   assert G1_PACE_ACTION_SCALE.keys() == G1_W_RACKET_ACTION_SCALE.keys()
-  assert max(G1_PACE_ACTION_SCALE.values()) <= 0.25
+  assert max(G1_PACE_ACTION_SCALE.values()) <= 0.18
   assert any(
     G1_PACE_ACTION_SCALE[name] < G1_W_RACKET_ACTION_SCALE[name]
     for name in G1_PACE_ACTION_SCALE
   )
+  assert PACE_TARGET_BASE_OFFSET_XY == G1_PACE_GEOMETRY.target_base_offset_xy
+  assert PACE_TARGET_ROOT_HEIGHT == G1_PACE_GEOMETRY.target_root_height
+  assert PACE_TARGET_BASE_VEL_GAIN == G1_PACE_GEOMETRY.target_base_vel_gain
+  assert PACE_TARGET_BASE_VEL_MAX == G1_PACE_GEOMETRY.target_base_vel_max
+  assert PACE_FOREHAND_PADDLE_OFFSET == G1_PACE_GEOMETRY.forehand_paddle_offset
+  assert PACE_FOREHAND_PADDLE_OFFSET_STD == (
+    G1_PACE_GEOMETRY.forehand_paddle_offset_std
+  )
+  assert PACE_FOREHAND_ELBOW_TARGET_RATIO == (
+    G1_PACE_GEOMETRY.forehand_elbow_target_ratio
+  )
+  assert PACE_FOOT_GEOM_NAMES == G1_PACE_GEOMETRY.foot_geom_names
 
   actor_terms = cfg.observations["actor"].terms
   for term_name in (
@@ -257,6 +340,18 @@ def test_pingpong_pace_env_uses_direct_joint_action() -> None:
   ):
     assert term_name in actor_terms
   assert actor_terms["actions"].params["action_name"] == "joint_pos"
+  assert actor_terms["ball_prediction"].params["target_base_offset_xy"] == (
+    PACE_TARGET_BASE_OFFSET_XY
+  )
+  assert actor_terms["ball_prediction"].params["target_root_height"] == (
+    PACE_TARGET_ROOT_HEIGHT
+  )
+  assert actor_terms["ball_prediction"].params["target_base_vel_gain"] == (
+    PACE_TARGET_BASE_VEL_GAIN
+  )
+  assert actor_terms["ball_prediction"].params["target_base_vel_max"] == (
+    PACE_TARGET_BASE_VEL_MAX
+  )
 
   critic_terms = cfg.observations["critic"].terms
   for term_name in (
@@ -273,23 +368,22 @@ def test_pingpong_pace_env_uses_direct_joint_action() -> None:
   sensors = {sensor.name: sensor for sensor in cfg.scene.sensors}
   foot_contact = sensors[PACE_FOOT_CONTACT_SENSOR]
   assert isinstance(foot_contact, ContactSensorCfg)
-  assert foot_contact.primary.mode == "body"
-  assert foot_contact.primary.pattern == (
-    "left_ankle_roll_link",
-    "right_ankle_roll_link",
-  )
+  assert foot_contact.primary.mode == "geom"
+  assert foot_contact.primary.pattern == PACE_FOOT_GEOM_NAMES
   assert foot_contact.primary.entity == "robot"
-  assert foot_contact.secondary is None
+  assert foot_contact.secondary is not None
+  assert foot_contact.secondary.mode == "body"
+  assert foot_contact.secondary.pattern == "terrain"
   assert foot_contact.fields == ("found", "force")
   assert foot_contact.reduce == "netforce"
   assert foot_contact.track_air_time is True
   assert foot_contact.history_length == 4
   expected_stability_rewards = {
     "pace_fly": -2.5,
-    "pace_hit_unstable_support": -10.0,
+    "pace_hit_unstable_support": -5.0,
     "pace_feet_orientation_left": -4.0,
     "pace_feet_orientation_right": -4.0,
-    "feet_slide": -1.5,
+    "feet_slide": -0.3,
     "feet_force": -3.0e-3,
     "feet_stumble": -2.0,
     "pace_feet_too_near": -1.5,
@@ -297,6 +391,23 @@ def test_pingpong_pace_env_uses_direct_joint_action() -> None:
   }
   for reward_name, reward_weight in expected_stability_rewards.items():
     assert cfg.rewards[reward_name].weight == reward_weight
+  assert cfg.rewards["action_rate_l2"].weight == -0.01
+  assert cfg.rewards["pace_forehand_paddle_offset"].params["target_offset"] == (
+    PACE_FOREHAND_PADDLE_OFFSET
+  )
+  assert cfg.rewards["pace_forehand_paddle_offset"].params["offset_std"] == (
+    PACE_FOREHAND_PADDLE_OFFSET_STD
+  )
+  assert cfg.rewards["pace_forehand_elbow_extension"].params["target_ratio"] == (
+    PACE_FOREHAND_ELBOW_TARGET_RATIO
+  )
+  assert cfg.terminations["bad_orientation"].params["limit_angle"] == (
+    pytest.approx(PACE_BAD_ORIENTATION_LIMIT)
+  )
+  assert PACE_BAD_ORIENTATION_LIMIT == pytest.approx(math.radians(40.0))
+  assert cfg.terminations["root_height"].params["minimum_height"] == (
+    PACE_ROOT_HEIGHT_MINIMUM
+  )
   assert cfg.curriculum["ball_target_region"].params["success_term_name"] == (
     "legal_return_success"
   )
@@ -410,10 +521,10 @@ def test_pingpong_rl_configs_load() -> None:
   assert pace_cfg.actor.hidden_dims == (512, 512, 128)
   assert pace_cfg.critic.hidden_dims == (512, 512, 128)
   assert pace_cfg.actor.distribution_cfg is not None
-  assert pace_cfg.actor.distribution_cfg["init_std"] == 0.6
-  assert pace_cfg.algorithm.entropy_coef == 0.002
+  assert pace_cfg.actor.distribution_cfg["init_std"] == 0.4
+  assert pace_cfg.algorithm.entropy_coef == 0.001
   assert pace_cfg.algorithm.gamma == 0.95
-  assert pace_cfg.clip_actions == 2.5
+  assert pace_cfg.clip_actions == 1.5
   assert pace_cfg.max_iterations == 10000
   assert pace_cfg.predictor["history_len"] == 5
   assert pace_cfg.predictor["traj_max_len"] == 128
@@ -425,6 +536,65 @@ def test_pingpong_rl_configs_load() -> None:
   assert load_runner_cls("Mjlab-Pingpong-PACE-Unitree-G1") is (
     PingpongPaceOnPolicyRunner
   )
+
+
+def test_play_decoder_checkpoint_override_updates_pingpong_cfg() -> None:
+  cfg = load_env_cfg("Mjlab-Pingpong-Hit-Unitree-G1", play=True)
+  action = cast(FrozenDecoderLatentJointPositionActionCfg, cfg.actions["latent_joint_pos"])
+
+  _apply_decoder_checkpoint_override(cfg, "logs/rsl_rl/custom_decoder/model_42.pt")
+
+  assert action.decoder_checkpoint == "logs/rsl_rl/custom_decoder/model_42.pt"
+
+
+def test_pace_inference_policy_refreshes_prediction_before_actor() -> None:
+  calls: list[str] = []
+
+  class FakeObs:
+    def to(self, device):
+      calls.append(f"obs_to:{device}")
+      return "fresh_obs"
+
+  class FakeEnv:
+    def get_observations(self):
+      calls.append("fresh_obs")
+      return FakeObs()
+
+  class FakePolicy:
+    def to(self, device):
+      calls.append(f"policy_to:{device}")
+      return self
+
+    def __call__(self, obs):
+      calls.append(f"policy:{obs}")
+      return "actions"
+
+  class FakeAlg:
+    def eval_mode(self):
+      calls.append("eval")
+
+    def get_policy(self):
+      return FakePolicy()
+
+  runner = object.__new__(PingpongPaceOnPolicyRunner)
+  runner.alg = FakeAlg()
+  runner.env = FakeEnv()
+  runner.device = torch.device("cpu")
+  runner._record_ball_positions = lambda: calls.append("record")
+  runner._maybe_predict_and_update_env = lambda: calls.append("predict")
+
+  policy = PingpongPaceOnPolicyRunner.get_inference_policy(runner, device="cpu")
+
+  assert policy("stale_obs") == "actions"
+  assert calls == [
+    "eval",
+    "policy_to:cpu",
+    "record",
+    "predict",
+    "fresh_obs",
+    "obs_to:cpu",
+    "policy:fresh_obs",
+  ]
 
 
 def test_pingpong_hit_and_cross_success_terms() -> None:
