@@ -8,6 +8,10 @@ import torch
 
 from mjlab.entity import Entity
 from mjlab.managers.scene_entity_config import SceneEntityCfg
+from mjlab.tasks.pingpong.bounce import (
+  PINGPONG_POST_BOUNCE_HORIZONTAL_SCALE,
+  PINGPONG_POST_BOUNCE_VERTICAL_SCALE,
+)
 from mjlab.tasks.pingpong.mdp.state import get_pingpong_rally_state
 from mjlab.tasks.pingpong.pace_geometry import G1_PACE_GEOMETRY
 from mjlab.tasks.pingpong.scene import (
@@ -35,9 +39,18 @@ _DEFAULT_FOOT_SENSOR = "pace_foot_contact"
 _MIN_TIME = 1.0e-4
 _MAX_FUTURE_TIME = 1.5
 _MAX_LANDING_TIME = 2.5
-_POST_BOUNCE_HORIZONTAL_SCALE = 0.94
-_POST_BOUNCE_VERTICAL_SCALE = 0.90
 _EDGE_CLEARANCE = 0.02
+PACE_PREDICTION_MODE_INVALID = 0
+PACE_PREDICTION_MODE_PRE_BOUNCE = 1
+PACE_PREDICTION_MODE_POST_BOUNCE_DIRECT = 2
+PACE_TARGET_INVALID_NONE = 0
+PACE_TARGET_INVALID_NOT_MOVING_TO_HIT = 1
+PACE_TARGET_INVALID_BAD_BOUNCE = 2
+PACE_TARGET_INVALID_SECOND_BOUNCE = 3
+PACE_TARGET_INVALID_OUT_OF_BOUNDS = 4
+PACE_TARGET_INVALID_LOW_OR_TIME = 5
+PACE_TARGET_INVALID_NUMERIC = 6
+PACE_TARGET_INVALID_RALLY_DONE = 7
 _DEFAULT_TARGET_BASE_OFFSET_XY = G1_PACE_GEOMETRY.target_base_offset_xy
 _DEFAULT_NATURAL_HIT_X = G1_PACE_GEOMETRY.natural_hit_x
 _DEFAULT_TARGET_ROOT_HEIGHT = G1_PACE_GEOMETRY.target_root_height
@@ -47,6 +60,10 @@ _DEFAULT_FOREHAND_PADDLE_OFFSET = G1_PACE_GEOMETRY.forehand_paddle_offset
 _DEFAULT_FOREHAND_PADDLE_OFFSET_STD = G1_PACE_GEOMETRY.forehand_paddle_offset_std
 _DEFAULT_TARGET_LANDING_X = -0.45 * TABLE_HALF_LENGTH
 _DEFAULT_TARGET_LANDING_Y = 0.0
+_DEFAULT_HIT_WINDOW_BEFORE_X = 0.35
+_DEFAULT_HIT_WINDOW_AFTER_ROOT_X = 0.20
+_DEFAULT_HIT_WINDOW_EXTRA_Y = 0.25
+_DEFAULT_PRE_BOUNCE_MIN_LOOKAHEAD = 0.06
 
 
 def _rally_param_subset(params: dict[str, Any]) -> dict[str, Any]:
@@ -138,83 +155,277 @@ def _time_to_table(
   return torch.where(valid, t, torch.zeros_like(t)), valid
 
 
+def _ballistic_pose_at(
+  pos: torch.Tensor,
+  vel: torch.Tensor,
+  t: torch.Tensor,
+  *,
+  gravity: float,
+) -> torch.Tensor:
+  pose = pos + vel * t.unsqueeze(-1)
+  pose[:, 2] = pose[:, 2] - 0.5 * gravity * t * t
+  return pose
+
+
+def _time_to_hit_x(
+  x: torch.Tensor,
+  vx: torch.Tensor,
+  *,
+  hit_x: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor]:
+  moving_to_hit = vx > 1.0e-6
+  safe_vx = torch.where(moving_to_hit, vx, torch.ones_like(vx))
+  t = (hit_x - x) / safe_vx
+  valid = moving_to_hit & (t > _MIN_TIME) & (t <= _MAX_FUTURE_TIME)
+  return torch.where(valid, t, torch.zeros_like(t)), valid
+
+
+def _self_table_hit_before(
+  pos: torch.Tensor,
+  vel: torch.Tensor,
+  hit_t: torch.Tensor,
+  *,
+  table_z: float,
+  net_x: float,
+  gravity: float,
+) -> torch.Tensor:
+  table_t, table_valid = _time_to_table(
+    pos[:, 2],
+    vel[:, 2],
+    table_z=table_z,
+    gravity=gravity,
+  )
+  table_pos = _ballistic_pose_at(pos, vel, table_t, gravity=gravity)
+  table_pos[:, 2] = table_z
+  on_self_table = (
+    (table_pos[:, 0] >= net_x)
+    & (table_pos[:, 0] <= TABLE_HALF_LENGTH)
+    & (table_pos[:, 1] >= -TABLE_HALF_WIDTH)
+    & (table_pos[:, 1] <= TABLE_HALF_WIDTH)
+  )
+  return table_valid & on_self_table & (table_t < (hit_t - _MIN_TIME))
+
+
+def _target_pose_in_hit_window(
+  pos: torch.Tensor,
+  vel: torch.Tensor,
+  *,
+  natural_hit_x: torch.Tensor,
+  robot_x: torch.Tensor,
+  table_z: float,
+  net_x: float,
+  gravity: float,
+  hit_window_before_x: float,
+  hit_window_after_root_x: float,
+  hit_window_extra_y: float,
+  min_lookahead: float = 0.0,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+  window_min_x = torch.clamp(natural_hit_x - hit_window_before_x, min=net_x)
+  window_max_x = robot_x + hit_window_after_root_x
+  moving_to_robot = vel[:, 0] > 1.0e-6
+  safe_vx = torch.where(moving_to_robot, vel[:, 0], torch.ones_like(vel[:, 0]))
+  time_to_natural = (natural_hit_x - pos[:, 0]) / safe_vx
+  max_window_t = torch.clamp((window_max_x - pos[:, 0]) / safe_vx, min=0.0)
+  natural_still_ahead = time_to_natural > _MIN_TIME
+  raw_target_t = torch.where(
+    natural_still_ahead,
+    time_to_natural,
+    torch.full_like(time_to_natural, min_lookahead),
+  )
+  target_t = torch.minimum(raw_target_t, max_window_t)
+  time_valid = (
+    moving_to_robot
+    & (target_t <= _MAX_FUTURE_TIME)
+    & torch.where(natural_still_ahead, target_t > _MIN_TIME, target_t >= 0.0)
+  )
+  hit_pose = _ballistic_pose_at(pos, vel, target_t, gravity=gravity)
+  table_z_t = torch.full_like(pos[:, 0], table_z)
+  y_min = -TABLE_HALF_WIDTH - hit_window_extra_y
+  y_max = TABLE_HALF_WIDTH + hit_window_extra_y
+  in_bounds = (
+    (pos[:, 0] <= window_max_x)
+    & (hit_pose[:, 0] >= window_min_x)
+    & (hit_pose[:, 0] <= window_max_x)
+    & (hit_pose[:, 1] >= y_min)
+    & (hit_pose[:, 1] <= y_max)
+  )
+  high_enough = hit_pose[:, 2] >= table_z_t + _EDGE_CLEARANCE
+  second_bounce = _self_table_hit_before(
+    pos,
+    vel,
+    target_t,
+    table_z=table_z,
+    net_x=net_x,
+    gravity=gravity,
+  )
+  finite = torch.isfinite(hit_pose).all(dim=-1) & torch.isfinite(target_t)
+  valid = time_valid & in_bounds & high_enough & ~second_bounce & finite
+
+  reason = torch.full(
+    (pos.shape[0],),
+    PACE_TARGET_INVALID_NONE,
+    dtype=torch.long,
+    device=pos.device,
+  )
+  reason = torch.where(
+    time_valid,
+    reason,
+    torch.full_like(reason, PACE_TARGET_INVALID_NOT_MOVING_TO_HIT),
+  )
+  reason = torch.where(
+    time_valid & ~in_bounds,
+    torch.full_like(reason, PACE_TARGET_INVALID_OUT_OF_BOUNDS),
+    reason,
+  )
+  reason = torch.where(
+    time_valid & in_bounds & ~high_enough & ~second_bounce,
+    torch.full_like(reason, PACE_TARGET_INVALID_LOW_OR_TIME),
+    reason,
+  )
+  reason = torch.where(
+    time_valid & in_bounds & second_bounce,
+    torch.full_like(reason, PACE_TARGET_INVALID_SECOND_BOUNCE),
+    reason,
+  )
+  reason = torch.where(
+    time_valid & in_bounds & high_enough & ~second_bounce & ~finite,
+    torch.full_like(reason, PACE_TARGET_INVALID_NUMERIC),
+    reason,
+  )
+  return hit_pose, target_t, valid, reason
+
+
 def _predict_incoming_future_pose(
   pos: torch.Tensor,
   vel: torch.Tensor,
   *,
+  has_self_bounce: torch.Tensor,
   natural_hit_x: float,
+  robot_x: torch.Tensor,
   table_z: float,
   net_x: float,
   gravity: float,
-) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+  hit_window_before_x: float = _DEFAULT_HIT_WINDOW_BEFORE_X,
+  hit_window_after_root_x: float = _DEFAULT_HIT_WINDOW_AFTER_ROOT_X,
+  hit_window_extra_y: float = _DEFAULT_HIT_WINDOW_EXTRA_Y,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
   """Predict the robot-side future hitting pose in table-local coordinates."""
   hit_x = torch.full_like(pos[:, 0], natural_hit_x)
   net_x_t = torch.full_like(pos[:, 0], net_x)
-  table_z_t = torch.full_like(pos[:, 0], table_z)
-  self_table_edge_x = torch.full_like(pos[:, 0], TABLE_HALF_LENGTH)
   y_min = -TABLE_HALF_WIDTH
   y_max = TABLE_HALF_WIDTH
 
-  vx_safe = torch.clamp(vel[:, 0], min=1.0e-6)
-  direct_t = (hit_x - pos[:, 0]) / vx_safe
-  direct_y = pos[:, 1] + vel[:, 1] * direct_t
-  direct_z = pos[:, 2] + vel[:, 2] * direct_t - 0.5 * gravity * direct_t**2
-  direct_valid = (
-    (pos[:, 0] >= net_x_t)
-    & (vel[:, 0] > 0.0)
-    & (vel[:, 2] >= -0.05)
-    & (direct_t > _MIN_TIME)
-    & (direct_t <= _MAX_FUTURE_TIME)
-    & (direct_z >= table_z_t + _EDGE_CLEARANCE)
-    & (direct_y >= y_min)
-    & (direct_y <= y_max)
+  direct_pose, direct_t, direct_valid, direct_reason = (
+    _target_pose_in_hit_window(
+      pos,
+      vel,
+      natural_hit_x=hit_x,
+      robot_x=robot_x,
+      table_z=table_z,
+      net_x=net_x,
+      gravity=gravity,
+      hit_window_before_x=hit_window_before_x,
+      hit_window_after_root_x=hit_window_after_root_x,
+      hit_window_extra_y=hit_window_extra_y,
+    )
   )
 
   bounce_t, bounce_valid_t = _time_to_table(
     pos[:, 2], vel[:, 2], table_z=table_z, gravity=gravity
   )
-  bounce_pos = pos + vel * bounce_t.unsqueeze(-1)
+  bounce_pos = _ballistic_pose_at(pos, vel, bounce_t, gravity=gravity)
   bounce_pos[:, 2] = table_z
   impact_vz = vel[:, 2] - gravity * bounce_t
-  post_vx = vel[:, 0] * _POST_BOUNCE_HORIZONTAL_SCALE
-  post_vy = vel[:, 1] * _POST_BOUNCE_HORIZONTAL_SCALE
-  post_vz = -impact_vz * _POST_BOUNCE_VERTICAL_SCALE
-  edge_t_after_bounce = (hit_x - bounce_pos[:, 0]) / post_vx.clamp_min(1.0e-6)
-  edge_y = bounce_pos[:, 1] + post_vy * edge_t_after_bounce
-  edge_z = (
-    table_z_t + post_vz * edge_t_after_bounce - 0.5 * gravity * edge_t_after_bounce**2
-  )
-  total_bounce_t = bounce_t + edge_t_after_bounce
-  bounce_valid = (
+  bounce_base_valid = (
     bounce_valid_t
     & (bounce_t <= _MAX_FUTURE_TIME)
     & (bounce_pos[:, 0] >= net_x_t)
-    & (bounce_pos[:, 0] <= self_table_edge_x)
+    & (bounce_pos[:, 0] <= TABLE_HALF_LENGTH)
     & (bounce_pos[:, 1] >= y_min)
     & (bounce_pos[:, 1] <= y_max)
     & (impact_vz < 0.0)
-    & (post_vx > 0.0)
-    & (edge_t_after_bounce > _MIN_TIME)
-    & (total_bounce_t <= _MAX_FUTURE_TIME)
-    & (edge_z >= table_z_t + _EDGE_CLEARANCE)
-    & (edge_y >= y_min)
-    & (edge_y <= y_max)
+  )
+  post_vel = torch.stack(
+    (
+      vel[:, 0] * PINGPONG_POST_BOUNCE_HORIZONTAL_SCALE,
+      vel[:, 1] * PINGPONG_POST_BOUNCE_HORIZONTAL_SCALE,
+      -impact_vz * PINGPONG_POST_BOUNCE_VERTICAL_SCALE,
+    ),
+    dim=-1,
+  )
+  bounce_pose, bounce_hit_t, bounce_hit_valid, bounce_reason = (
+    _target_pose_in_hit_window(
+      bounce_pos,
+      post_vel,
+      natural_hit_x=hit_x,
+      robot_x=robot_x,
+      table_z=table_z,
+      net_x=net_x,
+      gravity=gravity,
+      hit_window_before_x=hit_window_before_x,
+      hit_window_after_root_x=hit_window_after_root_x,
+      hit_window_extra_y=hit_window_extra_y,
+      min_lookahead=_DEFAULT_PRE_BOUNCE_MIN_LOOKAHEAD,
+    )
+  )
+  total_bounce_t = bounce_t + bounce_hit_t
+  bounce_valid = bounce_base_valid & bounce_hit_valid & (
+    total_bounce_t <= _MAX_FUTURE_TIME
+  )
+  bounce_reason = torch.where(
+    bounce_base_valid,
+    bounce_reason,
+    torch.full_like(bounce_reason, PACE_TARGET_INVALID_BAD_BOUNCE),
+  )
+  bounce_reason = torch.where(
+    bounce_base_valid & bounce_hit_valid & (total_bounce_t > _MAX_FUTURE_TIME),
+    torch.full_like(bounce_reason, PACE_TARGET_INVALID_LOW_OR_TIME),
+    bounce_reason,
   )
 
-  future = torch.empty_like(pos)
-  future[:, 0] = hit_x
-  future[:, 1] = torch.where(direct_valid, direct_y, edge_y)
-  future[:, 2] = torch.where(direct_valid, direct_z, edge_z)
-  future_t = torch.where(direct_valid, direct_t, total_bounce_t)
-  valid = direct_valid | bounce_valid
+  future = torch.where(
+    has_self_bounce.unsqueeze(-1),
+    direct_pose,
+    bounce_pose,
+  )
+  future_t = torch.where(has_self_bounce, direct_t, total_bounce_t)
+  valid = torch.where(has_self_bounce, direct_valid, bounce_valid)
+  mode = torch.where(
+    has_self_bounce & direct_valid,
+    torch.full_like(bounce_reason, PACE_PREDICTION_MODE_POST_BOUNCE_DIRECT),
+    torch.full_like(bounce_reason, PACE_PREDICTION_MODE_INVALID),
+  )
+  mode = torch.where(
+    (~has_self_bounce) & bounce_valid,
+    torch.full_like(mode, PACE_PREDICTION_MODE_PRE_BOUNCE),
+    mode,
+  )
+  reason = torch.where(has_self_bounce, direct_reason, bounce_reason)
+  reason = torch.where(
+    valid,
+    torch.full_like(reason, PACE_TARGET_INVALID_NONE),
+    reason,
+  )
+
   fallback = torch.nan_to_num(pos, nan=0.0, posinf=0.0, neginf=0.0)
   fallback[:, 2] = torch.clamp(fallback[:, 2], min=table_z + _EDGE_CLEARANCE)
   future = torch.where(valid.unsqueeze(-1), future, fallback)
   future_t = torch.where(valid, future_t, torch.zeros_like(future_t))
   future = torch.where(torch.isfinite(future), future, fallback)
   future_t = torch.where(torch.isfinite(future_t), future_t, torch.zeros_like(future_t))
-  valid = valid & torch.isfinite(future).all(dim=-1) & torch.isfinite(future_t)
-  return future, future_t, valid
+  finite = torch.isfinite(future).all(dim=-1) & torch.isfinite(future_t)
+  valid = valid & finite
+  reason = torch.where(
+    finite,
+    reason,
+    torch.full_like(reason, PACE_TARGET_INVALID_NUMERIC),
+  )
+  mode = torch.where(
+    valid,
+    mode,
+    torch.full_like(mode, PACE_PREDICTION_MODE_INVALID),
+  )
+  return future, future_t, valid, mode, reason
 
 
 def _predict_landing_xy(
@@ -248,6 +459,58 @@ def _predict_net_height(
   return torch.where(valid, z_at_net, torch.zeros_like(z_at_net)), valid
 
 
+def _pace_posture_gate(
+  env: ManagerBasedRlEnv,
+  *,
+  robot_cfg: SceneEntityCfg,
+  target_root_height: float,
+  root_height_minimum: float,
+  tilt_full_gate_deg: float,
+  tilt_zero_gate_deg: float,
+  ang_vel_full_gate: float,
+  ang_vel_zero_gate: float,
+) -> torch.Tensor:
+  robot: Entity = env.scene[robot_cfg.name]
+  root_z = robot.data.root_link_pos_w[:, 2]
+  height_gate = (root_z - root_height_minimum) / max(
+    target_root_height - root_height_minimum,
+    1.0e-6,
+  )
+  height_gate = torch.clamp(height_gate, min=0.0, max=1.0)
+
+  gravity_w = torch.zeros_like(robot.data.root_link_pos_w)
+  gravity_w[:, 2] = -1.0
+  gravity_b = quat_apply_inverse(robot.data.root_link_quat_w, gravity_w)
+  tilt_mag = torch.linalg.vector_norm(gravity_b[:, :2], dim=-1)
+  tilt_full = torch.sin(
+    torch.tensor(
+      tilt_full_gate_deg * torch.pi / 180.0,
+      device=env.device,
+      dtype=tilt_mag.dtype,
+    )
+  )
+  tilt_zero = torch.sin(
+    torch.tensor(
+      tilt_zero_gate_deg * torch.pi / 180.0,
+      device=env.device,
+      dtype=tilt_mag.dtype,
+    )
+  )
+  tilt_gate = (tilt_zero - tilt_mag) / torch.clamp(
+    tilt_zero - tilt_full,
+    min=1.0e-6,
+  )
+  tilt_gate = torch.clamp(tilt_gate, min=0.0, max=1.0)
+
+  ang_vel_xy = torch.linalg.vector_norm(robot.data.root_link_ang_vel_b[:, :2], dim=-1)
+  ang_gate = (ang_vel_zero_gate - ang_vel_xy) / max(
+    ang_vel_zero_gate - ang_vel_full_gate,
+    1.0e-6,
+  )
+  ang_gate = torch.clamp(ang_gate, min=0.0, max=1.0)
+  return torch.nan_to_num(height_gate * tilt_gate * ang_gate)
+
+
 class PingpongPacePredictionState:
   """Per-environment PACE future target and learned prediction state."""
 
@@ -262,6 +525,9 @@ class PingpongPacePredictionState:
     self.ball_future_pose = torch.zeros(num_envs, 3, device=device)
     self.ball_future_t = torch.zeros(num_envs, device=device)
     self.ball_future_valid = torch.zeros(num_envs, dtype=torch.bool, device=device)
+    self.prediction_mode = torch.zeros(num_envs, dtype=torch.long, device=device)
+    self.invalid_reason = torch.zeros(num_envs, dtype=torch.long, device=device)
+    self.posture_gate = torch.ones(num_envs, device=device)
     self.ball_prediction = torch.zeros(num_envs, 3, device=device)
     self.robot_future_pos = torch.zeros(num_envs, 3, device=device)
     self.robot_future_vel = torch.zeros(num_envs, 3, device=device)
@@ -308,27 +574,58 @@ class PingpongPacePredictionState:
     ball_vel = ball.data.root_link_lin_vel_w
     robot_pos = _robot_table_pos(self._env, robot_cfg)
 
-    future, future_t, future_valid = _predict_incoming_future_pose(
-      ball_pos,
-      ball_vel,
-      natural_hit_x=natural_hit_x,
-      table_z=table_z,
-      net_x=net_x,
-      gravity=gravity,
+    rally = _get_rally_state(self._env, params)
+    rally.update()
+    future, future_t, future_valid, mode, invalid_reason = (
+      _predict_incoming_future_pose(
+        ball_pos,
+        ball_vel,
+        has_self_bounce=rally.has_self_bounce,
+        natural_hit_x=natural_hit_x,
+        robot_x=robot_pos[:, 0],
+        table_z=table_z,
+        net_x=net_x,
+        gravity=gravity,
+        hit_window_before_x=float(
+          params.get("hit_window_before_x", _DEFAULT_HIT_WINDOW_BEFORE_X)
+        ),
+        hit_window_after_root_x=float(
+          params.get("hit_window_after_root_x", _DEFAULT_HIT_WINDOW_AFTER_ROOT_X)
+        ),
+        hit_window_extra_y=float(
+          params.get("hit_window_extra_y", _DEFAULT_HIT_WINDOW_EXTRA_Y)
+        ),
+      )
     )
     if isinstance(episode_length_buf, torch.Tensor):
       learned_episode_reset = episode_length_buf == 0
     else:
-      learned_episode_reset = torch.zeros(self._env.num_envs, dtype=torch.bool, device=self._env.device)
+      learned_episode_reset = torch.zeros(
+        self._env.num_envs,
+        dtype=torch.bool,
+        device=self._env.device,
+      )
     if learned_episode_reset.any():
       self.ball_prediction[learned_episode_reset] = 0.0
 
-    rally = _get_rally_state(self._env, params)
-    rally.update()
-    active = future_valid & ~rally.has_paddle_hit & ~rally.fault_edge
+    rally_invalid = rally.has_paddle_hit | rally.fault_edge
+    future_valid = future_valid & ~rally_invalid
+    invalid_reason = torch.where(
+      rally_invalid,
+      torch.full_like(invalid_reason, PACE_TARGET_INVALID_RALLY_DONE),
+      invalid_reason,
+    )
+    mode = torch.where(
+      future_valid,
+      mode,
+      torch.full_like(mode, PACE_PREDICTION_MODE_INVALID),
+    )
+    active = future_valid
     self.ball_future_pose[:] = future
     self.ball_future_t[:] = future_t
     self.ball_future_valid[:] = future_valid
+    self.prediction_mode[:] = mode
+    self.invalid_reason[:] = invalid_reason
     self.reward_active[:] = active
 
     offset_xy = _tuple_tensor(
@@ -346,6 +643,16 @@ class PingpongPacePredictionState:
     target_base_vel_max = float(
       params.get("target_base_vel_max", _DEFAULT_TARGET_BASE_VEL_MAX)
     )
+    posture_gate = _pace_posture_gate(
+      self._env,
+      robot_cfg=robot_cfg,
+      target_root_height=target_root_height,
+      root_height_minimum=float(params.get("root_height_minimum", 0.68)),
+      tilt_full_gate_deg=float(params.get("posture_tilt_full_gate_deg", 15.0)),
+      tilt_zero_gate_deg=float(params.get("posture_tilt_zero_gate_deg", 40.0)),
+      ang_vel_full_gate=float(params.get("posture_ang_vel_full_gate", 1.0)),
+      ang_vel_zero_gate=float(params.get("posture_ang_vel_zero_gate", 4.0)),
+    )
 
     self.target_base_xy[:, 0] = future[:, 0] + offset_xy[0]
     self.target_base_xy[:, 1] = future[:, 1] + offset_xy[1]
@@ -358,6 +665,7 @@ class PingpongPacePredictionState:
       max=target_base_vel_max,
     )
     self.robot_future_vel[~active] = 0.0
+    self.posture_gate[:] = posture_gate
 
     landing_xy, landing_valid = _predict_landing_xy(
       ball_pos, ball_vel, table_z=table_z, gravity=gravity
@@ -678,6 +986,30 @@ def _contact_side_force_history(
   return torch.stack((_sum_side(left), _sum_side(right)), dim=1)
 
 
+def _contact_side_air_time(
+  env: ManagerBasedRlEnv,
+  sensor_name: str = _DEFAULT_FOOT_SENSOR,
+) -> torch.Tensor:
+  sensor = env.scene[sensor_name]
+  current_air_time = getattr(sensor.data, "current_air_time", None)
+  if current_air_time is None:
+    return torch.zeros(env.num_envs, 2, dtype=torch.float32, device=env.device)
+  left, right = _foot_side_masks(
+    env, sensor_name, current_air_time.shape[1], current_air_time.device
+  )
+
+  def _min_side(selector: torch.Tensor) -> torch.Tensor:
+    if bool(selector.any().item()):
+      return torch.amin(current_air_time[:, selector], dim=1)
+    return torch.zeros(
+      current_air_time.shape[0],
+      dtype=current_air_time.dtype,
+      device=current_air_time.device,
+    )
+
+  return torch.stack((_min_side(left), _min_side(right)), dim=1)
+
+
 def pace_fly(
   env: ManagerBasedRlEnv,
   sensor_name: str = _DEFAULT_FOOT_SENSOR,
@@ -864,7 +1196,22 @@ def pace_future_ee_target(
   paddle_pos = pace_paddle_touch_point_table(env, **params)
   dist = torch.linalg.vector_norm(state.ball_future_pose - paddle_pos, dim=-1)
   reward = torch.exp(-torch.clamp(dist, min=threshold) / (std_ee * std_ee + 1.0e-12))
-  return torch.nan_to_num(reward * state.reward_active.float())
+  active = state.reward_active.float() * state.posture_gate
+  return torch.nan_to_num(reward * active)
+
+
+def pace_future_paddle_height_target(
+  env: ManagerBasedRlEnv,
+  z_std: float = 0.25,
+  **params,
+) -> torch.Tensor:
+  state = get_pingpong_pace_prediction_state(env, **params)
+  state.update()
+  paddle_pos = pace_paddle_touch_point_table(env, **params)
+  z_error = paddle_pos[:, 2] - state.ball_future_pose[:, 2]
+  reward = torch.exp(-torch.square(z_error) / (z_std * z_std + 1.0e-12))
+  active = state.reward_active.float() * state.posture_gate
+  return torch.nan_to_num(reward * active)
 
 
 def pace_future_body_target(
@@ -880,7 +1227,8 @@ def pace_future_body_target(
   robot_pos = _robot_table_pos(env, robot_cfg)
   dist = torch.linalg.vector_norm(state.target_base_xy - robot_pos[:, :2], dim=-1)
   reward = torch.exp(-torch.clamp(dist, min=threshold) / (std_ro * std_ro + 1.0e-12))
-  return torch.nan_to_num(reward * state.reward_active.float())
+  active = state.reward_active.float() * state.posture_gate
+  return torch.nan_to_num(reward * active)
 
 
 def pace_future_base_vel_target(
@@ -899,7 +1247,31 @@ def pace_future_base_vel_target(
     dim=-1,
   )
   reward = torch.exp(-torch.clamp(diff, min=threshold) / (vel_std * vel_std + 1.0e-12))
-  return torch.nan_to_num(reward * state.reward_active.float())
+  active = state.reward_active.float() * state.posture_gate
+  return torch.nan_to_num(reward * active)
+
+
+def pace_step_air_time(
+  env: ManagerBasedRlEnv,
+  sensor_name: str = _DEFAULT_FOOT_SENSOR,
+  threshold_min: float = 0.05,
+  threshold_max: float = 0.50,
+  future_time_threshold: float = 0.18,
+  target_speed_threshold: float = 0.50,
+  **params,
+) -> torch.Tensor:
+  state = get_pingpong_pace_prediction_state(env, **params)
+  state.update()
+  side_air_time = _contact_side_air_time(env, sensor_name)
+  in_range = (side_air_time > threshold_min) & (side_air_time < threshold_max)
+  reward = torch.sum(in_range.float(), dim=-1)
+  target_speed = torch.linalg.vector_norm(state.robot_future_vel[:, :2], dim=-1)
+  active = (
+    state.reward_active
+    & (state.ball_future_t > future_time_threshold)
+    & (target_speed > target_speed_threshold)
+  )
+  return torch.nan_to_num(reward * active.float())
 
 
 def pace_future_landing_distance(
@@ -967,7 +1339,9 @@ def pace_forehand_paddle_offset(
   paddle_pos = pace_paddle_touch_point_table(env, paddle_cfg=paddle_cfg)
   root_to_paddle_w = paddle_pos + env.scene.env_origins - robot.data.root_link_pos_w
   root_to_paddle_b = quat_apply_inverse(robot.data.root_link_quat_w, root_to_paddle_w)
-  error = (root_to_paddle_b - target) / torch.clamp(std, min=1.0e-6)
+  error = (root_to_paddle_b[:, :2] - target[:2]) / torch.clamp(
+    std[:2], min=1.0e-6
+  )
   reward = torch.exp(-torch.sum(torch.square(error), dim=-1))
   return torch.nan_to_num(reward * state.reward_active.float())
 
@@ -1001,9 +1375,182 @@ def pace_forehand_elbow_extension(
   return torch.nan_to_num(reward * state.reward_active.float())
 
 
+def pace_target_valid_metric(env: ManagerBasedRlEnv, **params) -> torch.Tensor:
+  state = get_pingpong_pace_prediction_state(env, **params)
+  state.update()
+  return state.ball_future_valid.float()
+
+
+def _pace_active_value(
+  env: ManagerBasedRlEnv,
+  value: torch.Tensor,
+  **params,
+) -> torch.Tensor:
+  state = get_pingpong_pace_prediction_state(env, **params)
+  state.update()
+  return torch.nan_to_num(value * state.reward_active.float())
+
+
+def pace_active_future_z_metric(env: ManagerBasedRlEnv, **params) -> torch.Tensor:
+  state = get_pingpong_pace_prediction_state(env, **params)
+  state.update()
+  return _pace_active_value(env, state.ball_future_pose[:, 2], **params)
+
+
+def pace_active_paddle_z_metric(env: ManagerBasedRlEnv, **params) -> torch.Tensor:
+  paddle_pos = pace_paddle_touch_point_table(env, **params)
+  return _pace_active_value(env, paddle_pos[:, 2], **params)
+
+
+def pace_active_ee_dist_metric(env: ManagerBasedRlEnv, **params) -> torch.Tensor:
+  state = get_pingpong_pace_prediction_state(env, **params)
+  state.update()
+  paddle_pos = pace_paddle_touch_point_table(env, **params)
+  dist = torch.linalg.vector_norm(state.ball_future_pose - paddle_pos, dim=-1)
+  return _pace_active_value(env, dist, **params)
+
+
+def pace_active_target_base_speed_metric(
+  env: ManagerBasedRlEnv,
+  **params,
+) -> torch.Tensor:
+  state = get_pingpong_pace_prediction_state(env, **params)
+  state.update()
+  speed = torch.linalg.vector_norm(state.robot_future_vel[:, :2], dim=-1)
+  return _pace_active_value(env, speed, **params)
+
+
+def pace_active_root_speed_metric(
+  env: ManagerBasedRlEnv,
+  robot_cfg: SceneEntityCfg = _ROBOT_CFG,
+  **params,
+) -> torch.Tensor:
+  robot: Entity = env.scene[robot_cfg.name]
+  speed = torch.linalg.vector_norm(robot.data.root_link_lin_vel_w[:, :2], dim=-1)
+  return _pace_active_value(env, speed, **params)
+
+
+def pace_prediction_post_bounce_direct_metric(
+  env: ManagerBasedRlEnv,
+  **params,
+) -> torch.Tensor:
+  state = get_pingpong_pace_prediction_state(env, **params)
+  state.update()
+  return (state.prediction_mode == PACE_PREDICTION_MODE_POST_BOUNCE_DIRECT).float()
+
+
+def pace_posture_gate_metric(env: ManagerBasedRlEnv, **params) -> torch.Tensor:
+  state = get_pingpong_pace_prediction_state(env, **params)
+  state.update()
+  return state.posture_gate
+
+
+def pace_target_invalid_reason_metric(
+  env: ManagerBasedRlEnv,
+  reason: int,
+  **params,
+) -> torch.Tensor:
+  state = get_pingpong_pace_prediction_state(env, **params)
+  state.update()
+  return (~state.ball_future_valid & (state.invalid_reason == reason)).float()
+
+
+def pace_target_invalid_not_moving_metric(
+  env: ManagerBasedRlEnv,
+  **params,
+) -> torch.Tensor:
+  return pace_target_invalid_reason_metric(
+    env,
+    reason=PACE_TARGET_INVALID_NOT_MOVING_TO_HIT,
+    **params,
+  )
+
+
+def pace_target_invalid_bad_bounce_metric(
+  env: ManagerBasedRlEnv,
+  **params,
+) -> torch.Tensor:
+  return pace_target_invalid_reason_metric(
+    env,
+    reason=PACE_TARGET_INVALID_BAD_BOUNCE,
+    **params,
+  )
+
+
+def pace_target_invalid_second_bounce_metric(
+  env: ManagerBasedRlEnv,
+  **params,
+) -> torch.Tensor:
+  return pace_target_invalid_reason_metric(
+    env,
+    reason=PACE_TARGET_INVALID_SECOND_BOUNCE,
+    **params,
+  )
+
+
+def pace_target_invalid_out_of_bounds_metric(
+  env: ManagerBasedRlEnv,
+  **params,
+) -> torch.Tensor:
+  return pace_target_invalid_reason_metric(
+    env,
+    reason=PACE_TARGET_INVALID_OUT_OF_BOUNDS,
+    **params,
+  )
+
+
+def pace_target_invalid_low_or_time_metric(
+  env: ManagerBasedRlEnv,
+  **params,
+) -> torch.Tensor:
+  return pace_target_invalid_reason_metric(
+    env,
+    reason=PACE_TARGET_INVALID_LOW_OR_TIME,
+    **params,
+  )
+
+
+def pace_target_invalid_numeric_metric(
+  env: ManagerBasedRlEnv,
+  **params,
+) -> torch.Tensor:
+  return pace_target_invalid_reason_metric(
+    env,
+    reason=PACE_TARGET_INVALID_NUMERIC,
+    **params,
+  )
+
+
+def pace_target_invalid_rally_done_metric(
+  env: ManagerBasedRlEnv,
+  **params,
+) -> torch.Tensor:
+  return pace_target_invalid_reason_metric(
+    env,
+    reason=PACE_TARGET_INVALID_RALLY_DONE,
+    **params,
+  )
+
+
 __all__ = [
+  "PACE_PREDICTION_MODE_INVALID",
+  "PACE_PREDICTION_MODE_POST_BOUNCE_DIRECT",
+  "PACE_PREDICTION_MODE_PRE_BOUNCE",
+  "PACE_TARGET_INVALID_BAD_BOUNCE",
+  "PACE_TARGET_INVALID_LOW_OR_TIME",
+  "PACE_TARGET_INVALID_NONE",
+  "PACE_TARGET_INVALID_NOT_MOVING_TO_HIT",
+  "PACE_TARGET_INVALID_NUMERIC",
+  "PACE_TARGET_INVALID_OUT_OF_BOUNDS",
+  "PACE_TARGET_INVALID_RALLY_DONE",
+  "PACE_TARGET_INVALID_SECOND_BOUNCE",
   "PingpongPacePredictionState",
   "get_pingpong_pace_prediction_state",
+  "pace_active_ee_dist_metric",
+  "pace_active_future_z_metric",
+  "pace_active_paddle_z_metric",
+  "pace_active_root_speed_metric",
+  "pace_active_target_base_speed_metric",
   "pace_ang_vel_xy_l2",
   "pace_ang_vel_z_l2",
   "pace_ball_position_table",
@@ -1026,6 +1573,7 @@ __all__ = [
   "pace_forehand_elbow_extension",
   "pace_forehand_paddle_offset",
   "pace_future_time",
+  "pace_future_paddle_height_target",
   "pace_heading",
   "pace_hit_unstable_support",
   "pace_hit_unstable_support_height",
@@ -1037,6 +1585,18 @@ __all__ = [
   "pace_robot_future_delta",
   "pace_robot_position_table",
   "pace_robot_table_proximity_x",
+  "pace_step_air_time",
   "pace_table_success",
+  "pace_posture_gate_metric",
+  "pace_prediction_post_bounce_direct_metric",
+  "pace_target_invalid_bad_bounce_metric",
+  "pace_target_invalid_low_or_time_metric",
+  "pace_target_invalid_not_moving_metric",
+  "pace_target_invalid_numeric_metric",
+  "pace_target_invalid_out_of_bounds_metric",
+  "pace_target_invalid_rally_done_metric",
+  "pace_target_invalid_reason_metric",
+  "pace_target_invalid_second_bounce_metric",
+  "pace_target_valid_metric",
   "update_pingpong_pace_prediction",
 ]

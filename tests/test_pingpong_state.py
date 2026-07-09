@@ -6,7 +6,15 @@ import torch
 from mjlab.managers.scene_entity_config import SceneEntityCfg
 from mjlab.tasks.pingpong.mdp.debug_vis import install_pingpong_debug_overlay
 from mjlab.tasks.pingpong.mdp.pace import (
+  PACE_PREDICTION_MODE_POST_BOUNCE_DIRECT,
+  PACE_PREDICTION_MODE_PRE_BOUNCE,
+  PACE_TARGET_INVALID_SECOND_BOUNCE,
   get_pingpong_pace_prediction_state,
+  pace_active_ee_dist_metric,
+  pace_active_future_z_metric,
+  pace_active_paddle_z_metric,
+  pace_active_root_speed_metric,
+  pace_active_target_base_speed_metric,
   pace_ball_prediction_table,
   pace_body_orientation_l2,
   pace_feet_force,
@@ -18,10 +26,16 @@ from mjlab.tasks.pingpong.mdp.pace import (
   pace_forehand_elbow_extension,
   pace_forehand_paddle_offset,
   pace_future_base_vel_target,
+  pace_future_body_target,
+  pace_future_ee_target,
+  pace_future_paddle_height_target,
   pace_future_pass_net,
   pace_hit_unstable_support,
   pace_hit_unstable_support_height,
+  pace_posture_gate_metric,
   pace_relative_target_base_xy,
+  pace_step_air_time,
+  pace_target_valid_metric,
   update_pingpong_pace_prediction,
 )
 from mjlab.tasks.pingpong.mdp.state import (
@@ -128,6 +142,10 @@ def _make_env() -> tuple[Any, Any, Any, Any, Any]:
       force_history=torch.zeros(1, 14, 4, 3, dtype=torch.float32),
       force=torch.zeros(1, 14, 3, dtype=torch.float32),
       found=torch.zeros(1, 14, dtype=torch.float32),
+      current_air_time=torch.zeros(1, 14, dtype=torch.float32),
+      last_air_time=torch.zeros(1, 14, dtype=torch.float32),
+      current_contact_time=torch.zeros(1, 14, dtype=torch.float32),
+      last_contact_time=torch.zeros(1, 14, dtype=torch.float32),
     )
   )
   env = SimpleNamespace(
@@ -188,9 +206,29 @@ def _make_pace_params() -> dict[str, Any]:
     "target_base_offset_xy": (0.2541, -0.6239),
     "natural_hit_x": G1_PACE_GEOMETRY.natural_hit_x,
     "target_root_height": 0.760,
-    "target_base_vel_gain": 4.0,
-    "target_base_vel_max": 7.0,
+    "target_base_vel_gain": 2.0,
+    "target_base_vel_max": 2.5,
   }
+
+
+def _prime_self_bounce(
+  env: Any,
+  ball: Any,
+  params: dict[str, Any],
+) -> None:
+  state = get_pingpong_pace_prediction_state(env, **params)
+  env.common_step_counter = 0
+  ball.data.root_link_pos_w[:] = torch.tensor([[0.85, 0.0, 1.0]])
+  ball.data.root_link_lin_vel_w[:] = torch.tensor([[2.0, 0.0, -1.0]])
+  state.update()
+  env.common_step_counter = 1
+  ball.data.root_link_pos_w[:] = torch.tensor(
+    [[1.00, 0.0, BALL_CENTER_TABLE_Z]]
+  )
+  ball.data.root_link_lin_vel_w[:] = torch.tensor([[2.0, 0.0, 3.0]])
+  state.update()
+  assert state.ball_future_valid.item()
+  assert state.prediction_mode.item() == PACE_PREDICTION_MODE_POST_BOUNCE_DIRECT
 
 
 def _add_pace_robot(env: Any) -> Any:
@@ -328,11 +366,11 @@ def test_pingpong_pace_prediction_state_shapes_and_hook() -> None:
   )
 
 
-def test_pingpong_pace_future_pose_uses_natural_hit_plane_after_bounce() -> None:
+def test_pingpong_pace_future_pose_pre_bounce_uses_one_table_bounce() -> None:
   env, ball, _, _, _ = _make_env()
   _add_pace_robot(env)
-  ball.data.root_link_pos_w[:] = torch.tensor([[1.05, 0.02, 0.98]])
-  ball.data.root_link_lin_vel_w[:] = torch.tensor([[2.0, 0.10, 0.80]])
+  ball.data.root_link_pos_w[:] = torch.tensor([[0.50, 0.02, 1.00]])
+  ball.data.root_link_lin_vel_w[:] = torch.tensor([[2.0, 0.10, 0.20]])
   params = _make_pace_params()
 
   state = get_pingpong_pace_prediction_state(env, **params)
@@ -347,6 +385,75 @@ def test_pingpong_pace_future_pose_uses_natural_hit_plane_after_bounce() -> None
     torch.tensor([[0.2541, -0.6239]], dtype=torch.float32),
   )
   assert state.ball_future_valid.item()
+  assert state.prediction_mode.item() == PACE_PREDICTION_MODE_PRE_BOUNCE
+
+
+def test_pingpong_pace_future_pose_post_bounce_uses_current_ball_state() -> None:
+  env, ball, _, _, _ = _make_env()
+  _add_pace_robot(env)
+  params = _make_pace_params()
+  _prime_self_bounce(env, ball, params)
+
+  env.common_step_counter = 2
+  ball.data.root_link_pos_w[:] = torch.tensor([[1.20, -0.04, 1.05]])
+  ball.data.root_link_lin_vel_w[:] = torch.tensor([[2.0, 0.10, -0.20]])
+  state = get_pingpong_pace_prediction_state(env, **params)
+  state.update()
+
+  assert state.ball_future_valid.item()
+  assert state.prediction_mode.item() == PACE_PREDICTION_MODE_POST_BOUNCE_DIRECT
+  torch.testing.assert_close(
+    state.ball_future_pose[:, 0],
+    torch.tensor([G1_PACE_GEOMETRY.natural_hit_x], dtype=torch.float32),
+  )
+  torch.testing.assert_close(
+    state.target_base_xy,
+    state.ball_future_pose[:, :2] + torch.tensor([[0.2541, -0.6239]]),
+  )
+
+
+def test_pingpong_pace_future_pose_stays_valid_after_natural_plane() -> None:
+  env, ball, _, _, _ = _make_env()
+  _add_pace_robot(env)
+  params = _make_pace_params()
+  _prime_self_bounce(env, ball, params)
+
+  env.common_step_counter = 2
+  ball_x = G1_PACE_GEOMETRY.natural_hit_x + 0.08
+  ball.data.root_link_pos_w[:] = torch.tensor([[ball_x, 0.03, 1.02]])
+  ball.data.root_link_lin_vel_w[:] = torch.tensor([[2.0, 0.05, -0.10]])
+  state = get_pingpong_pace_prediction_state(env, **params)
+  state.update()
+
+  assert state.ball_future_valid.item()
+  assert state.prediction_mode.item() == PACE_PREDICTION_MODE_POST_BOUNCE_DIRECT
+  torch.testing.assert_close(
+    state.ball_future_pose,
+    ball.data.root_link_pos_w,
+  )
+  torch.testing.assert_close(
+    state.target_base_xy,
+    state.ball_future_pose[:, :2] + torch.tensor([[0.2541, -0.6239]]),
+  )
+
+
+def test_pingpong_pace_future_pose_invalid_if_second_bounce_is_before_hit() -> None:
+  env, ball, _, _, _ = _make_env()
+  _add_pace_robot(env)
+  params = _make_pace_params()
+  _prime_self_bounce(env, ball, params)
+
+  env.common_step_counter = 2
+  ball.data.root_link_pos_w[:] = torch.tensor([[0.50, 0.0, 0.90]])
+  ball.data.root_link_lin_vel_w[:] = torch.tensor([[1.0, 0.0, 0.50]])
+  state = get_pingpong_pace_prediction_state(env, **params)
+  state.update()
+
+  assert not state.ball_future_valid.item()
+  assert not state.reward_active.item()
+  assert state.invalid_reason.item() == PACE_TARGET_INVALID_SECOND_BOUNCE
+  assert torch.isfinite(state.ball_future_pose).all()
+  assert torch.isfinite(state.target_base_xy).all()
 
 
 def test_pingpong_pace_future_pose_invalid_case_is_finite_and_inactive() -> None:
@@ -455,6 +562,83 @@ def test_pingpong_pace_forehand_rewards_prefer_g1_paddle_geometry() -> None:
   assert extension[0] > folded_extension[0]
 
 
+def test_pingpong_pace_forehand_offset_is_xy_only() -> None:
+  env, _, _, _, _ = _make_env()
+  robot = _add_pace_robot(env)
+  params = _make_pace_params()
+  paddle_cfg = SceneEntityCfg("robot")
+  paddle_cfg.site_ids = [0]
+
+  good_offset = pace_forehand_paddle_offset(
+    env,
+    paddle_cfg=paddle_cfg,
+    target_offset=(0.2541, -0.6239, 0.0442),
+    offset_std=(0.15, 0.14, 0.08),
+    **params,
+  )
+  robot.data.site_pos_w[:, :, 2] += 0.50
+  high_offset = pace_forehand_paddle_offset(
+    env,
+    paddle_cfg=paddle_cfg,
+    target_offset=(0.2541, -0.6239, 0.0442),
+    offset_std=(0.15, 0.14, 0.08),
+    **params,
+  )
+  robot.data.site_pos_w[:, :, 1] += 0.30
+  lateral_bad_offset = pace_forehand_paddle_offset(
+    env,
+    paddle_cfg=paddle_cfg,
+    target_offset=(0.2541, -0.6239, 0.0442),
+    offset_std=(0.15, 0.14, 0.08),
+    **params,
+  )
+
+  torch.testing.assert_close(good_offset, high_offset)
+  assert high_offset[0] > lateral_bad_offset[0]
+
+
+def test_pingpong_pace_future_paddle_height_target_tracks_future_z() -> None:
+  env, ball, _, _, _ = _make_env()
+  robot = _add_pace_robot(env)
+  params = _make_pace_params()
+  ball.data.root_link_pos_w[:] = torch.tensor([[0.50, 0.02, 1.00]])
+  ball.data.root_link_lin_vel_w[:] = torch.tensor([[2.0, 0.10, 0.20]])
+
+  state = get_pingpong_pace_prediction_state(env, **params)
+  state.update()
+  future_before = state.ball_future_pose.clone()
+  robot.data.site_pos_w[:, :, 2] = state.ball_future_pose[:, 2].view(1, 1)
+  near_reward = pace_future_paddle_height_target(env, **params)
+  robot.data.site_pos_w[:, :, 2] = state.ball_future_pose[:, 2].view(1, 1) - 0.50
+  low_reward = pace_future_paddle_height_target(env, **params)
+
+  assert near_reward[0] > low_reward[0]
+  assert low_reward[0] < 0.05
+  torch.testing.assert_close(state.ball_future_pose, future_before)
+
+
+def test_pingpong_pace_step_air_time_is_active_only_before_hit() -> None:
+  env, ball, _, _, _ = _make_env()
+  _add_pace_robot(env)
+  params = _make_pace_params()
+  ball.data.root_link_pos_w[:] = torch.tensor([[0.50, 0.02, 1.00]])
+  ball.data.root_link_lin_vel_w[:] = torch.tensor([[2.0, 0.10, 0.20]])
+  foot_sensor = env.scene["pace_foot_contact"]
+  foot_sensor.data.current_air_time[:, :7] = 0.12
+  foot_sensor.data.current_air_time[:, 7:] = 0.0
+
+  active_reward = pace_step_air_time(env, sensor_name="pace_foot_contact", **params)
+  gated_reward = pace_step_air_time(
+    env,
+    sensor_name="pace_foot_contact",
+    future_time_threshold=10.0,
+    **params,
+  )
+
+  assert active_reward[0] > 0.0
+  torch.testing.assert_close(gated_reward, torch.zeros(1))
+
+
 def test_pingpong_pace_invalid_rewards_are_finite() -> None:
   env, ball, _, _, _ = _make_env()
   _add_pace_robot(env)
@@ -472,6 +656,69 @@ def test_pingpong_pace_invalid_rewards_are_finite() -> None:
   )
   assert torch.isfinite(rewards).all()
   assert rewards.shape == (1, 2)
+
+
+def test_pingpong_pace_active_diagnostics_are_finite() -> None:
+  env, ball, _, _, _ = _make_env()
+  robot = _add_pace_robot(env)
+  params = _make_pace_params()
+  ball.data.root_link_pos_w[:] = torch.tensor([[0.50, 0.02, 1.00]])
+  ball.data.root_link_lin_vel_w[:] = torch.tensor([[2.0, 0.10, 0.20]])
+  robot.data.root_link_lin_vel_w[:, :2] = torch.tensor([[0.2, -0.1]])
+
+  metrics = torch.stack(
+    (
+      pace_active_future_z_metric(env, **params),
+      pace_active_paddle_z_metric(env, **params),
+      pace_active_ee_dist_metric(env, **params),
+      pace_active_target_base_speed_metric(env, **params),
+      pace_active_root_speed_metric(env, **params),
+    ),
+    dim=-1,
+  )
+
+  assert metrics.shape == (1, 5)
+  assert torch.isfinite(metrics).all()
+  assert metrics[0, 0] > 0.0
+  assert metrics[0, 1] > 0.0
+
+
+def test_pingpong_pace_posture_gate_only_scales_future_tracking_rewards() -> None:
+  env, ball, _, _, _ = _make_env()
+  robot = _add_pace_robot(env)
+  params = _make_pace_params()
+  ball.data.root_link_pos_w[:] = torch.tensor([[0.50, 0.02, 1.00]])
+  ball.data.root_link_lin_vel_w[:] = torch.tensor([[2.0, 0.10, 0.20]])
+
+  env.common_step_counter = 1
+  assert pace_target_valid_metric(env, **params).item() == 1.0
+  assert pace_posture_gate_metric(env, **params).item() > 0.95
+  assert pace_future_ee_target(env, **params).item() > 0.0
+  assert pace_future_body_target(env, **params).item() > 0.0
+  assert pace_future_base_vel_target(env, **params).item() > 0.0
+
+  env.common_step_counter = 2
+  robot.data.root_link_pos_w[:, 2] = 0.64
+  torch.testing.assert_close(pace_posture_gate_metric(env, **params), torch.zeros(1))
+  torch.testing.assert_close(pace_future_ee_target(env, **params), torch.zeros(1))
+  torch.testing.assert_close(pace_future_body_target(env, **params), torch.zeros(1))
+  torch.testing.assert_close(
+    pace_future_base_vel_target(env, **params),
+    torch.zeros(1),
+  )
+
+  env.common_step_counter = 3
+  robot.data.root_link_pos_w[:, 2] = 0.76
+  robot.data.root_link_ang_vel_b[:, 0] = 5.0
+  torch.testing.assert_close(pace_posture_gate_metric(env, **params), torch.zeros(1))
+
+  env.common_step_counter = 4
+  robot.data.root_link_ang_vel_b.zero_()
+  angle = torch.tensor(45.0 * torch.pi / 180.0)
+  robot.data.root_link_quat_w[:] = torch.tensor(
+    [[torch.cos(angle / 2.0), torch.sin(angle / 2.0), 0.0, 0.0]]
+  )
+  assert pace_posture_gate_metric(env, **params).item() < 0.05
 
 
 def test_pingpong_pace_prediction_refreshes_after_auto_reset_same_step() -> None:

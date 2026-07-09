@@ -27,9 +27,12 @@ from mjlab.tasks.pingpong.scene import get_pingpong_ball_cfg, get_pingpong_table
 from mjlab.tasks.tennis.mdp import FrozenDecoderLatentJointPositionActionCfg
 
 DEFAULT_DECODER_CHECKPOINT = "logs/rsl_rl/g1_distillation/distill_cloud_unitree_racket_tennis_2026-05-12_09-35-14/model_30000.pt"
+G1_PACE_LOCKED_WAIST_JOINTS = ("waist_roll_joint", "waist_pitch_joint")
 G1_PACE_ACTION_SCALE = {
   name: min(scale, 0.18) for name, scale in G1_W_RACKET_ACTION_SCALE.items()
 }
+for joint_name in G1_PACE_LOCKED_WAIST_JOINTS:
+  G1_PACE_ACTION_SCALE[joint_name] = 0.0
 
 
 def _apply_g1_pingpong_common(cfg, play: bool):
@@ -124,6 +127,7 @@ def unitree_g1_pingpong_pace_env_cfg(play: bool = False):
 __all__ = [
   "DEFAULT_DECODER_CHECKPOINT",
   "G1_PACE_ACTION_SCALE",
+  "G1_PACE_LOCKED_WAIST_JOINTS",
   "PINGPONG_PADDLE_CENTER_POS",
   "PINGPONG_PADDLE_HAND_CLEARANCE",
   "PINGPONG_PADDLE_RADIUS",

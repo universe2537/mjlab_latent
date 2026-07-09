@@ -5,6 +5,13 @@ from __future__ import annotations
 import mujoco
 
 from mjlab.entity import EntityCfg
+from mjlab.tasks.pingpong.bounce import (
+  PINGPONG_BALL_MASS,
+  PINGPONG_BALL_RADIUS,
+  PINGPONG_BOUNCE_FRICTION,
+  PINGPONG_BOUNCE_SOLIMP,
+  PINGPONG_BOUNCE_SOLREF,
+)
 from mjlab.terrains import TerrainEntityCfg
 from mjlab.utils import spec_config as spec_cfg
 
@@ -20,8 +27,8 @@ NET_TOP_Z = TABLE_HEIGHT + NET_HEIGHT
 NET_HALF_WIDTH = TABLE_HALF_WIDTH + 0.04
 NET_THICKNESS_HALF = 0.006
 
-BALL_RADIUS = 0.02
-BALL_MASS = 0.0027
+BALL_RADIUS = PINGPONG_BALL_RADIUS
+BALL_MASS = PINGPONG_BALL_MASS
 BALL_CENTER_TABLE_Z = TABLE_HEIGHT + BALL_RADIUS
 BALL_INIT_POS = (0.0, 0.0, BALL_CENTER_TABLE_Z)
 BALL_INIT_LIN_VEL = (0.0, 0.0, 0.0)
@@ -45,9 +52,9 @@ def get_pingpong_ball_spec() -> mujoco.MjSpec:
     condim=3,
   )
   geom.material = "pingpong_ball_mat"
-  geom.friction[:] = (0.04, 0.002, 0.0001)
-  geom.solref[:] = (0.002, 0.50)
-  geom.solimp[:3] = (0.93, 0.98, 0.001)
+  geom.friction[:] = PINGPONG_BOUNCE_FRICTION
+  geom.solref[:] = PINGPONG_BOUNCE_SOLREF
+  geom.solimp[:] = PINGPONG_BOUNCE_SOLIMP
 
   body.add_site(
     name="pingpong_ball_center",
@@ -105,9 +112,9 @@ def get_pingpong_table_spec() -> mujoco.MjSpec:
     material="pingpong_table_blue",
     collidable=True,
   )
-  top.friction[:] = (0.04, 0.002, 0.0001)
-  top.solref[:] = (0.002, 0.50)
-  top.solimp[:3] = (0.93, 0.98, 0.001)
+  top.friction[:] = PINGPONG_BOUNCE_FRICTION
+  top.solref[:] = PINGPONG_BOUNCE_SOLREF
+  top.solimp[:] = PINGPONG_BOUNCE_SOLIMP
 
   # White outline and center line, visual only.
   add_box(

@@ -47,6 +47,53 @@
     commands, failures, or next steps change.
   </p>
 
+  <h2>2026-07-08 Tennis Distillation Four-Motion Validation</h2>
+  <ul>
+    <li>
+      Current follow-up training for this issue is
+      <code>distill_tennis_teacher_fixed_16384_gpu2_20260708</code>, run dir
+      <code>logs/rsl_rl/g1_distillation/distill_tennis_teacher_fixed_16384env_2026-07-08_22-37-49</code>.
+      It keeps teacher forcing fixed with
+      <code>teacher_action_prob=1.0</code>,
+      <code>teacher_action_prob_end=1.0</code>, and
+      <code>teacher_action_prob_anneal_iters=0</code>, uses
+      <code>env.scene.num_envs=16384</code>, and preserves the old KL schedule
+      <code>0.001 -> 0.005</code>. Startup reached iteration 30 with
+      <code>teacher_prob=1.000</code>; GPU2 used about
+      <code>12905 MiB / 24564 MiB</code>.
+    </li>
+    <li>
+      Added <code>latent_analysis/validate_tennis_distillation.py</code> and
+      ran the four-motion validation for
+      <code>distill_cloud_unitree_racket_tennis_2026-05-12_09-35-14/model_30000.pt</code>
+      against teacher <code>g1_tracking/tennis/model_29999.pt</code> on
+      <code>tennis_random_001</code> to <code>004</code>. Output dir:
+      <code>latent_analysis/outputs_tennis_verify_4x4096</code>.
+    </li>
+    <li>
+      Final verdict is <code>not_ready</code>. Offline reconstruction failed
+      thresholds with posterior MSE <code>0.080762</code>, prior MSE
+      <code>0.0970171</code>, and active latent dims <code>8/16</code>.
+      Top prior joint errors include wrist/shoulder/elbow/knee/hip joints.
+    </li>
+    <li>
+      GPU2 closed-loop tracking rollout with <code>128</code> envs showed
+      teacher success <code>1.000</code> on all four motions, but posterior
+      success was <code>0.875/0.000/0.000/0.000</code> and prior success was
+      <code>0.000</code> on all four. Main failure was
+      <code>ee_body_pos</code> early termination.
+    </li>
+    <li>
+      Report and artifacts:
+      <code>latent_analysis/outputs_tennis_verify_4x4096/VALIDATION_REPORT.md</code>,
+      <code>validation_results.json</code>, 12 single-policy mp4s, and 4
+      side-by-side compare mp4s under
+      <code>latent_analysis/outputs_tennis_verify_4x4096/videos/</code>.
+      Do not promote this checkpoint as the default Tennis Hit/Cross frozen
+      decoder; downstream Tennis runs should be treated as diagnostic only.
+    </li>
+  </ul>
+
   <h2>2026-07-08 G1 Pingpong Paddle Roll</h2>
   <ul>
     <li>
@@ -1730,6 +1777,145 @@
       <code>0.216m</code> behind the self table edge and closer to a natural G1
       forehand reach point. Existing PACE runs must be restarted or resumed in a
       new run to pick up this target.
+    </li>
+    <li>
+      Pingpong bounce physics is now an All Pingpong shared contract rather
+      than PACE-local constants. <code>src/mjlab/tasks/pingpong/bounce.py</code>
+      defines the 40 mm / 3.4 g ball, calibrated high-bounce ball/table contact
+      profile, and post-bounce scales (<code>horizontal=0.94</code>,
+      <code>vertical=0.90</code>). Scene construction, the table-tennis feeder,
+      PACE future prediction, and <code>ball_predicted_edge_hit_point_b</code>
+      read these constants. This changes latent Hit/Cross ball dynamics and
+      predicted-hit observations, but not their reward/action/decoder/task IDs.
+      PACE now predicts pre-bounce targets through exactly one self-table
+      bounce, uses direct post-bounce prediction after the self bounce, keeps
+      targets valid inside a wider PACE-style hit window after the natural hit
+      plane has been passed, rejects targets that would require chasing a
+      second self-table bounce, and gates only its three future tracking rewards
+      when posture is poor.
+    </li>
+    <li>
+      G1 PACE target validity no longer treats <code>natural_hit_x</code> as a
+      hard expiry plane. A post-bounce ball that is already past the natural hit
+      plane but still in front/side-front of the robot, high enough, not
+      second-bouncing, and not in a fault/hit-done state remains valid; the
+      target is the current physically predicted ball point, with no EMA,
+      smoothing, locking, or hysteresis. New diagnostic:
+      <code>pace/invalid_rally_done</code>.
+    </li>
+    <li>
+      PACE waist ablation: <code>G1_PACE_ACTION_SCALE</code> now locks
+      <code>waist_roll_joint</code> and <code>waist_pitch_joint</code> by setting
+      their direct action scale to <code>0.0</code>, while keeping
+      <code>waist_yaw_joint</code> controllable. This only affects
+      <code>Mjlab-Pingpong-PACE-Unitree-G1</code>; latent Pingpong tasks still
+      use the original decoder/action scale.
+      The new GPU3 ablation run is
+      <code>pingpong_pace_waist_yaw_only_ablation_15360_gpu3_20260708</code>,
+      with run dir
+      <code>logs/rsl_rl/g1_pingpong_pace/pingpong_pace_waist_yaw_only_ablation_15360env_gpu3_2026-07-08_23-27-34</code>.
+      Its resolved env confirms <code>waist_yaw_joint: 0.18</code>,
+      <code>waist_pitch_joint: 0.0</code>, and
+      <code>waist_roll_joint: 0.0</code>.
+    </li>
+    <li>
+      G1 PACE reward v2 for the waist-locked run keeps the real
+      <code>ball_future_pose</code> target unchanged but makes paddle tracking
+      stronger: <code>pace_future_ee_target=8.0</code>, new
+      <code>pace_future_paddle_height_target=4.0</code>, XY-only
+      <code>pace_forehand_paddle_offset=3.0</code>, and light
+      <code>pace_step_air_time=0.5</code>. Base target velocity is less
+      aggressive: <code>target_base_vel_gain=2.0</code>,
+      <code>target_base_vel_max=2.5</code>. New diagnostics include active
+      future/paddle z, EE distance, target base speed, and root speed.
+      GPU3 reward-v2 run:
+      <code>pingpong_pace_waist_lock_reward_v2_15360_gpu3_20260709</code>,
+      run dir
+      <code>logs/rsl_rl/g1_pingpong_pace/pingpong_pace_waist_lock_reward_v2_15360env_gpu3_2026-07-09_06-33-59</code>.
+      Early iteration 2 had
+      <code>future_z≈0.838</code>, <code>paddle_z≈0.415</code>,
+      <code>ee_dist≈0.493</code>, and <code>nan_detection=0</code>.
+    </li>
+    <li>
+      New PACE bounce/target scratch canary:
+      <code>pingpong_pace_bounce_true_hit_canary_4096_gpu2_20260708</code>,
+      run dir
+      <code>logs/rsl_rl/g1_pingpong_pace/pingpong_pace_bounce_true_hit_canary_4096env_gpu2_2026-07-08_21-07-47</code>.
+      It uses GPU2 with 4096 envs and wrote <code>model_0.pt</code> plus
+      TensorBoard events. Early step 8 metrics included
+      <code>Policy/mean_std≈0.402</code>,
+      <code>pace/target_valid_rate≈0.819</code>, and
+      <code>pace/posture_gate_mean≈0.684</code>. Debug-overlay video was not
+      recorded in this pass because sandbox CUDA was unavailable and the
+      follow-up host GPU/EGL approval request was rejected by the approval
+      service.
+    </li>
+    <li>
+      GPU1 hard-plane PACE run was stopped and resumed as a wide-valid v2 run:
+      tmux
+      <code>pingpong_pace_bounce_true_hit_wide_valid_v2_16384_gpu1_20260708</code>,
+      run dir
+      <code>logs/rsl_rl/g1_pingpong_pace/pingpong_pace_bounce_true_hit_wide_valid_v2_16384env_gpu1_2026-07-08_23-00-30</code>.
+      It loads
+      <code>logs/rsl_rl/g1_pingpong_pace/pingpong_pace_bounce_true_hit_16384env_gpu1_2026-07-08_21-13-54/model_500.pt</code>
+      with <code>--agent.resume True</code>, keeps <code>16*1024</code> envs on
+      host GPU1, and early output showed
+      <code>Policy/mean_std=0.32</code>,
+      <code>pace/target_valid_rate≈0.793</code>,
+      <code>pace/post_bounce_direct_prediction_rate≈0.246</code>, and
+      <code>pace/posture_gate_mean≈0.855</code>.
+    </li>
+  </ul>
+
+  <h2>Pingpong Distillation Validation</h2>
+  <ul>
+    <li>
+      On 2026-07-09, table-tennis distillation checkpoints
+      <code>model_16500.pt</code> and <code>model_30000.pt</code> from
+      <code>logs/rsl_rl/g1_distillation_table_tennis/table_tennis_distill_v2_46080env_kl_aligned_from_tracking18000_gpu1_2026-07-05_23-43-32</code>
+      were re-evaluated with matched offline sampling:
+      <code>1024 samples/motion</code> over all 13
+      <code>artifacts/table_tennis/*/motion.npz</code> files. Results:
+      16500 posterior/prior MSE <code>0.044428 / 0.060028</code>,
+      30000 posterior/prior MSE <code>0.046116 / 0.058713</code>.
+      Thus the older impression that 16500 was clearly better was mostly caused
+      by mismatched sampling; 30000 has slightly better prior MSE, while 16500
+      has lower KL.
+    </li>
+    <li>
+      Closed-loop tracking still failed both checkpoints. On
+      <code>fanshou_001</code> with <code>128 envs</code>, teacher/posterior/prior
+      success was <code>1.000 / 0.000 / 0.000</code> for 16500 and
+      <code>1.000 / 0.188 / 0.000</code> for 30000. On held-out
+      <code>test_001</code>, both checkpoints were
+      <code>1.000 / 0.000 / 0.000</code>. Failures terminate through
+      <code>ee_body_pos</code>, so these checkpoints are <code>not_ready</code>
+      as Pingpong frozen decoders.
+    </li>
+    <li>
+      Human-readable summary:
+      <code>latent_analysis/outputs_table_tennis_compare_1024/VALIDATION_SUMMARY.md</code>.
+      Compare videos for <code>fanshou_001</code> live under
+      <code>latent_analysis/outputs_table_tennis_compare_1024_model16500/videos/fanshou_001/</code>
+      and
+      <code>latent_analysis/outputs_table_tennis_compare_1024_model30000/videos/fanshou_001/</code>.
+    </li>
+    <li>
+      Latest full validation for
+      <code>model_30000.pt</code> was rerun with
+      <code>4096 samples/motion</code> and all 13 motions in closed-loop
+      tracking/video. Output:
+      <code>latent_analysis/outputs_table_tennis_latest_model30000_verify_4x4096/</code>.
+      Final verdict is <code>not_ready</code>. Offline posterior/prior MSE is
+      <code>0.0475539 / 0.0599306</code> with <code>9/16</code> active dims,
+      but closed-loop teacher success is <code>1.000</code> on every motion,
+      prior success is <code>0.000</code> on every motion, and posterior fails
+      important cases: <code>fanshou_001=0.211</code>,
+      <code>mix_001=0.000</code>, <code>mix_a_001=0.727</code>,
+      held-out <code>test_001=0.000</code>, and diagnostic
+      <code>zhengshou_002_badend=0.844</code>. Failures are dominated by
+      <code>ee_body_pos</code>, so the checkpoint should not be promoted as the
+      Pingpong frozen decoder.
     </li>
   </ul>
 

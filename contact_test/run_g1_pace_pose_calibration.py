@@ -6,6 +6,7 @@ import argparse
 import csv
 import json
 import re
+import shutil
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -16,14 +17,24 @@ import mujoco
 import numpy as np
 
 from mjlab.asset_zoo.robots.unitree_g1_w_pingpong_paddle import (
+  get_g1_w_pingpong_paddle_robot_cfg,
   get_g1_w_pingpong_paddle_spec,
 )
 from mjlab.asset_zoo.robots.unitree_g1_w_racket.g1_constants import (
+  G1_XML,
   HOME_KEYFRAME,
   KNEES_BENT_KEYFRAME,
 )
 from mjlab.entity import EntityCfg
-from mjlab.tasks.pingpong.pace_geometry import G1_PACE_GEOMETRY
+from mjlab.scene import Scene, SceneCfg
+from mjlab.tasks.pingpong.pace_geometry import (
+  G1_PACE_GEOMETRY,
+  rotate_xy_by_yaw,
+  target_base_offset_xy_from_paddle_offset,
+)
+from mjlab.tasks.pingpong.pingpong_env_cfg import add_pingpong_paddle_ball_contact_pair
+from mjlab.tasks.pingpong.scene import get_pingpong_ball_cfg, get_pingpong_table_cfg
+from mjlab.utils.spec import export_spec
 from mjlab.viewer.native.visualizer import MujocoNativeDebugVisualizer
 
 _BODY_NAMES = (
@@ -57,6 +68,12 @@ _TARGET_REACH_LINE_COLOR = (0.85, 0.0, 1.0, 0.75)
 _REACH_ERROR_LINE_COLOR = (0.2, 0.6, 1.0, 0.85)
 _STRIKE_DIRECTION_COLOR = (1.0, 0.55, 0.05, 1.0)
 _STRIKE_DIRECTION_LENGTH = 0.34
+_JOINT_QPOS_SIZES = {
+  int(mujoco.mjtJoint.mjJNT_FREE): 7,
+  int(mujoco.mjtJoint.mjJNT_BALL): 4,
+  int(mujoco.mjtJoint.mjJNT_SLIDE): 1,
+  int(mujoco.mjtJoint.mjJNT_HINGE): 1,
+}
 
 
 @dataclass(frozen=True)
@@ -138,6 +155,42 @@ def _object_id(model: mujoco.MjModel, obj_type: mujoco.mjtObj, name: str) -> int
   return int(obj_id)
 
 
+def _object_id_by_suffix(
+  model: mujoco.MjModel, obj_type: mujoco.mjtObj, name: str
+) -> int:
+  obj_id = mujoco.mj_name2id(model, obj_type, name)
+  if obj_id >= 0:
+    return int(obj_id)
+
+  count = {
+    mujoco.mjtObj.mjOBJ_JOINT: model.njnt,
+    mujoco.mjtObj.mjOBJ_BODY: model.nbody,
+    mujoco.mjtObj.mjOBJ_SITE: model.nsite,
+    mujoco.mjtObj.mjOBJ_GEOM: model.ngeom,
+  }.get(obj_type)
+  if count is None:
+    raise ValueError(f"Unsupported suffix lookup for {obj_type.name}.")
+  matches = []
+  for idx in range(count):
+    candidate = mujoco.mj_id2name(model, obj_type, idx)
+    if candidate == name or (candidate is not None and candidate.endswith(f"/{name}")):
+      matches.append(idx)
+  if len(matches) != 1:
+    raise ValueError(
+      f"Could not uniquely resolve {obj_type.name} named {name!r}: {matches}."
+    )
+  return int(matches[0])
+
+
+def _joint_pattern_matches(pattern: str, name: str) -> bool:
+  regex = re.compile(pattern)
+  if regex.fullmatch(name):
+    return True
+  if "/" in name and regex.fullmatch(name.rsplit("/", 1)[-1]):
+    return True
+  return False
+
+
 def _set_root_pose(
   model: mujoco.MjModel,
   data: mujoco.MjData,
@@ -154,7 +207,7 @@ def _set_root_pose(
 
 
 def _set_joint_value(model: mujoco.MjModel, data: mujoco.MjData, name: str, value: float):
-  joint_id = _object_id(model, mujoco.mjtObj.mjOBJ_JOINT, name)
+  joint_id = _object_id_by_suffix(model, mujoco.mjtObj.mjOBJ_JOINT, name)
   if int(model.jnt_type[joint_id]) not in (
     int(mujoco.mjtJoint.mjJNT_HINGE),
     int(mujoco.mjtJoint.mjJNT_SLIDE),
@@ -176,9 +229,8 @@ def _apply_keyframe(
   _set_root_pose(model, data, init_state.pos, init_state.rot)
   names = _joint_names(model)
   for pattern, value in (init_state.joint_pos or {}).items():
-    regex = re.compile(pattern)
     for name in names:
-      if name and regex.fullmatch(name):
+      if name and _joint_pattern_matches(pattern, name):
         _set_joint_value(model, data, name, float(value))
 
 
@@ -216,8 +268,8 @@ def _geom_pos(model: mujoco.MjModel, data: mujoco.MjData, name: str) -> np.ndarr
   return np.array(data.geom_xpos[geom_id], dtype=np.float64)
 
 
-def _as_list(values: np.ndarray) -> list[float]:
-  return [float(v) for v in values.reshape(-1)]
+def _as_list(values: Iterable[float] | np.ndarray) -> list[float]:
+  return [float(v) for v in np.asarray(values, dtype=np.float64).reshape(-1)]
 
 
 def _foot_center(
@@ -291,6 +343,15 @@ def _pose_metrics(
   right_foot = _foot_center(model, data, "right")
   foot_delta = left_foot - right_foot
 
+  paddle_offset_table_xy = rotate_xy_by_yaw(
+    (float(rel_pelvis[0]), float(rel_pelvis[1])),
+    G1_PACE_GEOMETRY.robot_reset_yaw,
+  )
+  target_base_offset_xy = target_base_offset_xy_from_paddle_offset(
+    (float(rel_pelvis[0]), float(rel_pelvis[1])),
+    G1_PACE_GEOMETRY.robot_reset_yaw,
+  )
+
   return {
     "name": pose.name,
     "base": pose.base,
@@ -300,7 +361,8 @@ def _pose_metrics(
     "torso_height": float(torso[2]),
     "paddle_offset_world": _as_list(rel_world),
     "paddle_offset_pelvis": _as_list(rel_pelvis),
-    "target_base_offset_xy": _as_list(-rel_pelvis[:2]),
+    "paddle_offset_table_xy": _as_list(paddle_offset_table_xy),
+    "target_base_offset_xy": _as_list(target_base_offset_xy),
     "desired_reach_offset_pelvis": _as_list(
       np.asarray(reach_offset_pelvis, dtype=np.float64)
     ),
@@ -492,6 +554,8 @@ def _write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
     "paddle_offset_pelvis_x",
     "paddle_offset_pelvis_y",
     "paddle_offset_pelvis_z",
+    "paddle_offset_table_x",
+    "paddle_offset_table_y",
     "target_base_offset_x",
     "target_base_offset_y",
     "desired_reach_x",
@@ -509,6 +573,7 @@ def _write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
     writer.writeheader()
     for row in rows:
       paddle_offset = row["paddle_offset_pelvis"]
+      paddle_offset_table = row["paddle_offset_table_xy"]
       target_offset = row["target_base_offset_xy"]
       desired_reach = row["desired_reach_position_world"]
       strike_direction = row["desired_strike_direction_world"]
@@ -521,6 +586,8 @@ def _write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
           "paddle_offset_pelvis_x": paddle_offset[0],
           "paddle_offset_pelvis_y": paddle_offset[1],
           "paddle_offset_pelvis_z": paddle_offset[2],
+          "paddle_offset_table_x": paddle_offset_table[0],
+          "paddle_offset_table_y": paddle_offset_table[1],
           "target_base_offset_x": target_offset[0],
           "target_base_offset_y": target_offset[1],
           "desired_reach_x": desired_reach[0],
@@ -536,11 +603,142 @@ def _write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
       )
 
 
+def _add_pose_keyframe_to_spec(
+  spec: mujoco.MjSpec,
+  qpos: np.ndarray,
+  qvel: np.ndarray,
+  key_name: str,
+) -> None:
+  """Preserve a pose as a keyframe without distorting the model tree."""
+  key = spec.add_key(name=key_name)
+  key.qpos = np.asarray(qpos, dtype=np.float64).copy()
+  key.qvel = np.asarray(qvel, dtype=np.float64).copy()
+
+
+def _export_spec_as_xml(spec: mujoco.MjSpec, xml_path: Path) -> None:
+  """Export a spec to a named XML file with sibling shared mesh assets."""
+  xml_path.parent.mkdir(parents=True, exist_ok=True)
+  temp_dir = xml_path.parent / f".{xml_path.stem}_export"
+  if temp_dir.exists():
+    shutil.rmtree(temp_dir)
+  export_spec(spec, temp_dir)
+  (xml_path.parent / "assets").mkdir(parents=True, exist_ok=True)
+  assets_src = temp_dir / "assets"
+  if assets_src.exists():
+    shutil.copytree(
+      assets_src,
+      xml_path.parent / "assets",
+      dirs_exist_ok=True,
+    )
+  g1_assets = G1_XML.parent / "assets"
+  if g1_assets.exists():
+    shutil.copytree(g1_assets, xml_path.parent / "assets", dirs_exist_ok=True)
+  shutil.move(str(temp_dir / "scene.xml"), str(xml_path))
+  shutil.rmtree(temp_dir)
+
+
+def _write_qpos(path: Path, model: mujoco.MjModel, qpos: np.ndarray) -> None:
+  lines = ["# qpos exported from robot-only MJCF pose", f"# nq={model.nq}"]
+  for idx, value in enumerate(qpos):
+    lines.append(f"{idx},{float(value):.17g}")
+  path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def _write_joint_csv(
+  path: Path,
+  model: mujoco.MjModel,
+  qpos: np.ndarray,
+) -> None:
+  fields = (
+    "joint_id",
+    "joint_name",
+    "joint_type",
+    "qpos_adr",
+    "qpos_size",
+    "qpos",
+    "limited",
+    "range_min",
+    "range_max",
+  )
+  with path.open("w", newline="", encoding="utf-8") as f:
+    writer = csv.DictWriter(f, fieldnames=fields)
+    writer.writeheader()
+    for joint_id in range(model.njnt):
+      name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_JOINT, joint_id)
+      joint_type = int(model.jnt_type[joint_id])
+      qadr = int(model.jnt_qposadr[joint_id])
+      size = _JOINT_QPOS_SIZES[joint_type]
+      limited = bool(model.jnt_limited[joint_id])
+      values = qpos[qadr : qadr + size]
+      writer.writerow(
+        {
+          "joint_id": joint_id,
+          "joint_name": "" if name is None else name,
+          "joint_type": mujoco.mjtJoint(joint_type).name,
+          "qpos_adr": qadr,
+          "qpos_size": size,
+          "qpos": " ".join(f"{float(value):.17g}" for value in values),
+          "limited": limited,
+          "range_min": float(model.jnt_range[joint_id, 0]) if limited else "",
+          "range_max": float(model.jnt_range[joint_id, 1]) if limited else "",
+        }
+      )
+
+
+def _make_pingpong_scene_spec() -> mujoco.MjSpec:
+  scene = Scene(
+    SceneCfg(
+      entities={
+        "robot": get_g1_w_pingpong_paddle_robot_cfg(),
+        "ball": get_pingpong_ball_cfg(),
+        "table": get_pingpong_table_cfg(),
+      },
+      spec_fn=add_pingpong_paddle_ball_contact_pair,
+    ),
+    device="cpu",
+  )
+  return scene.spec
+
+
+def _export_pose_mjcf(
+  pose: PoseSpec,
+  mjcf_dir: Path,
+) -> dict[str, str]:
+  robot_spec = get_g1_w_pingpong_paddle_spec()
+  robot_model = robot_spec.compile()
+  robot_data = mujoco.MjData(robot_model)
+  _apply_pose(robot_model, robot_data, pose)
+  robot_qpos = np.asarray(robot_data.qpos, dtype=np.float64).copy()
+  robot_qvel = np.asarray(robot_data.qvel, dtype=np.float64).copy()
+  _add_pose_keyframe_to_spec(robot_spec, robot_qpos, robot_qvel, pose.name)
+
+  scene_spec = _make_pingpong_scene_spec()
+  scene_model = scene_spec.compile()
+  scene_data = mujoco.MjData(scene_model)
+  _apply_pose(scene_model, scene_data, pose)
+  scene_qpos = np.asarray(scene_data.qpos, dtype=np.float64).copy()
+  scene_qvel = np.asarray(scene_data.qvel, dtype=np.float64).copy()
+  _add_pose_keyframe_to_spec(scene_spec, scene_qpos, scene_qvel, pose.name)
+
+  paths = {
+    "robot_xml": mjcf_dir / f"{pose.name}_robot.xml",
+    "scene_xml": mjcf_dir / f"{pose.name}_scene.xml",
+    "qpos": mjcf_dir / f"{pose.name}_qpos.txt",
+    "joints": mjcf_dir / f"{pose.name}_joints.csv",
+  }
+  _export_spec_as_xml(robot_spec, paths["robot_xml"])
+  _export_spec_as_xml(scene_spec, paths["scene_xml"])
+  _write_qpos(paths["qpos"], robot_model, robot_qpos)
+  _write_joint_csv(paths["joints"], robot_model, robot_qpos)
+  return {name: str(path) for name, path in paths.items()}
+
+
 def _write_readme(
   path: Path,
   rows: list[dict[str, Any]],
   *,
   render: bool,
+  export_mjcf: bool,
   reach_offset_pelvis: tuple[float, float, float],
   strike_direction_pelvis: tuple[float, float, float],
 ) -> None:
@@ -550,9 +748,13 @@ def _write_readme(
     "This folder was generated by `contact_test/run_g1_pace_pose_calibration.py`.",
     "",
     f"- Rendered images: `{render}`",
+    f"- Exported MJCF: `{export_mjcf}`",
     f"- Default PACE target base offset: `{G1_PACE_GEOMETRY.target_base_offset_xy}`",
+    f"- Default PACE natural hit x: `{G1_PACE_GEOMETRY.natural_hit_x}`",
     f"- Default PACE root height: `{G1_PACE_GEOMETRY.target_root_height}`",
     f"- Default PACE paddle offset: `{G1_PACE_GEOMETRY.forehand_paddle_offset}`",
+    "- Default PACE paddle offset in table frame: "
+    f"`{G1_PACE_GEOMETRY.forehand_paddle_offset_table_xy}`",
     f"- Default PACE strike direction in pelvis frame: `{strike_direction_pelvis}`",
     f"- Default PACE strike upward angle: `{G1_PACE_GEOMETRY.strike_upward_angle}` rad",
     f"- Visualized desired reach offset in pelvis frame: `{reach_offset_pelvis}`",
@@ -592,6 +794,18 @@ def _write_readme(
       "PACE geometry target. The script does not mutate training configs.",
     ]
   )
+  if export_mjcf:
+    lines.extend(
+      [
+        "",
+        "## MJCF Exports",
+        "",
+        "The `mjcf/` folder contains one lightweight robot-only XML and one",
+        "full table-tennis scene XML per pose. The XML keeps the original",
+        "robot kinematic tree and stores the calibrated posture as a same-name",
+        "keyframe with exact qpos/qvel for replay, editing, or comparison.",
+      ]
+    )
   path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
@@ -609,6 +823,7 @@ def run_calibration(
   width: int = 1280,
   height: int = 720,
   render: bool = True,
+  export_mjcf: bool = False,
 ) -> Path:
   if pose_set != "default":
     raise ValueError("Only --pose-set default is currently supported.")
@@ -642,6 +857,8 @@ def run_calibration(
       render=render,
     )
     metrics["images"] = image_paths
+    if export_mjcf:
+      metrics["mjcf"] = _export_pose_mjcf(pose, run_dir / "mjcf")
     rows.append(metrics)
 
   payload = {
@@ -649,13 +866,20 @@ def run_calibration(
     "generated_at": timestamp,
     "pose_set": pose_set,
     "rendered": render,
+    "mjcf_exported": export_mjcf,
     "image_size": {"width": width, "height": height},
     "visualized_reach_offset_pelvis": reach_offset_pelvis,
     "visualized_strike_direction_pelvis": strike_direction_pelvis,
     "pace_geometry_default": {
       "target_base_offset_xy": G1_PACE_GEOMETRY.target_base_offset_xy,
+      "natural_hit_x": G1_PACE_GEOMETRY.natural_hit_x,
       "target_root_height": G1_PACE_GEOMETRY.target_root_height,
+      "robot_reset_yaw": G1_PACE_GEOMETRY.robot_reset_yaw,
+      "robot_reset_x_center": G1_PACE_GEOMETRY.robot_reset_x_center,
       "forehand_paddle_offset": G1_PACE_GEOMETRY.forehand_paddle_offset,
+      "forehand_paddle_offset_table_xy": (
+        G1_PACE_GEOMETRY.forehand_paddle_offset_table_xy
+      ),
       "forehand_paddle_offset_std": G1_PACE_GEOMETRY.forehand_paddle_offset_std,
       "forehand_elbow_target_ratio": G1_PACE_GEOMETRY.forehand_elbow_target_ratio,
       "strike_direction_pelvis": G1_PACE_GEOMETRY.strike_direction_pelvis,
@@ -673,6 +897,7 @@ def run_calibration(
     run_dir / "README.md",
     rows,
     render=render,
+    export_mjcf=export_mjcf,
     reach_offset_pelvis=reach_offset_pelvis,
     strike_direction_pelvis=strike_direction_pelvis,
   )
@@ -707,6 +932,11 @@ def _parse_args() -> argparse.Namespace:
     action="store_true",
     help="Write placeholder PNGs and metrics only; useful for CPU unit tests.",
   )
+  parser.add_argument(
+    "--export-mjcf",
+    action="store_true",
+    help="Export baked robot-only and full-scene MJCF files for each pose.",
+  )
   return parser.parse_args()
 
 
@@ -721,6 +951,7 @@ def main() -> None:
     width=args.width,
     height=args.height,
     render=not args.skip_render,
+    export_mjcf=args.export_mjcf,
   )
   print(run_dir)
 

@@ -7,11 +7,19 @@ import torch
 from mjlab.entity import EntityCfg
 from mjlab.scene import Scene, SceneCfg
 from mjlab.sim import Simulation, SimulationCfg
+from mjlab.tasks.pingpong.bounce import (
+  PINGPONG_POST_BOUNCE_HORIZONTAL_SCALE,
+  PINGPONG_POST_BOUNCE_VERTICAL_SCALE,
+)
 from mjlab.tasks.pingpong.mdp.ball_providers import (
   resolve_pingpong_ball_sport_geometry,
 )
 from mjlab.tasks.pingpong.mdp.observations import ball_predicted_edge_hit_point_b
-from mjlab.tasks.pingpong.scene import get_pingpong_ball_cfg, get_pingpong_table_cfg
+from mjlab.tasks.pingpong.scene import (
+  BALL_CENTER_TABLE_Z,
+  get_pingpong_ball_cfg,
+  get_pingpong_table_cfg,
+)
 
 
 def _robot_spec() -> mujoco.MjSpec:
@@ -62,6 +70,52 @@ def _write_ball(env: Any, pos: torch.Tensor, vel: torch.Tensor) -> None:
   env.sim.forward()
 
 
+def _measure_first_table_bounce(
+  model: mujoco.MjModel,
+  *,
+  pos: tuple[float, float, float],
+  vel: tuple[float, float, float],
+) -> tuple[float, float]:
+  data = mujoco.MjData(model)
+  joint_id = mujoco.mj_name2id(
+    model,
+    mujoco.mjtObj.mjOBJ_JOINT,
+    "ball/pingpong_ball_freejoint",
+  )
+  assert joint_id >= 0
+  qposadr = int(model.jnt_qposadr[joint_id])
+  dofadr = int(model.jnt_dofadr[joint_id])
+  data.qpos[qposadr : qposadr + 3] = pos
+  data.qpos[qposadr + 3 : qposadr + 7] = (1.0, 0.0, 0.0, 0.0)
+  data.qvel[dofadr : dofadr + 3] = vel
+  mujoco.mj_forward(model, data)
+
+  gravity = -float(model.opt.gravity[2])
+  pre_h = (vel[0] * vel[0] + vel[1] * vel[1]) ** 0.5
+  impact_vz = -(
+    vel[2] * vel[2] + 2.0 * gravity * (pos[2] - BALL_CENTER_TABLE_Z)
+  ) ** 0.5
+  prev_vz = vel[2]
+  seen_rebound = False
+  max_post_vz = 0.0
+  post_h_at_peak = 0.0
+  for _ in range(1500):
+    mujoco.mj_step(model, data)
+    cur_vz = float(data.qvel[dofadr + 2])
+    cur_z = float(data.qpos[qposadr + 2])
+    if prev_vz < 0.0 and cur_vz > 0.0 and abs(cur_z - BALL_CENTER_TABLE_Z) < 0.08:
+      seen_rebound = True
+    if seen_rebound and cur_vz > max_post_vz:
+      max_post_vz = cur_vz
+      post_h_at_peak = (
+        float(data.qvel[dofadr]) ** 2 + float(data.qvel[dofadr + 1]) ** 2
+      ) ** 0.5
+    if seen_rebound and cur_z > BALL_CENTER_TABLE_Z + 0.08:
+      return post_h_at_peak / pre_h, max_post_vz / (-impact_vz)
+    prev_vz = cur_vz
+  raise AssertionError("Did not observe a table bounce.")
+
+
 def test_pingpong_edge_hit_point_targets_scene_derived_end_line() -> None:
   env = _make_env()
   geometry = resolve_pingpong_ball_sport_geometry(env)
@@ -97,3 +151,43 @@ def test_pingpong_edge_hit_point_fallback_is_finite() -> None:
 
   assert obs.shape == (1, 4)
   assert torch.isfinite(obs).all()
+
+
+def test_pingpong_table_bounce_profile_matches_shared_prediction_constants() -> None:
+  env = _make_env()
+  ratios = torch.tensor(
+    [
+      _measure_first_table_bounce(
+        env.sim.mj_model,
+        pos=(0.45, -0.20, 1.18),
+        vel=(2.6, 0.20, -1.00),
+      ),
+      _measure_first_table_bounce(
+        env.sim.mj_model,
+        pos=(0.30, 0.15, 1.10),
+        vel=(3.2, -0.10, -0.60),
+      ),
+      _measure_first_table_bounce(
+        env.sim.mj_model,
+        pos=(0.10, 0.00, 1.24),
+        vel=(2.2, 0.30, -1.20),
+      ),
+    ],
+    dtype=torch.float32,
+  )
+  mean = ratios.mean(dim=0)
+  std = ratios.std(dim=0)
+
+  assert torch.all(std < torch.tensor([0.06, 0.06]))
+  torch.testing.assert_close(
+    mean[0],
+    torch.tensor(PINGPONG_POST_BOUNCE_HORIZONTAL_SCALE),
+    atol=0.05,
+    rtol=0.0,
+  )
+  torch.testing.assert_close(
+    mean[1],
+    torch.tensor(PINGPONG_POST_BOUNCE_VERTICAL_SCALE),
+    atol=0.05,
+    rtol=0.0,
+  )

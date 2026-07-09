@@ -14,6 +14,10 @@ from mjlab.tasks.ball_sports import (
   BallSportGeometryCfg,
   resolve_ball_sport_geometry,
 )
+from mjlab.tasks.pingpong.bounce import (
+  PINGPONG_POST_BOUNCE_HORIZONTAL_SCALE,
+  PINGPONG_POST_BOUNCE_VERTICAL_SCALE,
+)
 
 if TYPE_CHECKING:
   from mjlab.envs.manager_based_rl_env import ManagerBasedRlEnv
@@ -99,8 +103,8 @@ class TableTennisFeederCfg:
 
   vz_std: float = 0.35
   vz_max: float = 3.4
-  post_bounce_horizontal_scale: float = 0.94
-  post_bounce_vertical_scale: float = 0.90
+  post_bounce_horizontal_scale: float = PINGPONG_POST_BOUNCE_HORIZONTAL_SCALE
+  post_bounce_vertical_scale: float = PINGPONG_POST_BOUNCE_VERTICAL_SCALE
   gravity: float = 9.81
   max_resample_attempts: int = 64
   check: TrajectoryCheckCfg = field(default_factory=TrajectoryCheckCfg)

@@ -119,6 +119,16 @@ Added
 Changed
 ^^^^^^^
 
+- Changed Pingpong ball/table bounce behavior across all Pingpong tasks to use
+  a shared PACE-like bounce profile: the ball mass is now ``0.0034`` kg and
+  the table/ball contact, feeder trajectory checks, PACE prediction, and
+  predicted-hit observation helper read the same post-bounce constants. The
+  direct-joint PACE target predictor now distinguishes pre-bounce one-table
+  prediction from post-bounce direct prediction, uses a wider PACE-style valid
+  hitting window instead of invalidating immediately after the natural hit
+  plane is passed, rejects targets that would require chasing a second
+  self-table bounce, and gates only the three future tracking rewards when the
+  G1 posture is low, tilted, or rotating quickly.
 - Changed the G1 Pingpong paddle asset to use the initial hand-inserted
   placement while rolling the whole paddle 90 degrees around the end-effector
   forward axis and translating it forward until the paddle-face collision has a
@@ -138,6 +148,15 @@ Changed
 - Relaxed the direct-joint PACE motion regularization weights after the G1
   paddle and reach retargeting: ``action_rate_l2=-0.01``,
   ``feet_slide=-0.3``, and ``pace_hit_unstable_support=-5.0``.
+- Changed the direct-joint G1 Pingpong PACE action envelope for a waist ablation:
+  ``waist_roll_joint`` and ``waist_pitch_joint`` now have zero PACE action
+  scale while ``waist_yaw_joint`` remains controllable. Latent Pingpong tasks
+  still use the original G1-with-paddle action scale.
+- Changed the waist-locked G1 Pingpong PACE reward shaping to emphasize paddle
+  height and end-effector tracking while reducing base velocity aggressiveness:
+  ``pace_future_ee_target`` is stronger, a PACE-only paddle-height target and
+  light step air-time reward were added, forehand paddle offset now ignores
+  vertical error, and base target velocity gain/max were reduced.
 - Changed the G1 Pingpong PACE future target from the self-table edge to a
   calibrated natural forehand hit plane. The base target offset is now
   yaw-corrected from the pelvis-local paddle offset before being applied in the

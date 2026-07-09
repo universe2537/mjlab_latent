@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import mujoco
 import pytest
 
 _SCRIPT_PATH = (
@@ -59,10 +60,11 @@ def test_g1_pace_pose_calibration_writes_metrics_and_images(
   assert payload["rendered"] is False
   assert payload["image_size"] == {"width": 64, "height": 48}
   assert payload["pace_geometry_default"]["target_base_offset_xy"] == pytest.approx(
-    [-0.3112, 0.4510]
+    [0.2541, -0.6239]
   )
+  assert payload["pace_geometry_default"]["natural_hit_x"] == pytest.approx(1.5859)
   assert payload["visualized_reach_offset_pelvis"] == pytest.approx(
-    [0.3112, -0.4510, 0.0290]
+    [0.2541, -0.6239, 0.0442]
   )
   assert payload["visualized_strike_direction_pelvis"] == pytest.approx(
     [math.cos(math.radians(15.0)), 0.0, math.sin(math.radians(15.0))]
@@ -80,6 +82,7 @@ def test_g1_pace_pose_calibration_writes_metrics_and_images(
   for pose in poses.values():
     _assert_finite_numbers(pose)
     assert len(pose["paddle_offset_pelvis"]) == 3
+    assert len(pose["paddle_offset_table_xy"]) == 2
     assert len(pose["target_base_offset_xy"]) == 2
     assert len(pose["desired_reach_offset_pelvis"]) == 3
     assert len(pose["desired_reach_position_world"]) == 3
@@ -108,3 +111,65 @@ def test_g1_pace_pose_calibration_writes_metrics_and_images(
   assert "purple sphere" in readme
   assert "desired reach" in readme
   assert "orange arrow" in readme
+
+
+def test_g1_pace_pose_calibration_exports_loadable_mjcf(tmp_path: Path) -> None:
+  run_dir = run_calibration(
+    output_dir=tmp_path,
+    width=64,
+    height=48,
+    render=False,
+    export_mjcf=True,
+  )
+
+  payload = json.loads((run_dir / "calibration.json").read_text(encoding="utf-8"))
+  assert payload["mjcf_exported"] is True
+  knees_bent = next(pose for pose in payload["poses"] if pose["name"] == "knees_bent")
+  mjcf = knees_bent["mjcf"]
+
+  robot_xml = Path(mjcf["robot_xml"])
+  scene_xml = Path(mjcf["scene_xml"])
+  qpos_path = Path(mjcf["qpos"])
+  joints_path = Path(mjcf["joints"])
+  assert robot_xml.exists()
+  assert scene_xml.exists()
+  assert qpos_path.exists()
+  assert joints_path.exists()
+
+  robot_model = mujoco.MjModel.from_xml_path(str(robot_xml))
+  robot_data = mujoco.MjData(robot_model)
+
+  key_id = mujoco.mj_name2id(robot_model, mujoco.mjtObj.mjOBJ_KEY, "knees_bent")
+  assert key_id >= 0
+  npz_qpos = [
+    float(line.split(",", maxsplit=1)[1])
+    for line in qpos_path.read_text(encoding="utf-8").splitlines()
+    if line and not line.startswith("#")
+  ]
+  assert len(npz_qpos) == robot_model.nq
+  assert "right_shoulder_pitch_joint" in joints_path.read_text(encoding="utf-8")
+  assert robot_model.key_qpos[key_id].tolist() == pytest.approx(npz_qpos)
+
+  site_id = mujoco.mj_name2id(
+    robot_model,
+    mujoco.mjtObj.mjOBJ_SITE,
+    "pingpong_paddle_center",
+  )
+  assert site_id >= 0
+  mujoco.mj_resetDataKeyframe(robot_model, robot_data, key_id)
+  mujoco.mj_forward(robot_model, robot_data)
+  assert robot_data.site_xpos[site_id].tolist() == pytest.approx(
+    knees_bent["site_positions"]["pingpong_paddle_center"]
+  )
+
+  scene_model = mujoco.MjModel.from_xml_path(str(scene_xml))
+  assert mujoco.mj_name2id(
+    scene_model,
+    mujoco.mjtObj.mjOBJ_SITE,
+    "robot/pingpong_paddle_center",
+  ) >= 0
+  assert mujoco.mj_name2id(
+    scene_model,
+    mujoco.mjtObj.mjOBJ_GEOM,
+    "table/pingpong_table_top_collision",
+  ) >= 0

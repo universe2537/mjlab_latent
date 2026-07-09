@@ -2308,3 +2308,651 @@ PACE 不应把 future ball target 固定到己方台边，而应使用机器人�
 
 - 正在运行或已经保存的 PACE run 仍使用启动时的旧 resolved config；需要重新
   启动/续训 run 才会生效。
+
+### 2026-07-08 21:04 G1 PACE bounce and true hit target
+
+目标：
+
+- 修正 PACE future target 在来球反弹前后的跳变语义，同时保持
+  `ball_future_pose` 和 `target_base_xy` 为真实逐步预测值，不做 EMA、锁点、
+  限速或平滑。
+- 采用 All Pingpong 方案：ball/table 反弹物理、feeder trajectory check、
+  PACE prediction 和 `ball_predicted_edge_hit_point_b` 共用同一组反弹常量。
+
+本次代码修正：
+
+- 新增 `src/mjlab/tasks/pingpong/bounce.py` 作为共享配置源：
+  `BALL_RADIUS=0.02`、`BALL_MASS=0.0034`、post-bounce scale
+  `horizontal=0.94`、`vertical=0.90`。
+- 本地 MuJoCo 校准后把 ball/table contact profile 设为
+  `friction=(0.02, 0.001, 0.0001)`、`solref=(-5000, -5)`、
+  `solimp=(0.93, 0.98, 0.001, 0.5, 2.0)`；三组 CPU MuJoCo 反弹样本实测约为
+  horizontal `0.954`、vertical `0.899`。
+- `scene.py`、`TableTennisFeederCfg`、`ball_predicted_edge_hit_point_b` 和
+  `_ball_provider_cfg()` 都改为读取共享常量，避免发球模型和预测模型漂移。
+- PACE future target 改成：
+  - pre-bounce：先预测一次己方桌面反弹，再求 `natural_hit_x` 交点；
+  - post-bounce：使用当前真实 post-bounce 球位置/速度直接求交点，允许
+    `vz < 0`；
+  - 如果到 hit plane 前会再次落到己方桌面，或目标越界/过低/数值异常，则
+    `ball_future_valid=False`。
+- `target_base_xy` 仍然每步直接等于 `ball_future_pose[:2] + target_base_offset_xy`。
+- 新增 PACE posture gate，只缩放 `pace_future_ee_target`、
+  `pace_future_body_target`、`pace_future_base_vel_target`；landing/pass-net/
+  table-success 和目标点本身不受 gate 修改。
+- 新增 PACE diagnostics metrics：target valid rate、post-bounce direct
+  prediction rate、posture gate mean 和 invalid reason 分项。
+
+影响边界：
+
+- 这次 All Pingpong 反弹物理会影响 latent Hit/Cross 的真实球动力学和
+  predicted-hit observation 常量。
+- 未修改 latent Hit/Cross/StrikeQuality 的 reward、action、decoder checkpoint
+  或 task registration。
+- 已在运行中的训练不会自动采用新代码，需要新开或续训 run 才会生效。
+
+验证：
+
+- `FORCE_CPU=1 UV_CACHE_DIR=/tmp/uv-cache MPLCONFIGDIR=/tmp/mplconfig uv run pytest tests/test_pingpong_task.py tests/test_pingpong_state.py tests/test_pingpong_observations.py -q`
+  -> `38 passed`。
+- `UV_CACHE_DIR=/tmp/uv-cache MPLCONFIGDIR=/tmp/mplconfig uv run ty check src/mjlab/tasks/pingpong tests/test_pingpong_task.py tests/test_pingpong_state.py tests/test_pingpong_observations.py`
+  -> passed。
+- `UV_CACHE_DIR=/tmp/uv-cache MPLCONFIGDIR=/tmp/mplconfig uv run ruff check src/mjlab/tasks/pingpong tests/test_pingpong_task.py tests/test_pingpong_state.py tests/test_pingpong_observations.py`
+  -> passed。
+
+Scratch canary：
+
+- 宿主 tmux session：
+  `pingpong_pace_bounce_true_hit_canary_4096_gpu2_20260708`。
+- 命令：
+
+```sh
+CUDA_VISIBLE_DEVICES=2 MUJOCO_GL=egl UV_CACHE_DIR=/tmp/uv-cache \
+MPLCONFIGDIR=/tmp/mplconfig uv run train Mjlab-Pingpong-PACE-Unitree-G1 \
+  --env.scene.num-envs 4096 --gpu-ids "[0]" --agent.max-iterations 800 \
+  --agent.experiment-name g1_pingpong_pace \
+  --agent.run-name pingpong_pace_bounce_true_hit_canary_4096env_gpu2 \
+  --agent.upload-model False
+```
+
+- Run dir：
+  `logs/rsl_rl/g1_pingpong_pace/pingpong_pace_bounce_true_hit_canary_4096env_gpu2_2026-07-08_21-07-47`。
+- 启动后已写出 `model_0.pt` 和 TensorBoard event；GPU2 显存约从 `5.1 GiB`
+  上升到 `10.2 GiB`。
+- TensorBoard event step 8 快照：
+  `Policy/mean_std≈0.402`，
+  `Episode_Metrics/pace/target_valid_rate≈0.819`，
+  `Episode_Metrics/pace/posture_gate_mean≈0.684`，
+  `Episode_Metrics/pace/post_bounce_direct_prediction_rate≈0.127`。
+
+视频验证：
+
+- sandbox 内短 play 命令失败，原文为 `RuntimeError: No CUDA GPUs are available`。
+- 随后申请宿主 GPU/EGL play 授权时，审批系统因后端连接问题拒绝本次执行。
+  因此本轮未完成 overlay mp4 录制；后续需要用户显式批准宿主 play 命令后再跑。
+
+### 2026-07-08 21:30 G1 PACE wide valid hit window
+
+问题：
+
+- 上一版 PACE target 仍把 `natural_hit_x` 当成硬平面；post-bounce 球一旦越过
+  该平面，即使仍在机器人身前/侧前方且高度可击打，也会立刻
+  `ball_future_valid=False`，debug overlay 上表现为 f60/f100 这类仍可击打球
+  过早变白。
+
+修正：
+
+- 保留 PACE 的“真实目标，不做 EMA/锁点/平滑”原则，但把 valid 判断改成
+  PACE-style 宽窗口：
+  - pre-bounce 仍预测一次己方桌面反弹，再在反弹后的可击打窗口内选目标点；
+  - post-bounce 直接用当前真实球状态生成目标，若球已越过 natural plane 但仍在
+    机器人身前窗口内，则目标就是当前真实球点，继续 valid；
+  - invalid 只由物理窗口触发：太低、明显过身、二次落桌、fault、已击球、
+    或明显离开可击打区域。
+- `target_base_xy` 仍然直接等于 `ball_future_pose[:2] + target_base_offset_xy`，
+  不引入任何历史状态。
+- 新增 `PACE_TARGET_INVALID_RALLY_DONE` 和 `pace/invalid_rally_done` metric，
+  区分 rally 已结束和物理窗口不可击打。
+
+验证：
+
+- `FORCE_CPU=1 UV_CACHE_DIR=/tmp/uv-cache MPLCONFIGDIR=/tmp/mplconfig uv run pytest tests/test_pingpong_task.py tests/test_pingpong_state.py tests/test_pingpong_observations.py -q`
+  -> `39 passed`。
+- `UV_CACHE_DIR=/tmp/uv-cache MPLCONFIGDIR=/tmp/mplconfig uv run ruff check src/mjlab/tasks/pingpong tests/test_pingpong_task.py tests/test_pingpong_state.py tests/test_pingpong_observations.py`
+  -> passed。
+- `UV_CACHE_DIR=/tmp/uv-cache MPLCONFIGDIR=/tmp/mplconfig uv run ty check src/mjlab/tasks/pingpong tests/test_pingpong_task.py tests/test_pingpong_state.py tests/test_pingpong_observations.py`
+  -> passed。
+
+训练影响：
+
+- 已经启动的 `pingpong_pace_bounce_true_hit_16384env_gpu1` 仍使用旧硬平面逻辑；
+  需要重启同规模 run 才会使用 wide valid window。
+
+### 2026-07-08 21:57 Tennis distillation four-motion validation
+
+目标：
+
+- 验证
+  `/data0/universe/home_moved/mjlab_latent/logs/rsl_rl/g1_distillation/distill_cloud_unitree_racket_tennis_2026-05-12_09-35-14/model_30000.pt`
+  是否可作为 Tennis latent decoder 候选。
+- 固定 teacher 为
+  `/data0/universe/home_moved/mjlab_latent/logs/rsl_rl/g1_tracking/tennis/model_29999.pt`，
+  motions 为 `artifacts/tennis_random_001` 到 `004`。
+
+本次实现：
+
+- 新增 `latent_analysis/validate_tennis_distillation.py`。
+- 脚本支持三层验证：
+  - 调用 `latent_analysis/analyze_latent_space.py` 做每条 motion 4096 sample
+    离线重构；
+  - 对 teacher、posterior、prior 分别做闭环 tracking rollout；
+  - 用 `--video-only` 在已有正式 JSON 上补录 teacher/posterior/prior 视频。
+- 输出固定 schema 的 `validation_results.json` 和面向人工阅读的
+  `VALIDATION_REPORT.md`。
+
+正式验证：
+
+- 输出目录：
+  `latent_analysis/outputs_tennis_verify_4x4096/`。
+- Offline 结果：
+  posterior MSE `0.080762`，prior MSE `0.0970171`，
+  active latent dims `8/16`，按阈值为 `not_ready`。
+- Per-motion prior MSE：
+  `001=0.0971468`，`002=0.0969540`，`003=0.105467`，
+  `004=0.0885003`。
+- Top prior joint errors 集中在 wrist/shoulder/elbow/knee/hip 链路，包括
+  `left_wrist_yaw_joint`、`right_shoulder_pitch_joint`、`left_elbow_joint`、
+  `right_knee_joint`。
+- GPU2 host/EGL 闭环 rollout，`128` env：
+  - `tennis_random_001` teacher/posterior/prior success =
+    `1.000/0.875/0.000`；
+  - `tennis_random_002` = `1.000/0.000/0.000`；
+  - `tennis_random_003` = `1.000/0.000/0.000`；
+  - `tennis_random_004` = `1.000/0.000/0.000`。
+- 主要 early termination 为 `ee_body_pos`，posterior/prior 在多条 motion 上
+  系统性腕部/末端偏离。
+- 已生成 12 路单视频和 4 个三路并排 compare mp4，均在
+  `latent_analysis/outputs_tennis_verify_4x4096/videos/`。
+
+结论：
+
+- 该 checkpoint 对四条 tennis_random motion 的 decoder 级验证结论为
+  `not_ready`。
+- 这不是单纯 t-SNE 可视化不好看的问题：离线重构超过阈值，且闭环 tracking
+  在 `002~004` 的 posterior 上全部失败；prior 在四条 motion 上全部失败。
+- 不建议把它作为当前 Tennis Hit/Cross 默认 frozen decoder。若仍跑 Tennis
+  下游，只应作为诊断实验，不应作为 promotion run。
+
+验证命令：
+
+```sh
+UV_CACHE_DIR=/home/universe/workspace/mjlab_latent/.uv-cache \
+  uv run python -m py_compile latent_analysis/validate_tennis_distillation.py
+
+UV_CACHE_DIR=/home/universe/workspace/mjlab_latent/.uv-cache \
+  uv run ruff check latent_analysis/validate_tennis_distillation.py
+
+CUDA_VISIBLE_DEVICES=2 MJLAB_WARP_QUIET=1 \
+UV_CACHE_DIR=/home/universe/workspace/mjlab_latent/.uv-cache \
+MPLCONFIGDIR=/home/universe/workspace/mjlab_latent/latent_analysis/outputs_tennis_verify_4x4096/mplconfig \
+  uv run python latent_analysis/validate_tennis_distillation.py \
+  --output-dir latent_analysis/outputs_tennis_verify_4x4096 \
+  --samples-per-motion 4096 --rollout-num-envs 128 --device cuda:0
+
+CUDA_VISIBLE_DEVICES=2 MUJOCO_GL=egl MJLAB_WARP_QUIET=1 \
+UV_CACHE_DIR=/home/universe/workspace/mjlab_latent/.uv-cache \
+MPLCONFIGDIR=/home/universe/workspace/mjlab_latent/latent_analysis/outputs_tennis_verify_4x4096/mplconfig \
+  uv run python latent_analysis/validate_tennis_distillation.py \
+  --output-dir latent_analysis/outputs_tennis_verify_4x4096 \
+  --video-only --device cuda:0 --video-length 600
+```
+
+### 2026-07-08 22:35 Tennis distillation teacher-forcing fixed run
+
+目标：
+
+- 按用户要求尝试“不退火 teacher”，即训练全程保持
+  `teacher_action_prob=1.0`，验证上一版 Tennis decoder 失败是否来自 teacher
+  action 概率从 `1.0` 退火到 `0.2` 后 student rollout 分布漂移。
+
+启动情况：
+
+- 先误启动了一次 `distill_tennis_teacher_fixed_2026-07-08_22-34-21`，发现当前
+  本地源码默认跑成 `num_envs=1` 且 KL 权重使用 dataclass 默认 `0.01`，不适合
+  和旧基线对照；该 tmux session 已用 Ctrl-C 停止，不作为实验结果。
+- 随后启动正式对照 run：
+  tmux session `distill_tennis_teacher_fixed_4096_gpu2_20260708`。
+- Run dir：
+  `logs/rsl_rl/g1_distillation/distill_tennis_teacher_fixed_4096env_2026-07-08_22-35-19`。
+- W&B run id：`95pxe2ao`。
+- 使用 host GPU2，通过 `CUDA_VISIBLE_DEVICES=2` 暴露为进程内 `cuda:0`。
+
+关键对照配置：
+
+- `env.scene.num_envs=4096`。
+- `teacher_checkpoint=/data0/universe/home_moved/mjlab_latent/logs/rsl_rl/g1_tracking/tennis/model_29999.pt`。
+- `teacher_action_prob=1.0`。
+- `teacher_action_prob_end=1.0`。
+- `teacher_action_prob_anneal_iters=0`。
+- 为和旧基线保持一致，显式设置 KL schedule：
+  `kl_loss_weight=0.001`，`kl_loss_weight_end=0.005`，
+  `kl_loss_anneal_start=2500`，`kl_loss_anneal_end=10000`。
+
+启动验证：
+
+- 训练日志确认 `Number of environments | 4096`。
+- iteration 0：`action≈1.27899`，`prior_action≈1.28788`，
+  `teacher_prob=1.000`，`kl_w=0.001`，buffer `65536`。
+- iteration 30：`action≈0.02342`，`prior_action≈0.02354`，
+  `teacher_prob=1.000`，`kl_w=0.001`，buffer 已满 `1048576`。
+- 已写出 `model_0.pt`、ONNX、TensorBoard event 和 params。
+
+正式启动命令：
+
+```sh
+CUDA_VISIBLE_DEVICES=2 MJLAB_WARP_QUIET=1 \
+UV_CACHE_DIR=/home/universe/workspace/mjlab_latent/.uv-cache \
+MPLCONFIGDIR=/home/universe/workspace/mjlab_latent/logs/mplconfig \
+  uv run train Mjlab-Distill-Flat-Unitree-G1 --gpu-ids [0] \
+  --env.scene.num-envs 4096 \
+  --agent.run-name distill_tennis_teacher_fixed_4096env \
+  --agent.resume False \
+  --agent.teacher-checkpoint /data0/universe/home_moved/mjlab_latent/logs/rsl_rl/g1_tracking/tennis/model_29999.pt \
+  --agent.teacher-action-prob 1.0 \
+  --agent.teacher-action-prob-end 1.0 \
+  --agent.teacher-action-prob-anneal-iters 0 \
+  --agent.kl-loss-weight 0.001 \
+  --agent.kl-loss-weight-end 0.005 \
+  --agent.kl-loss-anneal-start 2500 \
+  --agent.kl-loss-anneal-end 10000 \
+  --agent.upload-model False
+```
+
+后续验证：
+
+- 等 `model_250.pt` 或更晚 checkpoint 出现后，优先用
+  `latent_analysis/validate_tennis_distillation.py --skip-offline` 做小规模闭环
+  smoke；如果 posterior still fails，再等 `model_1000.pt` 做正式 4-motion
+  decoder gate。
+
+### 2026-07-08 22:37 Tennis distillation teacher-forcing fixed 16k env run
+
+用户要求把环境数切到 `16*1024`。已停止前一个 `4096` env session
+`distill_tennis_teacher_fixed_4096_gpu2_20260708`，保留其 run 目录作小规模启动
+记录，不作为主实验。
+
+正式 16k run：
+
+- tmux session：`distill_tennis_teacher_fixed_16384_gpu2_20260708`。
+- Run dir：
+  `logs/rsl_rl/g1_distillation/distill_tennis_teacher_fixed_16384env_2026-07-08_22-37-49`。
+- W&B run id：`zcqkkdza`。
+- 使用 host GPU2，进程内设备为 `cuda:0`。
+- `env.scene.num_envs=16384`，即 `16*1024`。
+- 仍保持 teacher 不退火：
+  `teacher_action_prob=1.0`、`teacher_action_prob_end=1.0`、
+  `teacher_action_prob_anneal_iters=0`。
+- 仍保持旧基线 KL schedule：
+  `kl_loss_weight=0.001`、`kl_loss_weight_end=0.005`、
+  `kl_loss_anneal_start=2500`、`kl_loss_anneal_end=10000`。
+
+启动检查：
+
+- tmux 输出确认 `Number of environments | 16384`。
+- iteration 0：`action≈1.28238`、`prior_action≈1.29110`、
+  `teacher_prob=1.000`、`kl_w=0.001`、buffer `262144`。
+- iteration 30：`action≈0.02395`、`prior_action≈0.02403`、
+  `teacher_prob=1.000`、buffer 已满 `1048576`。
+- 已写出 `model_0.pt`、ONNX、TensorBoard event 和 params。
+- `nvidia-smi` 在 22:38 显示 GPU2 总显存约 `12905 MiB / 24564 MiB`，
+  其中本次训练进程 PID `3682387` 使用约 `7642 MiB`；GPU util `99%`。
+
+正式启动命令：
+
+```sh
+CUDA_VISIBLE_DEVICES=2 MJLAB_WARP_QUIET=1 \
+UV_CACHE_DIR=/home/universe/workspace/mjlab_latent/.uv-cache \
+MPLCONFIGDIR=/home/universe/workspace/mjlab_latent/logs/mplconfig \
+  uv run train Mjlab-Distill-Flat-Unitree-G1 --gpu-ids [0] \
+  --env.scene.num-envs 16384 \
+  --agent.run-name distill_tennis_teacher_fixed_16384env \
+  --agent.resume False \
+  --agent.teacher-checkpoint /data0/universe/home_moved/mjlab_latent/logs/rsl_rl/g1_tracking/tennis/model_29999.pt \
+  --agent.teacher-action-prob 1.0 \
+  --agent.teacher-action-prob-end 1.0 \
+  --agent.teacher-action-prob-anneal-iters 0 \
+  --agent.kl-loss-weight 0.001 \
+  --agent.kl-loss-weight-end 0.005 \
+  --agent.kl-loss-anneal-start 2500 \
+  --agent.kl-loss-anneal-end 10000 \
+  --agent.upload-model False
+```
+
+后续优先验证：
+
+- 到 `model_250.pt` 后先跑 4-motion 快速闭环 smoke。
+- 到 `model_1000.pt` 或更晚 checkpoint 后跑完整
+  `latent_analysis/validate_tennis_distillation.py` gate，对比原始
+  `model_30000.pt` 的 `not_ready` 报告。
+
+### 2026-07-08 23:00 G1 PACE wide-valid v2 resume on GPU1
+
+按用户要求，不再从头启动，而是把旧 GPU1 run 以 resume 方式重启为 v2。
+旧 run 使用的是 hard natural-hit-plane 逻辑；这次 v2 使用当前代码中的
+PACE-style wide valid hit window。
+
+已停止旧 session：
+
+- `pingpong_pace_bounce_true_hit_16384_gpu1_20260708`
+- 旧 run dir：
+  `logs/rsl_rl/g1_pingpong_pace/pingpong_pace_bounce_true_hit_16384env_gpu1_2026-07-08_21-13-54`
+- 续训 checkpoint：
+  `logs/rsl_rl/g1_pingpong_pace/pingpong_pace_bounce_true_hit_16384env_gpu1_2026-07-08_21-13-54/model_500.pt`
+
+新 v2 run：
+
+- tmux session：`pingpong_pace_bounce_true_hit_wide_valid_v2_16384_gpu1_20260708`
+- Run dir：
+  `logs/rsl_rl/g1_pingpong_pace/pingpong_pace_bounce_true_hit_wide_valid_v2_16384env_gpu1_2026-07-08_23-00-30`
+- W&B run id：`o65jmxf9`
+- 使用 host GPU1，进程内设备为 `cuda:0`。
+- `env.scene.num_envs=16384`，即 `16*1024`。
+
+启动命令：
+
+```sh
+CUDA_VISIBLE_DEVICES=1 MUJOCO_GL=egl UV_CACHE_DIR=/tmp/uv-cache \
+MPLCONFIGDIR=/tmp/mplconfig \
+uv run train Mjlab-Pingpong-PACE-Unitree-G1 \
+  --env.scene.num-envs 16384 \
+  --gpu-ids "[0]" \
+  --agent.resume True \
+  --agent.load-checkpoint-file /home/universe/workspace/mjlab_latent/logs/rsl_rl/g1_pingpong_pace/pingpong_pace_bounce_true_hit_16384env_gpu1_2026-07-08_21-13-54/model_500.pt \
+  --agent.experiment-name g1_pingpong_pace \
+  --agent.run-name pingpong_pace_bounce_true_hit_wide_valid_v2_16384env_gpu1 \
+  --agent.upload-model False
+```
+
+启动检查：
+
+- tmux 输出确认 loaded checkpoint 为旧 run 的 `model_500.pt`。
+- `nvidia-smi` 在 23:01 显示 GPU1 本次训练进程 PID `3694393`，
+  显存约 `18164 MiB`，GPU util 约 `92%`。
+- 第一个已打印 iteration 无 NaN：`Mean action std=0.32`，
+  `Mean reward=-17.63`，`Steps/s≈40697`。
+- 新 target 诊断已生效：
+  `pace/target_valid_rate≈0.793`、
+  `pace/post_bounce_direct_prediction_rate≈0.246`、
+  `pace/posture_gate_mean≈0.855`、
+  `pace/invalid_rally_done≈0.023`。
+- 目前击球类 sparse metrics 仍为 0：
+  `paddle_hit_count=0`、`legal_return_count=0`。这只是刚 resume 的早期状态，
+  需要继续观察后续 checkpoint 和 debug-overlay 视频。
+
+### 2026-07-08 23:08 G1 PACE waist-roll/pitch lock ablation
+
+目标：
+
+- 按用户要求尝试锁定 G1 PACE direct-control 里的 `waist_roll_joint` 和
+  `waist_pitch_joint`，保留 `waist_yaw_joint` 可控。
+- 该改动只作用于 `Mjlab-Pingpong-PACE-Unitree-G1` 的 direct `joint_pos`
+  action scale，不影响 latent Hit/Cross/StrikeQuality 的 frozen-decoder action。
+
+代码改动：
+
+- `src/mjlab/tasks/pingpong/config/g1/env_cfgs.py`
+  新增 `G1_PACE_LOCKED_WAIST_JOINTS=("waist_roll_joint", "waist_pitch_joint")`。
+- `G1_PACE_ACTION_SCALE` 仍先从 `G1_W_RACKET_ACTION_SCALE` 派生并 cap 到 `0.18`，
+  然后把上述两个腰部关节 scale 置为 `0.0`。
+- `waist_yaw_joint` 保持原 PACE scale，可继续参与转身。
+
+验证：
+
+- `FORCE_CPU=1 UV_CACHE_DIR=/tmp/uv-cache MPLCONFIGDIR=/tmp/mplconfig uv run pytest tests/test_pingpong_task.py -q`
+  -> `16 passed`。
+- `UV_CACHE_DIR=/tmp/uv-cache MPLCONFIGDIR=/tmp/mplconfig uv run ruff check src/mjlab/tasks/pingpong/config/g1/env_cfgs.py tests/test_pingpong_task.py`
+  -> passed。
+- `UV_CACHE_DIR=/tmp/uv-cache MPLCONFIGDIR=/tmp/mplconfig uv run ty check src/mjlab/tasks/pingpong/config/g1/env_cfgs.py tests/test_pingpong_task.py`
+  -> passed。
+
+训练计划：
+
+- 停止旧 GPU3 session
+  `pingpong_pace_reference_arm_scratch_natural_hit_15360_gpu3_20260708`。
+- 在 GPU3 上启动新的 PACE waist-lock ablation run，继续使用 15360 env，
+  run name 使用 `pingpong_pace_waist_yaw_only_ablation_15360env_gpu3`。
+
+启动结果：
+
+- 旧 GPU3 session 已温和停止，GPU3 上旧 PACE 训练进程释放。
+- 新 tmux session：
+  `pingpong_pace_waist_yaw_only_ablation_15360_gpu3_20260708`。
+- Run dir：
+  `logs/rsl_rl/g1_pingpong_pace/pingpong_pace_waist_yaw_only_ablation_15360env_gpu3_2026-07-08_23-27-34`。
+- 启动命令：
+
+```sh
+CUDA_VISIBLE_DEVICES=3 MUJOCO_GL=egl UV_CACHE_DIR=/tmp/uv-cache \
+MPLCONFIGDIR=/tmp/mplconfig \
+uv run train Mjlab-Pingpong-PACE-Unitree-G1 \
+  --env.scene.num-envs 15360 \
+  --gpu-ids "[0]" \
+  --agent.resume False \
+  --agent.experiment-name g1_pingpong_pace \
+  --agent.run-name pingpong_pace_waist_yaw_only_ablation_15360env_gpu3 \
+  --agent.upload-model False
+```
+
+启动检查：
+
+- `params/env.yaml` 已确认：
+  `waist_yaw_joint: 0.18`，`waist_pitch_joint: 0.0`，
+  `waist_roll_joint: 0.0`。
+- `nvidia-smi` 在 23:28 显示 GPU3 本次训练进程 PID `3726183`，
+  显存约 `17150 MiB`，GPU util 约 `93%`。
+- iteration 1 无 NaN：`Mean action std=0.40`，
+  `Mean reward=-18.50`，`predictor_mse≈0.0051`。
+- target 诊断：`pace/target_valid_rate≈0.856`，
+  `pace/post_bounce_direct_prediction_rate≈0.176`，
+  `pace/posture_gate_mean≈0.673`。
+- 击球类 sparse metrics 仍为 0；早期 body-ball fault 偏高：
+  `robot_ball_contact_count≈1.365`，`fault_reason/body_ball≈0.594`。
+  需要观察腰部锁定是否减少后续侧倾，还是因为躯干自由度降低导致前期更容易身体碰球。
+
+### 2026-07-09 09:20 G1 PACE reward v2 for waist-lock
+
+目标：
+
+- 保持真实 `ball_future_pose` 语义不变，不改目标高度，不做 smoothing/EMA/lock。
+- 在当前锁腰设定下增强拍子追踪到未来击球点的驱动，降低 reset-pose 低拍子
+  z-offset 和激进 lateral base velocity 的干扰。
+
+代码改动：
+
+- `G1_PACE_GEOMETRY.target_base_vel_gain` 从 `4.0` 降到 `2.0`，
+  `target_base_vel_max` 从 `7.0` 降到 `2.5`。
+- `PACE_TASK_REWARD_WEIGHTS`：
+  - `pace_future_ee_target: 2.0 -> 8.0`
+  - 新增 `pace_future_paddle_height_target=4.0`
+  - `pace_forehand_paddle_offset: 6.0 -> 3.0`
+  - 新增 `pace_step_air_time=0.5`
+- `pace_forehand_paddle_offset` 保留原参数接口，但 reward 内部只看
+  root-local XY error，忽略 z error。
+- `pace_future_paddle_height_target` 只追 `paddle_z` 到
+  `ball_future_pose.z`，并乘 `reward_active * posture_gate`。
+- `pace_step_air_time` 复用现有 `pace_foot_contact.current_air_time`，只在
+  `reward_active`、`future_t>0.18`、`norm(robot_future_vel[:2])>0.5` 时生效。
+- 新增 diagnostics metrics：
+  `pace/active_future_z_mean`、`pace/active_paddle_z_mean`、
+  `pace/active_ee_dist_mean`、`pace/active_target_base_speed_mean`、
+  `pace/active_root_speed_mean`。
+
+验证：
+
+- `FORCE_CPU=1 UV_CACHE_DIR=/tmp/uv-cache MPLCONFIGDIR=/tmp/mplconfig uv run pytest tests/test_pingpong_state.py tests/test_pingpong_task.py -q`
+  -> `40 passed`。
+- `UV_CACHE_DIR=/tmp/uv-cache MPLCONFIGDIR=/tmp/mplconfig uv run ruff check src/mjlab/tasks/pingpong/mdp/pace.py src/mjlab/tasks/pingpong/pingpong_env_cfg.py src/mjlab/tasks/pingpong/pace_geometry.py tests/test_pingpong_state.py tests/test_pingpong_task.py`
+  -> passed。
+- `UV_CACHE_DIR=/tmp/uv-cache MPLCONFIGDIR=/tmp/mplconfig uv run ty check src/mjlab/tasks/pingpong tests/test_pingpong_state.py tests/test_pingpong_task.py`
+  -> passed。
+
+训练计划：
+
+- 停止旧 GPU3 run
+  `pingpong_pace_waist_yaw_only_ablation_15360_gpu3_20260708`。
+- 在 GPU3 上 scratch 启动 reward v2：
+  `pingpong_pace_waist_lock_reward_v2_15360env_gpu3`。
+  重点观察 active future/paddle z、ee distance、target/root speed、
+  `paddle_hit_count`、`fault_reason/body_ball`、`bad_orientation` 和
+  `root_height`。
+
+启动结果：
+
+- 旧 GPU3 session 已温和停止，GPU3 显存释放。
+- 新 tmux session：
+  `pingpong_pace_waist_lock_reward_v2_15360_gpu3_20260709`。
+- Run dir：
+  `logs/rsl_rl/g1_pingpong_pace/pingpong_pace_waist_lock_reward_v2_15360env_gpu3_2026-07-09_06-33-59`。
+- 启动命令：
+
+```sh
+CUDA_VISIBLE_DEVICES=3 MUJOCO_GL=egl UV_CACHE_DIR=/tmp/uv-cache \
+MPLCONFIGDIR=/tmp/mplconfig \
+uv run train Mjlab-Pingpong-PACE-Unitree-G1 \
+  --env.scene.num-envs 15360 \
+  --gpu-ids "[0]" \
+  --agent.resume False \
+  --agent.experiment-name g1_pingpong_pace \
+  --agent.run-name pingpong_pace_waist_lock_reward_v2_15360env_gpu3 \
+  --agent.upload-model False
+```
+
+启动检查：
+
+- `params/env.yaml` 确认：
+  `waist_yaw_joint: 0.18`、`waist_pitch_joint: 0.0`、
+  `waist_roll_joint: 0.0`，并且所有 PACE state params 中
+  `target_base_vel_gain=2.0`、`target_base_vel_max=2.5`。
+- 新 reward / metrics 已写入 resolved env：
+  `pace_future_paddle_height_target`、`pace_step_air_time`、
+  `pace/active_future_z_mean`、`pace/active_paddle_z_mean`、
+  `pace/active_ee_dist_mean`、`pace/active_target_base_speed_mean`、
+  `pace/active_root_speed_mean`。
+- `nvidia-smi` 在 06:34 显示 GPU3 本次训练进程 PID `3899495`，
+  显存约 `17150 MiB`，GPU util 约 `78%`。
+- iteration 2 无 NaN：`Mean action std=0.40`，
+  `Mean reward=-20.23`，`predictor_mse≈0.0028`。
+- v2 早期诊断：
+  `pace/active_future_z_mean≈0.838`、
+  `pace/active_paddle_z_mean≈0.415`、
+  `pace/active_ee_dist_mean≈0.493`、
+  `pace/active_target_base_speed_mean≈1.100`、
+  `pace/active_root_speed_mean≈0.160`。
+- 早期 sparse hit 仍为 0；`fault_reason/body_ball≈0.686`，
+  `root_height` termination 仍偏高。该指标用于后续判断 v2 是否把
+  `paddle_z` 从约 `0.41m` 推近 `future_z`。
+
+### 2026-07-09 01:10 Pingpong table-tennis distillation 16500/30000 validation
+
+目标：
+
+- 按用户要求对 table-tennis distillation run 的 `model_16500.pt` 和
+  `model_30000.pt` 做同采样离线重评，并补闭环 tracking/video。
+
+执行：
+
+- Offline 同采样：
+  `1024 samples/motion`、13 条 `artifacts/table_tennis/*/motion.npz`、
+  seed `42`。
+- 输出：
+  `latent_analysis/outputs_table_tennis_compare_1024_model16500/`
+  和
+  `latent_analysis/outputs_table_tennis_compare_1024_model30000/`。
+- 闭环：
+  `fanshou_001` 用 `128 envs` full-motion rollout，并录 teacher/posterior/prior
+  三路视频和 compare 视频。
+- Heldout：
+  `test_001` 用 `128 envs` full-motion rollout，不录视频。
+- 汇总报告：
+  `latent_analysis/outputs_table_tennis_compare_1024/VALIDATION_SUMMARY.md`。
+
+关键结果：
+
+- 同采样离线后，之前“16500 明显更好”的判断被修正：
+  - `model_16500.pt` posterior/prior MSE = `0.044428 / 0.060028`，
+    KL mean = `2.34028`。
+  - `model_30000.pt` posterior/prior MSE = `0.046116 / 0.058713`，
+    KL mean = `5.42503`。
+  - 30000 prior MSE 稍好，16500 posterior/KL 稍好，但两者都有
+    `fanshou_a_001` 和 `fanshou_jingtai_a_001` per-motion outlier。
+- 闭环 `fanshou_001`：
+  - 16500 teacher/posterior/prior success =
+    `1.000 / 0.000 / 0.000`。
+  - 30000 teacher/posterior/prior success =
+    `1.000 / 0.188 / 0.000`。
+- Heldout `test_001`：
+  - 两个 checkpoint 的 teacher/posterior/prior success 都是
+    `1.000 / 0.000 / 0.000`。
+- 失败终止集中在 `ee_body_pos`，说明 teacher 和 motion artifact 本身可跑，
+  但 student decoder 闭环下末端/身体跟踪误差快速放大。
+
+结论：
+
+- 两个 checkpoint 都判为 `not_ready`，不可作为当前 Pingpong high-level RL 的
+  默认 frozen decoder。
+- 这不是单纯 t-SNE/latent 分离问题；离线 teacher-forced action MSE 看起来
+  只到 caution 边界，但闭环 tracking 已经系统性失败。
+
+### 2026-07-09 09:50 Pingpong latest table-tennis distillation model_30000 full validation
+
+目标：
+
+- 按用户要求对当前最新 table-tennis distillation checkpoint 重新评测，并补全
+  all-motion 闭环 tracking/video。
+
+输入：
+
+- Student:
+  `logs/rsl_rl/g1_distillation_table_tennis/table_tennis_distill_v2_46080env_kl_aligned_from_tracking18000_gpu1_2026-07-05_23-43-32/model_30000.pt`
+- Teacher:
+  `/data0/universe/home_moved/mjlab_latent/logs/rsl_rl/g1_tracking_table_tennis/table_tennis_tracking_v1_18432env_gpu2_2026-07-02_17-39-35/model_18000.pt`
+- Motions: 13 条 `artifacts/table_tennis/*/motion.npz`
+- 输出目录:
+  `latent_analysis/outputs_table_tennis_latest_model30000_verify_4x4096/`
+
+执行：
+
+- 离线重构：`4096 samples/motion`，GPU2 host execution，
+  `Mjlab-Distill-TableTennis-Unitree-G1`。
+- 闭环 tracking：每条 motion 分别评估 teacher/posterior/prior，
+  `128 envs`，禁用事件扰动，full-motion rollout。
+- 视频：每条 motion 录 teacher/posterior/prior 三路视频，并生成 compare 视频。
+
+关键结果：
+
+- 最终 verdict: `not_ready`。
+- Offline:
+  - posterior/prior MSE = `0.0475539 / 0.0599306`
+  - active dims = `9/16`
+  - posterior-prior KL mean = `5.76292`，max = `10136.5`
+  - per-motion prior outlier: `mix_a_001`
+  - top joint errors 仍集中在挥拍链路：
+    `right_wrist_yaw_joint`、`right_elbow_joint`、
+    `right_shoulder_pitch_joint`、`right_wrist_roll_joint`。
+- Closed-loop:
+  - teacher success 全部 `1.000`
+  - prior success 全部 `0.000`
+  - posterior mean success 约 `0.741`
+  - posterior 明显失败 case:
+    `fanshou_001=0.211`、`mix_001=0.000`、
+    `mix_a_001=0.727`、`test_001=0.000`、
+    `zhengshou_002_badend=0.844`
+  - 失败终止集中在 `ee_body_pos`。
+
+结论：
+
+- `model_30000.pt` 离线 teacher-forced reconstruction 仍处于 caution 边界，
+  但闭环 tracking 不可用，尤其 prior 完全不成立，heldout `test_001` 的
+  posterior 也完全失败。
+- 该 checkpoint 不应作为当前 Pingpong high-level RL 默认 frozen decoder；
+  只能作为离线分析或局部 posterior playback 诊断材料。

@@ -49,6 +49,16 @@ DEFAULT_TASK_ID = "Mjlab-Distill-TableTennis-Unitree-G1"
 DEFAULT_MOTION_PATTERN = "*/motion.npz"
 ACTIVE_DIM_STD_THRESHOLD = 0.03
 PLOT_SAMPLE_LIMIT = 6000
+CATEGORY_COLOR_OVERRIDES = {
+  "run": "#1f77b4",
+  "sprint": "#d95f02",
+  "walk": "#2ca02c",
+}
+CATEGORY_ORDER_OVERRIDES = {
+  "run": 0,
+  "sprint": 1,
+  "walk": 2,
+}
 
 
 def parse_args() -> argparse.Namespace:
@@ -61,6 +71,7 @@ def parse_args() -> argparse.Namespace:
   parser.add_argument(
     "--checkpoint", type=Path, default=DEFAULT_TABLE_TENNIS_CHECKPOINT
   )
+  parser.add_argument("--teacher-checkpoint", type=Path, default=None)
   parser.add_argument("--task-id", type=str, default=DEFAULT_TASK_ID)
   parser.add_argument("--analysis-label", type=str, default="table-tennis")
   parser.add_argument(
@@ -116,6 +127,12 @@ def motion_split(name: str) -> str:
 
 
 def motion_family(name: str) -> str:
+  if name.startswith("g1_run"):
+    return "run"
+  if name.startswith("g1_sprint"):
+    return "sprint"
+  if name.startswith("g1_walk"):
+    return "walk"
   if name.startswith("fanshou"):
     return "fanshou"
   if name.startswith("zhengshou"):
@@ -327,13 +344,21 @@ def load_runner(
   env: RslRlVecEnvWrapper,
   *,
   device: str,
+  teacher_checkpoint_override: Path | None,
 ) -> tuple[OnlineDistillationRunner, dict[str, Any], Path, dict[str, Any]]:
   checkpoint_data = torch.load(checkpoint, map_location="cpu", weights_only=False)
   cfg_dict = dict(checkpoint_data["cfg"])
-  teacher_checkpoint = resolve_teacher_checkpoint(
-    str(cfg_dict["teacher_checkpoint"]),
-    checkpoint,
-  )
+  if teacher_checkpoint_override is None:
+    teacher_checkpoint = resolve_teacher_checkpoint(
+      str(cfg_dict["teacher_checkpoint"]),
+      checkpoint,
+    )
+  else:
+    teacher_checkpoint = teacher_checkpoint_override.expanduser()
+    if not teacher_checkpoint.is_absolute():
+      teacher_checkpoint = (REPO_ROOT / teacher_checkpoint).resolve()
+    if not teacher_checkpoint.exists():
+      raise FileNotFoundError(f"Teacher checkpoint not found: {teacher_checkpoint}")
   cfg_dict["teacher_checkpoint"] = str(teacher_checkpoint)
 
   runner = OnlineDistillationRunner(env, cfg_dict, log_dir=None, device=device)
@@ -376,6 +401,7 @@ def collect_samples(
       checkpoint,
       vec_env,
       device=args.device,
+      teacher_checkpoint_override=args.teacher_checkpoint,
     )
     teacher_policy = runner._load_teacher_policy()  # noqa: SLF001
     motion_cmd = cast(
@@ -717,17 +743,21 @@ def plot_scatter_by_category(
   explained: np.ndarray,
 ) -> None:
   fig, ax = plt.subplots(figsize=(8, 6), dpi=160)
-  unique = sorted(set(labels.tolist()))
+  unique = sorted(
+    set(labels.tolist()),
+    key=lambda label: (CATEGORY_ORDER_OVERRIDES.get(str(label), 100), str(label)),
+  )
   cmap = plt.get_cmap("tab20", max(len(unique), 1))
   for idx, label in enumerate(unique):
     mask = labels == label
+    color = CATEGORY_COLOR_OVERRIDES.get(str(label), cmap(idx))
     ax.scatter(
       coords[mask, 0],
       coords[mask, 1],
       s=8,
       alpha=0.62,
       label=str(label),
-      color=cmap(idx),
+      color=color,
       linewidths=0,
     )
   ax.set_title(title)
@@ -1065,6 +1095,8 @@ def write_report(
   image_names = [
     "latent_pca_by_motion.png",
     "latent_pca_by_family.png",
+    "latent_tsne_by_family.png",
+    "latent_umap_by_family.png",
     "latent_pca_by_phase.png",
     "latent_dim_activity.png",
     "prior_posterior_alignment.png",

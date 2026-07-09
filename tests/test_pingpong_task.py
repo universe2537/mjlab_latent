@@ -13,9 +13,18 @@ from mjlab.scene import Scene
 from mjlab.scripts.play import _apply_decoder_checkpoint_override
 from mjlab.sensor import ContactSensorCfg
 from mjlab.tasks.distillation.rl.config import DistillationRunnerCfg
+from mjlab.tasks.pingpong.bounce import (
+  PINGPONG_BALL_MASS,
+  PINGPONG_BOUNCE_FRICTION,
+  PINGPONG_BOUNCE_SOLIMP,
+  PINGPONG_BOUNCE_SOLREF,
+  PINGPONG_POST_BOUNCE_HORIZONTAL_SCALE,
+  PINGPONG_POST_BOUNCE_VERTICAL_SCALE,
+)
 from mjlab.tasks.pingpong.config.g1.env_cfgs import (
   DEFAULT_DECODER_CHECKPOINT,
   G1_PACE_ACTION_SCALE,
+  G1_PACE_LOCKED_WAIST_JOINTS,
   PINGPONG_PADDLE_CENTER_POS,
   PINGPONG_PADDLE_HAND_CLEARANCE,
   PINGPONG_PADDLE_RADIUS,
@@ -150,6 +159,41 @@ def test_pingpong_task_scene_compiles() -> None:
     assert any(name.startswith("pingpong_ball_net_contact") for name in sensor_names)
     assert any(name.startswith("robot_table_contact") for name in sensor_names)
     assert any(name.startswith("robot_ball_contact") for name in sensor_names)
+    ball_body_id = mujoco.mj_name2id(
+      model,
+      mujoco.mjtObj.mjOBJ_BODY,
+      "ball/pingpong_ball_body",
+    )
+    assert ball_body_id >= 0
+    torch.testing.assert_close(
+      torch.as_tensor(model.body_mass[ball_body_id]),
+      torch.as_tensor(PINGPONG_BALL_MASS, dtype=torch.float64),
+      atol=1.0e-9,
+      rtol=0.0,
+    )
+    for geom_name in (
+      "ball/pingpong_ball",
+      "table/pingpong_table_top_collision",
+    ):
+      geom_id = geom_by_name[geom_name]
+      torch.testing.assert_close(
+        torch.as_tensor(model.geom_friction[geom_id, :3]),
+        torch.as_tensor(PINGPONG_BOUNCE_FRICTION, dtype=torch.float64),
+        atol=1.0e-9,
+        rtol=0.0,
+      )
+      torch.testing.assert_close(
+        torch.as_tensor(model.geom_solref[geom_id]),
+        torch.as_tensor(PINGPONG_BOUNCE_SOLREF, dtype=torch.float64),
+        atol=1.0e-9,
+        rtol=0.0,
+      )
+      torch.testing.assert_close(
+        torch.as_tensor(model.geom_solimp[geom_id]),
+        torch.as_tensor(PINGPONG_BOUNCE_SOLIMP, dtype=torch.float64),
+        atol=1.0e-9,
+        rtol=0.0,
+      )
     has_foot_contact = any(
       name.startswith(PACE_FOOT_CONTACT_SENSOR) for name in sensor_names
     )
@@ -309,6 +353,10 @@ def test_pingpong_pace_env_uses_direct_joint_action() -> None:
   assert action.scale == G1_PACE_ACTION_SCALE
   assert G1_PACE_ACTION_SCALE.keys() == G1_W_RACKET_ACTION_SCALE.keys()
   assert max(G1_PACE_ACTION_SCALE.values()) <= 0.18
+  for joint_name in G1_PACE_LOCKED_WAIST_JOINTS:
+    assert G1_PACE_ACTION_SCALE[joint_name] == 0.0
+  assert G1_PACE_ACTION_SCALE["waist_yaw_joint"] > 0.0
+  assert G1_PACE_ACTION_SCALE["waist_yaw_joint"] <= 0.18
   assert any(
     G1_PACE_ACTION_SCALE[name] < G1_W_RACKET_ACTION_SCALE[name]
     for name in G1_PACE_ACTION_SCALE
@@ -318,6 +366,8 @@ def test_pingpong_pace_env_uses_direct_joint_action() -> None:
   assert PACE_TARGET_ROOT_HEIGHT == G1_PACE_GEOMETRY.target_root_height
   assert PACE_TARGET_BASE_VEL_GAIN == G1_PACE_GEOMETRY.target_base_vel_gain
   assert PACE_TARGET_BASE_VEL_MAX == G1_PACE_GEOMETRY.target_base_vel_max
+  assert PACE_TARGET_BASE_VEL_GAIN == pytest.approx(2.0)
+  assert PACE_TARGET_BASE_VEL_MAX == pytest.approx(2.5)
   assert PACE_FOREHAND_PADDLE_OFFSET == G1_PACE_GEOMETRY.forehand_paddle_offset
   assert PACE_FOREHAND_PADDLE_OFFSET_STD == (
     G1_PACE_GEOMETRY.forehand_paddle_offset_std
@@ -395,14 +445,22 @@ def test_pingpong_pace_env_uses_direct_joint_action() -> None:
   for reward_name, reward_weight in expected_stability_rewards.items():
     assert cfg.rewards[reward_name].weight == reward_weight
   assert cfg.rewards["action_rate_l2"].weight == -0.01
+  assert cfg.rewards["pace_future_ee_target"].weight == 8.0
+  assert cfg.rewards["pace_future_paddle_height_target"].weight == 4.0
+  assert cfg.rewards["pace_future_paddle_height_target"].params["z_std"] == 0.25
   assert cfg.rewards["pace_forehand_paddle_offset"].params["target_offset"] == (
     PACE_FOREHAND_PADDLE_OFFSET
   )
   assert cfg.rewards["pace_forehand_paddle_offset"].params["offset_std"] == (
     PACE_FOREHAND_PADDLE_OFFSET_STD
   )
+  assert cfg.rewards["pace_forehand_paddle_offset"].weight == 3.0
   assert cfg.rewards["pace_forehand_elbow_extension"].params["target_ratio"] == (
     PACE_FOREHAND_ELBOW_TARGET_RATIO
+  )
+  assert cfg.rewards["pace_step_air_time"].weight == 0.5
+  assert cfg.rewards["pace_step_air_time"].params["sensor_name"] == (
+    PACE_FOOT_CONTACT_SENSOR
   )
   assert cfg.terminations["bad_orientation"].params["limit_angle"] == (
     pytest.approx(PACE_BAD_ORIENTATION_LIMIT)
@@ -414,11 +472,33 @@ def test_pingpong_pace_env_uses_direct_joint_action() -> None:
   assert cfg.curriculum["ball_target_region"].params["success_term_name"] == (
     "legal_return_success"
   )
+  expected_pace_metrics = {
+    "pace/target_valid_rate",
+    "pace/post_bounce_direct_prediction_rate",
+    "pace/posture_gate_mean",
+    "pace/active_future_z_mean",
+    "pace/active_paddle_z_mean",
+    "pace/active_ee_dist_mean",
+    "pace/active_target_base_speed_mean",
+    "pace/active_root_speed_mean",
+    "pace/invalid_not_moving",
+    "pace/invalid_bad_bounce",
+    "pace/invalid_second_bounce",
+    "pace/invalid_out_of_bounds",
+    "pace/invalid_low_or_time",
+    "pace/invalid_numeric",
+    "pace/invalid_rally_done",
+  }
+  assert expected_pace_metrics <= set(cfg.metrics)
+  for metric_name in expected_pace_metrics:
+    assert cfg.metrics[metric_name].reduce == "mean"
 
   cross_cfg = load_env_cfg("Mjlab-Pingpong-Cross-Unitree-G1")
   strike_cfg = load_env_cfg("Mjlab-Pingpong-Cross-StrikeQuality-Unitree-G1")
   assert not any(name.startswith("pace_") for name in cross_cfg.rewards)
   assert not any(name.startswith("pace_") for name in strike_cfg.rewards)
+  assert not any(name.startswith("pace/") for name in cross_cfg.metrics)
+  assert not any(name.startswith("pace/") for name in strike_cfg.metrics)
   for reward_name in ("feet_slide", "feet_force", "feet_stumble"):
     assert reward_name not in cross_cfg.rewards
     assert reward_name not in strike_cfg.rewards
@@ -787,6 +867,12 @@ def test_pingpong_feeder_curriculum_ranges() -> None:
   assert provider_cfg.target_y_range_mode == "field_fraction"
   assert provider_cfg.check.require_edge_crossing
   assert provider_cfg.check.require_second_bounce_outside_self_half
+  assert provider_cfg.post_bounce_horizontal_scale == (
+    PINGPONG_POST_BOUNCE_HORIZONTAL_SCALE
+  )
+  assert provider_cfg.post_bounce_vertical_scale == (
+    PINGPONG_POST_BOUNCE_VERTICAL_SCALE
+  )
 
   curriculum_params = cfg.curriculum["ball_target_region"].params
   assert curriculum_params["provider_cfg"] is provider_cfg
@@ -808,6 +894,8 @@ def test_pingpong_predicted_hit_point_uses_edge_target() -> None:
   assert critic_term.func.__name__ == "ball_predicted_edge_hit_point_b"
   assert "edge_x" not in actor_term.params
   assert "edge_x" not in critic_term.params
+  assert "post_bounce_horizontal_scale" not in actor_term.params
+  assert "post_bounce_vertical_scale" not in actor_term.params
 
 
 def test_reset_actor_distribution_std_updates_loaded_checkpoint_state() -> None:

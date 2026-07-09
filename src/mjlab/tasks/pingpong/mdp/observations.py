@@ -9,6 +9,10 @@ import torch
 from mjlab.entity import Entity
 from mjlab.managers.scene_entity_config import SceneEntityCfg
 from mjlab.tasks.ball_sports import BallSportGeometryCfg, resolve_ball_sport_geometry
+from mjlab.tasks.pingpong.bounce import (
+  PINGPONG_POST_BOUNCE_HORIZONTAL_SCALE,
+  PINGPONG_POST_BOUNCE_VERTICAL_SCALE,
+)
 from mjlab.tasks.tennis.mdp.observations import ball_predicted_hit_point_b
 from mjlab.utils.lab_api.math import quat_apply_inverse
 
@@ -79,8 +83,8 @@ def ball_predicted_edge_hit_point_b(
   bounce_z: float | None = None,
   net_x: float | None = None,
   edge_x: float | None = None,
-  post_bounce_horizontal_scale: float = 0.94,
-  post_bounce_vertical_scale: float = 0.90,
+  post_bounce_horizontal_scale: float = PINGPONG_POST_BOUNCE_HORIZONTAL_SCALE,
+  post_bounce_vertical_scale: float = PINGPONG_POST_BOUNCE_VERTICAL_SCALE,
   edge_clearance: float = 0.02,
   min_time: float = 1.0e-3,
 ) -> torch.Tensor:

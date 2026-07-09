@@ -20,6 +20,10 @@ from mjlab.scene import SceneCfg
 from mjlab.sensor import ContactMatch, ContactSensorCfg
 from mjlab.sim import MujocoCfg, SimulationCfg
 from mjlab.tasks.pingpong import mdp
+from mjlab.tasks.pingpong.bounce import (
+  PINGPONG_POST_BOUNCE_HORIZONTAL_SCALE,
+  PINGPONG_POST_BOUNCE_VERTICAL_SCALE,
+)
 from mjlab.tasks.pingpong.mdp.ball_providers import (
   TableTennisFeederCfg,
   TrajectoryCheckCfg,
@@ -126,14 +130,16 @@ CROSS_STRIKE_QUALITY_REWARD_WEIGHTS: dict[str, float] = {
 CROSS_IMPACT_REWARD_WEIGHTS: dict[str, float] = {}
 PACE_TASK_REWARD_WEIGHTS: dict[str, float] = {
   "pace_contact": 150.0,
-  "pace_future_ee_target": 2.0,
+  "pace_future_ee_target": 8.0,
+  "pace_future_paddle_height_target": 4.0,
   "pace_future_body_target": 5.0,
   "pace_future_base_vel_target": 5.0,
   "pace_future_landing_distance": 60.0,
   "pace_future_pass_net": 100.0,
   "pace_table_success": 100.0,
-  "pace_forehand_paddle_offset": 6.0,
+  "pace_forehand_paddle_offset": 3.0,
   "pace_forehand_elbow_extension": 2.0,
+  "pace_step_air_time": 0.5,
 }
 PACE_TARGET_BASE_OFFSET_XY = G1_PACE_GEOMETRY.target_base_offset_xy
 PACE_NATURAL_HIT_X = G1_PACE_GEOMETRY.natural_hit_x
@@ -239,8 +245,8 @@ def _ball_provider_cfg() -> TableTennisFeederCfg:
     target_y_range_mode="field_fraction",
     vz_std=0.35,
     vz_max=3.4,
-    post_bounce_horizontal_scale=0.94,
-    post_bounce_vertical_scale=0.90,
+    post_bounce_horizontal_scale=PINGPONG_POST_BOUNCE_HORIZONTAL_SCALE,
+    post_bounce_vertical_scale=PINGPONG_POST_BOUNCE_VERTICAL_SCALE,
     check=TrajectoryCheckCfg(
       require_edge_crossing=True,
       require_second_bounce_outside_self_half=True,
@@ -1297,6 +1303,11 @@ def make_pingpong_pace_env_cfg() -> ManagerBasedRlEnvCfg:
       weight=PACE_TASK_REWARD_WEIGHTS["pace_future_ee_target"],
       params={**dict(state_params), "std_ee": 0.5, "threshold": 0.15},
     ),
+    "pace_future_paddle_height_target": RewardTermCfg(
+      func=mdp.pace_future_paddle_height_target,
+      weight=PACE_TASK_REWARD_WEIGHTS["pace_future_paddle_height_target"],
+      params={**dict(state_params), "z_std": 0.25},
+    ),
     "pace_future_body_target": RewardTermCfg(
       func=mdp.pace_future_body_target,
       weight=PACE_TASK_REWARD_WEIGHTS["pace_future_body_target"],
@@ -1345,7 +1356,94 @@ def make_pingpong_pace_env_cfg() -> ManagerBasedRlEnvCfg:
         "std": 0.08,
       },
     ),
+    "pace_step_air_time": RewardTermCfg(
+      func=mdp.pace_step_air_time,
+      weight=PACE_TASK_REWARD_WEIGHTS["pace_step_air_time"],
+      params={
+        **dict(state_params),
+        "sensor_name": PACE_FOOT_CONTACT_SENSOR,
+        "threshold_min": 0.05,
+        "threshold_max": 0.50,
+        "future_time_threshold": 0.18,
+        "target_speed_threshold": 0.50,
+      },
+    ),
   }
+  cfg.metrics["pace/target_valid_rate"] = MetricsTermCfg(
+    func=mdp.pace_target_valid_metric,
+    reduce="mean",
+    params=dict(state_params),
+  )
+  cfg.metrics["pace/post_bounce_direct_prediction_rate"] = MetricsTermCfg(
+    func=mdp.pace_prediction_post_bounce_direct_metric,
+    reduce="mean",
+    params=dict(state_params),
+  )
+  cfg.metrics["pace/posture_gate_mean"] = MetricsTermCfg(
+    func=mdp.pace_posture_gate_metric,
+    reduce="mean",
+    params=dict(state_params),
+  )
+  cfg.metrics["pace/active_future_z_mean"] = MetricsTermCfg(
+    func=mdp.pace_active_future_z_metric,
+    reduce="mean",
+    params=dict(state_params),
+  )
+  cfg.metrics["pace/active_paddle_z_mean"] = MetricsTermCfg(
+    func=mdp.pace_active_paddle_z_metric,
+    reduce="mean",
+    params=dict(state_params),
+  )
+  cfg.metrics["pace/active_ee_dist_mean"] = MetricsTermCfg(
+    func=mdp.pace_active_ee_dist_metric,
+    reduce="mean",
+    params=dict(state_params),
+  )
+  cfg.metrics["pace/active_target_base_speed_mean"] = MetricsTermCfg(
+    func=mdp.pace_active_target_base_speed_metric,
+    reduce="mean",
+    params=dict(state_params),
+  )
+  cfg.metrics["pace/active_root_speed_mean"] = MetricsTermCfg(
+    func=mdp.pace_active_root_speed_metric,
+    reduce="mean",
+    params=dict(state_params),
+  )
+  cfg.metrics["pace/invalid_not_moving"] = MetricsTermCfg(
+    func=mdp.pace_target_invalid_not_moving_metric,
+    reduce="mean",
+    params=dict(state_params),
+  )
+  cfg.metrics["pace/invalid_bad_bounce"] = MetricsTermCfg(
+    func=mdp.pace_target_invalid_bad_bounce_metric,
+    reduce="mean",
+    params=dict(state_params),
+  )
+  cfg.metrics["pace/invalid_second_bounce"] = MetricsTermCfg(
+    func=mdp.pace_target_invalid_second_bounce_metric,
+    reduce="mean",
+    params=dict(state_params),
+  )
+  cfg.metrics["pace/invalid_out_of_bounds"] = MetricsTermCfg(
+    func=mdp.pace_target_invalid_out_of_bounds_metric,
+    reduce="mean",
+    params=dict(state_params),
+  )
+  cfg.metrics["pace/invalid_low_or_time"] = MetricsTermCfg(
+    func=mdp.pace_target_invalid_low_or_time_metric,
+    reduce="mean",
+    params=dict(state_params),
+  )
+  cfg.metrics["pace/invalid_numeric"] = MetricsTermCfg(
+    func=mdp.pace_target_invalid_numeric_metric,
+    reduce="mean",
+    params=dict(state_params),
+  )
+  cfg.metrics["pace/invalid_rally_done"] = MetricsTermCfg(
+    func=mdp.pace_target_invalid_rally_done_metric,
+    reduce="mean",
+    params=dict(state_params),
+  )
   cfg.terminations["bad_orientation"].params["limit_angle"] = (
     PACE_BAD_ORIENTATION_LIMIT
   )
