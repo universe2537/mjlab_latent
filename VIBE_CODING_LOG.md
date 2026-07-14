@@ -2956,3 +2956,66 @@ uv run train Mjlab-Pingpong-PACE-Unitree-G1 \
   posterior 也完全失败。
 - 该 checkpoint 不应作为当前 Pingpong high-level RL 默认 frozen decoder；
   只能作为离线分析或局部 posterior playback 诊断材料。
+
+## 2026-07-14 - Posterior distillation rollout and wrist-force robustness
+
+### 目标
+
+修正 latent distillation 收集数据时误用 state-only prior 的问题，并在
+G1 蒸馏训练中对右腕球拍中心施加短时外力，让 student 学习受扰状态
+下的 reference-conditioned 恢复动作。
+
+### 实现记录
+
+- `OnlineDistillationRunner` 显式分离 posterior/prior 动作路径。训练
+  rollout 使用 `E(z|state,target)` 随机采样，distillation tracking
+  play/eval 使用 posterior mean；prior-only ONNX 导出和 Tennis decoder
+  checkpoint 结构不变。
+- `OnlineDistillationRunner` 新增同步多卡训练：rank 0 广播初始
+  student 权重，每次 backward 后跨 rank 平均梯度，全局平均训练指标，
+  且仅 rank 0 写日志、checkpoint 和 ONNX。冻结 teacher 以单进程推理
+  模式构建，避免重复初始化 NCCL process group。
+- G1 默认 teacher forcing 从 `1.0` 线性退火到 `0.0`，在
+  iteration `2500` 结束；rollout 默认随机采样 posterior。KL 权重
+  启用 v2 设定：iteration `2500` 后从 `0.001` 退火到 `0.005`，
+  iteration `10000` 结束。
+- G1 flat/table-tennis distillation 训练环境新增
+  `right_wrist_force_impulse`：作用于 `right_wrist_yaw_link` 球拍中心。
+  XML body-frame site 坐标 `(0.1025, -0.004, 0.4)` 经右腕 inertial pose
+  转换为 COM-frame 力臂 `(-0.00138455, -0.02790999, 0.25233888)`。
+  世界坐标各力分量为
+  `[-5, 5] N`，持续 `0.05-0.12 s`，冷却 `0.5-1.5 s`。不单独
+  采样外力矩，保留偏心力自然产生的力矩。play 配置不启用该事件。
+- 删除 distillation 专属的右腕 `wrist_encoder_bias=(-0.1, 0.1)`。
+  右腕鲁棒性主线只使用物理外力；tracking 基础环境原有的全关节
+  `encoder_bias=(-0.01, 0.01)` 保持不变。
+- 旧 distillation checkpoint 仍可加载，但它们是 prior-rollout 语义下的
+  历史基线，不能作为本次修正后训练正确性的证据。
+
+### 验证记录
+
+- `ruff check` 和 `ty check` 均通过。
+- `FORCE_CPU=1 XDG_CACHE_HOME=/tmp/codex-cache UV_CACHE_DIR=/tmp/uv-cache uv run pytest tests/test_distillation_task.py tests/test_events.py tests/test_task_configs.py tests/test_tennis_task.py -q`
+  -> `57 passed`。
+- 双卡 smoke test 使用 GPU1/GPU3、`64 envs/rank`、`1 iteration`，两个
+  worker 正常完成，并生成 `model_0.pt`、`model_1.pt` 和 ONNX。
+
+### 运行记录
+
+- 正常停止两个 PACE 训练：
+  `z1_tt_plain_20480_gpu1_20k_20260713` 停在 iteration 8108，
+  `z1_tt_predictor_20480_gpu3_20k_20260713` 停在 iteration 8331。
+- 正式蒸馏 tmux:
+  `table_tennis_distill_posterior_wrist_force_teacher29999_2x32768_gpu1_3_20260714`。
+- run dir:
+  `logs/rsl_rl/g1_distillation_table_tennis/table_tennis_distill_v3_posterior_wrist_force_teacher29999_ddp_2x32768_2026-07-14_18-54-55`。
+- GPU1/GPU3 每卡 `32768` envs，全局 `65536` envs，fresh training，teacher
+  为 table-tennis tracking `model_29999.pt`，总迭代 `30000`，每 `250`
+  iteration 保存。
+- replacement run 在 iteration 26 时无 NaN/OOM，`action_loss=0.01248`，
+  `prior_action_loss=0.01241`，`KL=0.12091`；每个训练 rank 约占
+  `13.75 GiB`。
+- 原 `model_18000.pt` teacher run 在约 iteration 1664 正常停止；其
+  `table_tennis_distill_v3_posterior_wrist_force_ddp_2x16384_2026-07-14_18-00-08`
+  目录已按要求删除。短暂启动的 `model_29999.pt + 2x16384` run 也已停止并
+  删除，未影响其他历史 run。

@@ -119,6 +119,15 @@ Added
 Changed
 ^^^^^^^
 
+- Corrected latent distillation rollouts to sample the reference-conditioned
+  posterior instead of the state-only prior, while retaining the prior-only
+  decoder export interface. G1 distillation now anneals teacher forcing from
+  ``1.0`` to ``0.0`` over 2500 iterations and applies training-only force
+  impulses at the right-wrist racket center for disturbance robustness. The
+  distillation-specific ``+/-0.1 rad`` wrist encoder bias was removed while
+  retaining the tracking environment's base encoder randomization. The custom
+  distillation runner now supports synchronous multi-GPU training with initial
+  parameter broadcast, averaged gradients and rank-0-only artifact writes.
 - Changed Pingpong ball/table bounce behavior across all Pingpong tasks to use
   a shared PACE-like bounce profile: the ball mass is now ``0.0034`` kg and
   the table/ball contact, feeder trajectory checks, PACE prediction, and

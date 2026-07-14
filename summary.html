@@ -47,6 +47,57 @@
     commands, failures, or next steps change.
   </p>
 
+  <h2>2026-07-14 Posterior Distillation and Wrist-Force Robustness</h2>
+  <ul>
+    <li>
+      Distillation rollout now samples the posterior from
+      <code>(state, target)</code>; distillation tracking play/eval uses the
+      posterior mean. The state-only prior remains available for diagnostics
+      and prior-only ONNX export, so the 16-dimensional latent and Tennis
+      decoder checkpoint structure are unchanged.
+    </li>
+    <li>
+      G1 teacher forcing now anneals from <code>1.0</code> to <code>0.0</code>
+      over 2500 iterations. Posterior rollout is stochastic, and KL weight uses
+      the v2 <code>0.001 -&gt; 0.005</code> schedule from iteration 2500 to 10000.
+    </li>
+    <li>
+      G1 distillation training applies world-frame force components in
+      <code>[-5, 5] N</code> to <code>right_wrist_yaw_link</code> at the local
+      racket center. The XML body-frame site is converted to the COM-frame
+      lever arm
+      <code>(-0.00138455, -0.02790999, 0.25233888)</code> expected by the
+      impulse event. Each impulse lasts
+      <code>0.05-0.12 s</code> with a <code>0.5-1.5 s</code> cooldown. Play and
+      clean validation configs do not contain this event. The former
+      distillation-specific <code>+/-0.1 rad</code> wrist encoder bias was
+      removed; the tracking environment's base <code>+/-0.01 rad</code>
+      encoder randomization remains unchanged.
+    </li>
+    <li>
+      The custom runner now performs synchronous multi-GPU training: rank 0
+      broadcasts initial student parameters, gradients and metrics are averaged
+      across ranks, and only rank 0 writes checkpoints, logs, and ONNX files.
+      CPU regression result: <code>57 passed</code>; a real two-GPU, one-iteration
+      smoke test also completed without errors.
+    </li>
+    <li>
+      Active tmux session:
+      <code>table_tennis_distill_posterior_wrist_force_teacher29999_2x32768_gpu1_3_20260714</code>.
+      Run dir:
+      <code>logs/rsl_rl/g1_distillation_table_tennis/table_tennis_distill_v3_posterior_wrist_force_teacher29999_ddp_2x32768_2026-07-14_18-54-55</code>.
+      It uses GPU1/GPU3 with <code>32768 envs/rank</code> and
+      <code>65536</code> environments globally, fresh training from
+      table-tennis tracking <code>model_29999.pt</code>, 30000 iterations, and
+      250-iteration checkpoints. At iteration 26,
+      <code>action_loss=0.01248</code>, <code>KL=0.12091</code>, with no NaN or
+      OOM; each training rank uses about <code>13.75 GiB</code>. The superseded
+      <code>model_18000.pt</code> run and the brief <code>2x16384</code>
+      replacement were stopped and their run directories were removed.
+      The prior plain/predictor PACE sessions on GPU1/GPU3 remain stopped.
+    </li>
+  </ul>
+
   <h2>2026-07-08 Tennis Distillation Four-Motion Validation</h2>
   <ul>
     <li>

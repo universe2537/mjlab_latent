@@ -16,7 +16,7 @@ Auxiliary concerns are split into sibling modules:
 本文件只负责“训练流程编排”：
 
 1. 加载冻结的 tracking teacher。
-2. 用 student / teacher 在环境中 rollout 收集样本。
+2. 用 posterior student / teacher 在环境中 rollout 收集样本。
 3. 从 replay buffer 采样并更新 VAE student。
 4. 保存 checkpoint 和导出部署用 ONNX。
 
@@ -33,6 +33,14 @@ from typing import Any
 
 import torch
 import torch.nn.functional as F
+from torch.distributed.distributed_c10d import (
+  ReduceOp,
+  all_reduce,
+  barrier,
+  broadcast,
+  init_process_group,
+  is_initialized,
+)
 
 from mjlab.rl import MjlabOnPolicyRunner, RslRlVecEnvWrapper
 from mjlab.rl.exporter_utils import attach_metadata_to_onnx, get_base_metadata
@@ -65,8 +73,10 @@ class OnlineDistillationRunner:
     # ``cfg`` 在训练脚本中已经被 ``asdict`` 转成字典，这里直接按字典访问。
     self.env = env
     self.cfg = train_cfg
-    self.log_dir = Path(log_dir) if log_dir is not None else None
     self.device = torch.device(device)
+    self._configure_multi_gpu()
+    requested_log_dir = Path(log_dir) if log_dir is not None else None
+    self.log_dir = requested_log_dir if self.gpu_global_rank == 0 else None
     self.current_learning_iteration = 0
 
     # 将 actor observation 按配置切成：
@@ -111,6 +121,74 @@ class OnlineDistillationRunner:
     )
     self.teacher_policy = None
     self.logger = DistillationLogger(self.log_dir, self.cfg, self.env)
+
+  def _configure_multi_gpu(self) -> None:
+    """Initialize process-group state used by synchronous data parallelism."""
+    self.gpu_world_size = int(os.getenv("WORLD_SIZE", "1"))
+    self.is_distributed = self.gpu_world_size > 1
+    if not self.is_distributed:
+      self.gpu_local_rank = 0
+      self.gpu_global_rank = 0
+      self.cfg["multi_gpu"] = None
+      return
+
+    self.gpu_local_rank = int(os.getenv("LOCAL_RANK", "0"))
+    self.gpu_global_rank = int(os.getenv("RANK", "0"))
+    expected_device = f"cuda:{self.gpu_local_rank}"
+    if str(self.device) != expected_device:
+      raise ValueError(
+        f"Device {str(self.device)!r} does not match local rank device "
+        f"{expected_device!r}."
+      )
+    self.cfg["multi_gpu"] = {
+      "global_rank": self.gpu_global_rank,
+      "local_rank": self.gpu_local_rank,
+      "world_size": self.gpu_world_size,
+    }
+    if not is_initialized():
+      init_process_group(
+        backend="nccl",
+        rank=self.gpu_global_rank,
+        world_size=self.gpu_world_size,
+      )
+    torch.cuda.set_device(self.gpu_local_rank)
+
+  def _broadcast_model_parameters(self) -> None:
+    """Make every rank start from rank 0's model parameters and buffers."""
+    if not self.is_distributed:
+      return
+    for tensor in (*self.model.parameters(), *self.model.buffers()):
+      broadcast(tensor.data, src=0)
+
+  def _reduce_gradients(self) -> None:
+    """Average model gradients across all distillation workers."""
+    if not self.is_distributed:
+      return
+    params_and_grads = [
+      (param, param.grad) for param in self.model.parameters() if param.grad is not None
+    ]
+    if not params_and_grads:
+      return
+    flat_grads = torch.cat([grad.view(-1) for _, grad in params_and_grads])
+    all_reduce(flat_grads, op=ReduceOp.SUM)
+    flat_grads /= self.gpu_world_size
+    offset = 0
+    for param, grad in params_and_grads:
+      numel = param.numel()
+      grad.copy_(flat_grads[offset : offset + numel].view_as(grad))
+      offset += numel
+
+  def _reduce_stats(self, stats: dict[str, float]) -> dict[str, float]:
+    """Average scalar training diagnostics across workers for rank-0 logging."""
+    if not self.is_distributed:
+      return stats
+    keys = tuple(stats)
+    values = torch.tensor(
+      [stats[key] for key in keys], device=self.device, dtype=torch.float64
+    )
+    all_reduce(values, op=ReduceOp.SUM)
+    values /= self.gpu_world_size
+    return {key: float(value) for key, value in zip(keys, values, strict=True)}
 
   @staticmethod
   def _linear_schedule(
@@ -172,11 +250,22 @@ class OnlineDistillationRunner:
     teacher_runner_cls = (
       load_runner_cls(self.cfg["teacher_task_id"]) or MjlabOnPolicyRunner
     )
-    teacher_runner = teacher_runner_cls(
-      self.env,
-      asdict(teacher_cfg),
-      device=str(self.device),
-    )
+    # The frozen teacher is inference-only. Prevent its RSL runner from trying
+    # to initialize the already-active student process group a second time.
+    worker_world_size = os.environ.get("WORLD_SIZE")
+    if self.is_distributed:
+      os.environ["WORLD_SIZE"] = "1"
+    try:
+      teacher_runner = teacher_runner_cls(
+        self.env,
+        asdict(teacher_cfg),
+        device=str(self.device),
+      )
+    finally:
+      if worker_world_size is None:
+        os.environ.pop("WORLD_SIZE", None)
+      else:
+        os.environ["WORLD_SIZE"] = worker_world_size
     teacher_runner.load(
       str(checkpoint),
       load_cfg={"actor": True},
@@ -185,15 +274,26 @@ class OnlineDistillationRunner:
     )
     return teacher_runner.get_inference_policy(device=str(self.device))
 
-  def _student_action(self, actor_obs: torch.Tensor) -> torch.Tensor:
-    """rollout 阶段 student 的动作生成逻辑。
+  def _posterior_action(
+    self, actor_obs: torch.Tensor, *, deterministic: bool
+  ) -> torch.Tensor:
+    """Generate a reference-conditioned action from the posterior."""
+    state, target = self.slicer.split(actor_obs)
+    return self.model.act(
+      state,
+      target,
+      deterministic=deterministic,
+      source="posterior",
+    )
 
-    部署语义下 student 只能访问 prior，因此这里固定使用 ``source='prior'``。
-    """
+  def _prior_action(
+    self, actor_obs: torch.Tensor, *, deterministic: bool
+  ) -> torch.Tensor:
+    """Generate a state-only action from the deployment prior."""
     state, _ = self.slicer.split(actor_obs)
     return self.model.act(
       state,
-      deterministic=self.cfg["deterministic_rollout"],
+      deterministic=deterministic,
       source="prior",
     )
 
@@ -216,7 +316,10 @@ class OnlineDistillationRunner:
       actor_obs = obs[self.cfg["obs_group"]].to(self.device)
       with torch.no_grad():
         teacher_action = self.teacher_policy(obs).to(self.device)
-        student_action = self._student_action(actor_obs)
+        student_action = self._posterior_action(
+          actor_obs,
+          deterministic=bool(self.cfg["deterministic_rollout"]),
+        )
         rollout_action = student_action
         if teacher_prob > 0:
           mask = (
@@ -249,6 +352,7 @@ class OnlineDistillationRunner:
       loss = self.cfg["action_loss_weight"] * action_loss + kl_loss_weight * kl_loss
       self.optimizer.zero_grad(set_to_none=True)
       loss.backward()
+      self._reduce_gradients()
       torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.cfg["max_grad_norm"])
       self.optimizer.step()
       stats["loss"] += float(loss.detach())
@@ -270,6 +374,7 @@ class OnlineDistillationRunner:
         distillation 当前未使用该选项。
     """
     del init_at_random_ep_len
+    self._broadcast_model_parameters()
     self.logger.init()
     obs = self.env.get_observations()
     start_iter = self.current_learning_iteration
@@ -283,6 +388,7 @@ class OnlineDistillationRunner:
       kl_loss_weight = self._kl_loss_weight(iteration)
       obs = self._rollout(obs, teacher_prob=teacher_prob)
       stats = self._update(kl_loss_weight=kl_loss_weight)
+      stats = self._reduce_stats(stats)
       iter_time = time.time() - iter_start
 
       self.logger.add_scalar("distillation/loss", stats["loss"], iteration)
@@ -302,7 +408,7 @@ class OnlineDistillationRunner:
       if iteration % self.cfg["save_interval"] == 0 and self.log_dir is not None:
         self.save(str(self.log_dir / f"model_{iteration}.pt"))
 
-      if iteration % 10 == 0:
+      if iteration % 10 == 0 and self.gpu_global_rank == 0:
         elapsed = time.time() - start_time
         done_frac = max((iteration - start_iter + 1) / tot_iter, 1e-6)
         eta = elapsed / done_frac * (1.0 - done_frac)
@@ -321,8 +427,12 @@ class OnlineDistillationRunner:
 
       self.current_learning_iteration = iteration + 1
 
+    if self.is_distributed:
+      barrier()
     if self.log_dir is not None:
       self.save(str(self.log_dir / f"model_{self.current_learning_iteration}.pt"))
+    if self.is_distributed:
+      barrier()
     self.logger.stop()
 
   # -- checkpoint & export -------------------------------------------------
@@ -417,7 +527,7 @@ class OnlineDistillationRunner:
     return {}
 
   def get_inference_policy(self, device: str | None = None):
-    """返回可直接给外部调用的 student 推理函数。"""
+    """返回使用 posterior mean 的 reference-tracking 推理函数。"""
     if device is not None:
       self.model.to(device)
       self.device = torch.device(device)
@@ -427,6 +537,6 @@ class OnlineDistillationRunner:
     def policy(obs) -> torch.Tensor:
       actor_obs = obs[self.cfg["obs_group"]].to(self.device)
       with torch.no_grad():
-        return self._student_action(actor_obs)
+        return self._posterior_action(actor_obs, deterministic=True)
 
     return policy

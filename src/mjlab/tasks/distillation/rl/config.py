@@ -100,8 +100,8 @@ class DistillationRunnerCfg(RslRlBaseRunnerCfg):
   teacher_action_prob_end: float | None = None
   # 教师动作概率退火结束迭代。若不大于 0，则不启用退火。
   teacher_action_prob_anneal_iters: int = 0
-  # rollout / 导出时是否使用确定性 prior mean；否则会从 prior 中采样。
-  deterministic_rollout: bool = True
+  # rollout 时是否使用确定性 posterior mean；默认从 posterior 采样。
+  deterministic_rollout: bool = False
   # 梯度裁剪阈值，防止少数 batch 导致训练发散。
   max_grad_norm: float = 1.0
 
